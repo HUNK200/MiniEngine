@@ -71,6 +71,7 @@
 ## 3. 硬约束（不要违反）
 
 - **只允许** C++ / CMake / 标准库 / 终端 / VS Code。**不引入第三方库**；想用（含 GoogleTest）要先问我
+- **只做 Windows**：不要写 Linux / macOS 分支（`termios`、`fcntl`、`ioctl`、`#ifdef __linux__`）。平台抽象层可以有，但只留 Windows 一条实现路径
 - 渲染只走终端字符 + ANSI 转义序列，**不用** OpenGL / DirectX / Vulkan / SDL / SFML
 - **不主动创建文档**（README、设计书、总结报告等），除非我要求
 - **不做** ECS / 反射 / 序列化 / 插件系统 / EventBus / ResourceManager 这类"架构漂亮"的东西，除非我明确要求（理由见 PLAN 的 D.1 与开发原则 2）
@@ -82,19 +83,23 @@
 
 | 项 | 值 |
 | --- | --- |
-| 系统 / Shell | Windows 11 + Git Bash（MinGW64），终端代码页 **936 (GBK)** |
+| 系统 | Windows 11 |
+| **Shell（默认）** | **PowerShell** —— 给用户的命令按 PowerShell 写 |
+| 跨平台范围 | **只要 Windows**（不要再提示 Linux 相关方案） |
+| 终端代码页 | 传统控制台 936 (GBK)；VS Code 内置终端是 UTF-8 |
 | 编译器 | MSVC 2022（cl 19.44）为主，LLVM clang 17 为辅；**没有 g++ / gcc** |
 | 构建 | CMake **4.2.1** —— 4.x 不支持 `cmake_minimum_required(VERSION < 3.5)`，最低写 3.20 |
 | 生成器 | 默认 `Visual Studio 17 2022`，属**多配置**，命令必须带 `--config`、ctest 必须带 `-C` |
 | 没有的工具 | ninja、make、jq、ripgrep |
-| 编辑器 | VS Code（终端是 UTF-8；Git Bash 代码页 936 下中文可能乱码） |
 
-```bash
+```powershell
 cmake -S . -B build
 cmake --build build --config Debug
 ctest --test-dir build -C Debug --output-on-failure
-./build/bin/Debug/MiniEngine.exe
+.\build\bin\Debug\MiniEngine.exe
 ```
+
+**PowerShell 写法提醒**：看上一条命令的退出码用 `$LASTEXITCODE`（`$?` 是布尔量，不是退出码）；路径用反斜杠；Git Bash 的 `echo $?`、`./a/b` 在这里都不成立。
 
 ---
 

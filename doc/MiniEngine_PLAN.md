@@ -12,31 +12,31 @@
 
 ## 0. 环境基线（家机 / 公司机分列）
 
-> ⚠️ 本节原文只有一套路径，而且被写成了"本机"。**2026-09-23 在家机逐条实测，发现两台机器
-> 的工具路径根本不同**（VS 家机装在 E 盘、clang 版本也不同），照一份基线敲命令会直接找不到工具。
-> **以后每台机器只信自己这一列，动手前先跑一次 `cmake --version`。**
+> ⚠️ 本节原文只有一套路径，而且被写成了"本机"。**2026-09-23 家机、2026-09-24 公司机各逐条实测一遍，
+> 结果两台机器连工具版本都不一样**（VS 家机装在 E 盘、CMake 一个 4.4.3 一个 4.2.1），
+> 照一份基线敲命令会直接找不到工具。**以后每台机器只信自己这一列，动手前先跑一次 `cmake --version`。**
 
-| 项 | 家机（2026-09-23 实测） | 公司机 | 对方案的影响 |
+| 项 | 家机（2026-09-23 实测） | 公司机（2026-09-24 实测） | 对方案的影响 |
 | --- | --- | --- | --- |
-| CMake | **4.4.3** @ `C:\Program Files\CMake\bin`（当天用 `winget install Kitware.CMake` 补装，**装之前家机完全没有 CMake**） | 4.2.1（原记录，未复测） | **CMake 4.x 已移除 `cmake_minimum_required(VERSION < 3.5)` 的兼容**，最低写 `3.20` |
-| MSVC | VS 2022 Community @ **`E:\Program Files\VisualStudio`**（**不在** C 盘）；装了 14.38.33130 / 14.44.35207 两套 toolset；CMake 生成器实测选中 **19.38.33145.0** | cl 14.44 (19.44)（原记录，未复测） | 主力编译器，默认生成器 `Visual Studio 17 2022`；生成器选哪套 toolset 由 VS 自己定，别在文档里硬编码 |
-| clang | **19.1.5** @ `…\VisualStudio\VC\Tools\Llvm\bin`（**不在** `C:\Program Files\LLVM`） | 17.0.6（原记录，未复测） | 第二编译器，走 VS 生成器 `-T ClangCL`，不用单独装 Ninja |
-| Windows SDK | 10.0.22621.0 | 未记录 | — |
-| g++ / gcc | **未安装** | **未安装** | 不验证 Linux 分支，Linux 代码只写不跑 |
+| CMake | **4.4.3** @ `C:\Program Files\CMake\bin`（当天用 `winget install Kitware.CMake` 补装，**装之前家机完全没有 CMake**） | **4.2.1** @ `C:\Program Files\CMake\bin` | **CMake 4.x 已移除 `cmake_minimum_required(VERSION < 3.5)` 的兼容**，最低写 `3.20` |
+| MSVC | VS 2022 Community @ **`E:\Program Files\VisualStudio`**（**不在** C 盘）；装了 14.38.33130 / 14.44.35207 两套 toolset；CMake 生成器实测选中 **19.38.33145.0** | VS 2022 Community，cl 14.44 (19.44) | 主力编译器，默认生成器 `Visual Studio 17 2022`；生成器选哪套 toolset 由 VS 自己定，别在文档里硬编码 |
+| clang | **19.1.5** @ `…\VisualStudio\VC\Tools\Llvm\bin`（**不在** `C:\Program Files\LLVM`） | 17.0.6（原记录，**未复测**，路径以家机规律推断需再确认） | 第二编译器，走 VS 生成器 `-T ClangCL`，不用单独装 Ninja |
+| Windows SDK | 10.0.22621.0 | **10.0.26100.0**（配置期自动选中，目标 10.0.26200） | — |
+| g++ / gcc | **未安装** | **未安装** | **只做 Windows**（已确认）：不写也不跑 Linux / macOS 分支，只走 MSVC + ClangCL |
 | ninja / make | **未安装**（不阻塞，VS 生成器可用） | **未安装** | 多配置（VS）生成器，所以**必须带 `--config`／`-C`** |
-| Git | 2.52.0；仓库 local 身份 `HUNK <wuunj@126.com>` | 仓库 local 身份 `Wuyangzhi <wu.yangzh@aerok.com.cn>` | **身份按机器各用各的**（见 A.2），不要求两机一致 |
-| 终端 | Git Bash，`TERM=xterm-256color`，代码页 **936 (GBK)** | 同左 | 必须切 UTF-8，否则 `┌─┐@#*` 全乱码 |
-| 项目当前状态 | **S0 完成**（2026-09-23）：`ctest` 1/1 passed | — | 下一步进 S1 FrameBuffer |
+| Git | 2.52.0；仓库 local 身份 `HUNK <wuunj@126.com>` | 2.52.0；**仓库级身份未设**，当前只吃全局 `Wuyangzhi <wu.yangzh@aerok.com.cn>`（补设见 A.2） | **身份按机器各用各的**（见 A.2），不要求两机一致 |
+| Shell / 终端 | Git Bash，`TERM=xterm-256color`，代码页 **936 (GBK)** | **PowerShell（主力）**，Git Bash 也能用；VS Code 内置终端是 UTF-8，传统控制台代码页 **936 (GBK)** | **给用户的命令一律按 PowerShell 写**：退出码用 `$LASTEXITCODE`（不是 `echo $?`）、路径用反斜杠；终端输出必须切 UTF-8，否则 `┌─┐@#*` 全乱码 |
+| 项目当前状态 | **S0 完成**（2026-09-23）：`ctest` 1/1 passed | **S0 复测通过**（2026-09-24）：配置通过、构建 0 warning、`ctest` 1/1、exe 打印 `0.1.0-dev` | 下一步进 **S1 FrameBuffer** |
 
-### 标准命令（多配置生成器下）
+### 标准命令（PowerShell + 多配置生成器）
 
-```bash
+```powershell
 # 配置 + 构建（Debug）
 cmake -S . -B build
 cmake --build build --config Debug
 
-# 运行（阶段 0 起就把 exe 统一输出到 build/bin/）
-./build/bin/Debug/MiniEngine.exe
+# 运行（S0 起把 exe 统一输出到 build/bin/）
+.\build\bin\Debug\MiniEngine.exe
 
 # 测试（-C 不能漏，否则 CTest 找不到配置）
 ctest --test-dir build -C Debug --output-on-failure
@@ -48,11 +48,10 @@ ctest --test-dir build -C Debug --output-on-failure
 
 > 🔧 **家机 2026-09-23 才补装上 CMake**：已经开着的 Git Bash 不会自动拿到新的 PATH，**重开一个终端** `cmake` 就能用了；旧终端里临时用全路径 `"/c/Program Files/CMake/bin/cmake.exe"`。
 
-### 平台策略（已确认）
+### 平台策略（已确认：只做 Windows）
 
-**Windows 优先 + Linux 预留抽象层**：
-- 本机只验证 Windows Terminal + MSVC；
-- 从阶段 2 起所有平台相关代码进 `engine/platform/`，Linux 分支（termios/fcntl/ioctl）写好、能通过编译检查，但暂不在本机运行；
+- **只做 Windows**：不写 Linux / macOS 分支，不写 `termios` / `fcntl` / `ioctl` / `#ifdef __linux__`（见 `AGENTS.md`）。等哪天真要跨平台再说——那时的成本是重构 `platform/` 一层，不是现在。
+- **但 `engine/platform/` 这层抽象保留**：它的目的不是跨平台，而是"**把 `<windows.h>` 关在一个目录里**"。终端模式、键盘事件、窗口尺寸这些 Windows API 只允许出现在这里，其余代码保持干净、可移植的写法。
 - 不为了"跨平台好看"提前抽象，也不为了快而把 `SetConsoleCursorPosition` 散落各处。
 
 ---
@@ -86,7 +85,7 @@ ctest --test-dir build -C Debug --output-on-failure
         │        └───────────────────────────────────────────────┘
         │
         ▼
-  终端 (Windows Terminal / conhost / Linux tty)
+  终端 (Windows Terminal / conhost)
 
                     ┌──────────────────────┐
                     │   game (上层游戏逻辑)  │
@@ -127,7 +126,7 @@ c++_simple_engine/
 │   ├── CMakeLists.txt          # add_library(engine STATIC ...)
 │   ├── include/mini/           # 公共头（对外只暴露这层）
 │   │   ├── core/       Application.h  Time.h  Logger.h  Config.h  NonCopyable.h
-│   │   ├── platform/   Console.h  ConsoleWindows.h  ConsoleLinux.h  Input.h  KeyCode.h
+│   │   ├── platform/   Console.h  ConsoleWindows.h  Input.h  KeyCode.h    # 只做 Windows
 │   │   ├── math/       Vec2.h  Vec3.h  Rect.h  AABB.h  Ray.h  MathUtils.h
 │   │   ├── render/     Cell.h  Color.h  FrameBuffer.h  Renderer2D.h
 │   │   │               Camera.h  Viewport.h  Renderer3D.h  RayCaster.h
@@ -172,7 +171,7 @@ main.cpp  →  game  →  engine  →  标准库
 
 1. **按"变化频率"分层，而不是按"技术名词"分层。** `math` 几乎不变，`render` 每阶段都变，`game` 天天变。把易变的放上层、稳定的放下层，改游戏逻辑时不会牵动渲染代码。
 2. **`engine` 与 `game` 物理分家**，是为了强制回答一个问题："这个东西到底是引擎能力，还是游戏逻辑？"——这个判断力比代码本身值钱。同时让 `engine` 可以被 `tests` 单独链接。
-3. **`platform` 单独一层，而不是用宏散落各处**，因为这是全项目唯一真正"必须分平台"的地方（终端模式、键盘、窗口尺寸）。集中在一处，Windows/Linux 的差异就只有一眼能看完的 200 行。
+3. **`platform` 单独一层，而不是用宏散落各处**，因为这是全项目唯一真正要碰 Windows API 的地方（终端模式、键盘事件、窗口尺寸）。集中在一处，`<windows.h>` 就只出现在一个目录里，其余代码保持干净的 C++ 写法。**这层抽象的目的不是跨平台，而是隔离平台 API**——本项目只做 Windows（见 `AGENTS.md`）。
 4. **`debug` 从阶段 1 就存在**（哪怕只是一个 FPS 数字），因为"能看见内部状态"这件事必须一开始就有，否则后面会被迫用 `std::cout` 打补丁，然后忘了删。
 5. **不上 ECS、不上 EventBus、不上 ResourceManager**（见 D 节）。理由：这个项目的实体数量是几十，不是几十万；简单 `std::vector<Entity>` 完全够用，而 ECS 会带来"为了改一个字段要写三处"的摩擦，直接违背"让我想打开 VS Code"的初衷。
 
@@ -248,13 +247,13 @@ S0 骨架 ──► S1 FrameBuffer 出画面 ──► S2 输入 ──► S3 Ga
 | 项 | 内容 |
 | --- | --- |
 | 目标 | `platform::Console` + `platform::Input`，`@` 能响应按键移动（先用瞬时移动验证输入通路） |
-| 实现 | 接口类 `IConsole`；Windows 用 `ReadConsoleInput`/`PeekConsoleInput`，Linux 用 `termios` raw + `fcntl(O_NONBLOCK)`；`KeyCode` 枚举；三态 `Pressed/Held/Released` |
+| 实现 | 接口类 `IConsole`；**Windows 实现**：`ReadConsoleInput` / `PeekConsoleInput`，并关闭 `ENABLE_QUICK_EDIT_MODE`；`KeyCode` 枚举；三态 `Pressed/Held/Released`。**不写 Linux 分支**（`AGENTS.md` 约定：只做 Windows） |
 | C++ 知识 | 抽象接口、`std::unique_ptr` + 工厂函数、RAII（构造开终端模式，析构恢复）、`enum class`、位标志 |
 | 引擎知识 | 输入轮询（poll）模型 vs 回调模型、按键边沿与持续状态 |
-| 规模 | ~350 行（含 Linux 分支） |
+| 规模 | ~250 行（只有 Windows 一条路径） |
 | 可运行效果 | 屏幕上实时显示 `W: Held  SPACE: Pressed  Q: Released`；按 Q 退出 |
 | 验收 | 长按 W 显示 Held；松开显示 Released 仅一帧；**鼠标在终端里点一下之后输入仍然正常** |
-| 坑 | ① 必须 `&~ENABLE_QUICK_EDIT_MODE` 并配合 `ENABLE_EXTENDED_FLAGS`，否则点一下控制台就"卡死"；② Linux 忘恢复 termios，退出后终端不回显；③ 忘了处理 `WINDOW_BUFFER_SIZE_EVENT`，改窗口大小后画面错位 |
+| 坑 | ① 必须 `&~ENABLE_QUICK_EDIT_MODE` 并配合 `ENABLE_EXTENDED_FLAGS`，否则点一下控制台就"卡死"；② 忘了处理 `WINDOW_BUFFER_SIZE_EVENT`，改窗口大小后画面错位；③ 退出路径要恢复终端状态（显示光标、还原代码页），否则一次崩溃就让终端一直不正常 |
 
 ### S3 Game Loop / Time / FPS
 
@@ -462,7 +461,6 @@ endif()
 ```cmake
 add_library(engine STATIC
     src/platform/ConsoleWindows.cpp
-    src/platform/ConsoleLinux.cpp
     src/platform/Input.cpp
     src/render/FrameBuffer.cpp
     src/core/Application.cpp
@@ -622,7 +620,7 @@ Game::OnUpdate(dt) {
 
 | 需求 | ANSI 方案 | 无 ANSI 的替代 | 评价 |
 | --- | --- | --- | --- |
-| 光标归位 | `ESC[H` | `SetConsoleCursorPosition` / `ioctl` | ANSI 更简单 |
+| 光标归位 | `ESC[H` | `SetConsoleCursorPosition` | ANSI 更简单 |
 | 隐藏/显示光标 | `ESC[?25l` / `ESC[?25h` | Windows API | ANSI 更简单 |
 | 清屏 | `ESC[2J`（**尽量别用**，见下） | Windows API | — |
 | 颜色 | `ESC[38;5;{n}m` 256 色 | Windows API 逐格属性 | ANSI 简单得多 |
@@ -648,9 +646,9 @@ SetConsoleMode(hOut, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
 
 **关于"双缓冲"的概念澄清**：终端游戏里的 `FrameBuffer` 本身就是后缓冲，屏幕是前缓冲。你不需要两份 `FrameBuffer`（除非要做"上一帧对比"来算脏行，那时才需要第二份）。`Present()` 就是"交换"（形式上是一次拷贝）。
 
-**终端尺寸变化**：Windows 监听 `WINDOW_BUFFER_SIZE_EVENT`，Linux 用 `ioctl(TIOCGWINSZ)` + 每帧比较；变化时 `FrameBuffer::Resize()` + `ESC[2J` 清屏重画 + 相机边界重新 clamp。
+**终端尺寸变化**：监听 `WINDOW_BUFFER_SIZE_EVENT`（`ReadConsoleInput` 会收到），变化时 `FrameBuffer::Resize()` + `ESC[2J` 清屏重画 + 相机边界重新 clamp。
 
-**Windows / Linux 兼容**：全部差异集中在 `ConsoleWindows.cpp` / `ConsoleLinux.cpp`，公共头里**一个 `#ifdef` 都不出现**。Linux 侧除了 VT 序列（Linux tty 原生支持）还要额外做 `termios` raw 模式，这是唯一比 Windows 麻烦的地方。
+**平台隔离**：所有 Windows API 集中在 `platform/ConsoleWindows.*`，公共头里**一个 `#ifdef` 都不出现**（见 A.3 的硬规矩）。本项目只做 Windows，所以不写任何 Linux 分支——真要跨平台时的成本是"新增一个 `ConsoleXxx.cpp`"，不是现在就把两套都写出来。
 
 ---
 
@@ -722,7 +720,7 @@ S13  + Z-buffer：精灵与墙的遮挡关系                           —— �
 | E-13 | **Ray Casting 鱼眼/裂缝** | 墙呈弧形、墙面有竖缝 | `cos` 校正；DDA 的 `sideDistX/Y` 初值按方向取 `(1-delta)` 或 `delta`；`rayDir` 归一化 | S12 |
 | E-14 | **ECS 过度设计** | 花两天改架构，游戏没进展 | 见 D.1：停在 D-1，需要时按具体类型分容器 | S10+ |
 | E-15 | **Profiler 失真** | 计时器被优化掉、被测代码因分配而变慢 | `std::atomic_signal_fence`/`DoNotOptimize`、固定大小环形缓冲、零分配 | S11 |
-| E-16 | **Linux 分支腐烂** | 半年后发现 Linux 编译不过 | 每次改 platform 后跑一次 `-T ClangCL` 构建（至少保证语法/头文件正确）；本机没 g++，别假装双平台 | S2+ |
+| E-16 | **平台 API 泄漏** | 半年后 `#include <windows.h>` 散落各处，想改也改不动 | 只有 `platform/` 允许出现 `<windows.h>` 与 `#ifdef _WIN32`（见 A.3 硬规矩）；其余代码只 include 标准库和 `mini/` 头。本项目只做 Windows，所以不为跨平台做任何预留 | S2+ |
 | E-17 | **Windows 头文件污染** | `std::max` 编译失败、`min` 宏 | `NOMINMAX`、`WIN32_LEAN_AND_MEAN`；`<windows.h>` 只出现在 `.cpp` 里 | S2 |
 | E-18 | **测试框架膨胀** | 为了写 3 个断言引入 GoogleTest + 网络配置 | 先用自制 `MiniTest.h`（80 行）；**当出现**"参数化测试 / fixture / 死亡测试 / CI 需要 JUnit 报告"时（约 S10 之后、断言数 > 200）再 `FetchContent` 引入 GoogleTest | S4/S10 |
 | E-19 | **一开始就想 3D** | 基础不牢，伪 3D 变成调 bug 地狱 | 严格按 S0→S11 顺序；S12 之前不碰 3D | 全程 |
@@ -927,7 +925,7 @@ while (!shouldQuit) {
 | 地图从 `map.txt` 加载 | 1h | Day4 自由块 | 之后调关卡不用重新编译 |
 | A* 寻路（解决 S8 的卡墙）| 2.5h | Day6 / Day7 | BFS 打底，顺手在 Debug Overlay 里画路径 |
 | 装 Ninja 提速构建 | 0.5h | Day1 | `winget install Ninja-build.Ninja`，一条命令，别折腾 |
-| 开 WSL 真验证 Linux 分支 | 2h | Day7 | 本机没有 g++，这是唯一的真验证手段 |
+| 给 `mini_tests` 加 `LABELS` 与 `TIMEOUT` 属性 | 1h | Day7 | 让 `ctest -L fast` 与超时保护可用，见 `doc/CTEST_NOTES.md` |
 | Profiler 导出 Chrome Trace JSON | 1.5h | Day7 | `chrome://tracing` 里看火焰图，成就感很强 |
 | Braille 字符渲染（2×4 点阵）| 3h | Day7 | 纯玩，风险高收益也高，做不完就当实验 |
 | 行为树替换 FSM | 2h | **不建议** | D.1 已说明：5 个状态的 FSM 更好维护 |
@@ -950,25 +948,26 @@ while (!shouldQuit) {
 
 ## 附录 A：命令速查
 
-```bash
+```powershell
 # ---- 首次配置（家：本机，已完成，保留备查）----
 git init -b main
-cmake --preset ms-msvc-debug          # 或：cmake -S . -B build
+cmake -S . -B build
 
 # ---- 日常循环 ----
+cmake -S . -B build
 cmake --build build --config Debug
-./build/bin/Debug/MiniEngine.exe
+.\build\bin\Debug\MiniEngine.exe
 ctest --test-dir build -C Debug --output-on-failure
 
 # ---- Release ----
 cmake --build build --config Release
-./build/bin/Release/MiniEngine.exe
+.\build\bin\Release\MiniEngine.exe
 
 # ---- clang 交叉验证（不需要装 Ninja）----
 cmake -S . -B build-clang -G "Visual Studio 17 2022" -T ClangCL
 cmake --build build-clang --config Debug
 
-# ---- Sanitizer（clang/gcc）----
+# ---- Sanitizer（clang）----
 cmake -S . -B build-asan -DMINI_SANITIZE=ON
 ```
 

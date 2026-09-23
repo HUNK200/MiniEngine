@@ -3,7 +3,9 @@
 > **用法**：在"进度板"里勾进度；从 `R1` 往下走复习阶梯，每步都有"预期现象 + 通过标志"。
 > 本文件只描述**要什么、怎么验证**，不含实现代码（`AGENTS.md` 约定：AI 默认只出方案）。
 >
-> 相关文件：`doc/MiniEngine_PLAN.md`（阶段定义、附录 A 命令速查）、`AGENTS.md`（项目约定）。
+> 相关文件：`doc/MiniEngine_PLAN.md`（阶段定义、附录 A 命令速查）、`doc/CTEST_NOTES.md`（CTest 入门，与 GoogleTest 的分工）、`AGENTS.md`（项目约定）。
+>
+> **环境提醒**：默认 shell 是 **PowerShell**。退出码用 `$LASTEXITCODE`（不是 `echo $?`），路径用反斜杠。
 
 ---
 
@@ -12,8 +14,9 @@
 - [x] 建目录结构，写出三份 CMakeLists 雏形
 - [x] `main.cpp` 能编译（hello world）
 - [x] `cmake -S . -B build` 能配置通过、`engine` 能构建
-- [ ] **R1** 观察：看清 ctest 为什么一个测试都找不到
-- [ ] **R2** 加 `option()` + `enable_testing()`，故意撞出第一个配置期报错
+- [x] **R1** 观察：看清 ctest 为什么一个测试都找不到
+      → 结论：`if(MINI_BUILD_TESTS)` 恒为假 → `tests/` 从未进配置。证据三条：`ctest -N` 报 `Total Tests: 0`；`build/` 下没有 `tests/` 目录；没有 `CTestTestfile.cmake`
+- [ ] **R2** 加 `option()` + `enable_testing()`，故意撞出第一个配置期报错　**← 当前**
 - [ ] **R3** 加别名，撞出"静默降级"的链接期报错
 - [ ] **R4** 定义 `mini_options`，让链接链通
 - [ ] **R5** 写 MiniTest，拿到第一次 `1/1 passed`
@@ -100,10 +103,10 @@ ctest 空跑                              ← 证据：LastTest.log 只有 Start
 
 同样是"目标不存在"，CMake 的两种反应**完全不同**：
 
-| 写法 | 目标不存在时 | 时机 |
+| 写法 | 目标不存在时 | 报错时机 |
 | --- | --- | --- |
-| `mini_options`（无 `::`） | 当成普通库名，**静默接受** | 直到链接期才失败 |
-| `MiniEngine::engine`（有 `::`） | **配置期立即硬报错** | 立刻 |
+| `mini_options`（无 `::`） | 当成普通库名，**静默接受** | 拖到链接期才失败 |
+| `MiniEngine::engine`（有 `::`） | **硬报错** | 配置阶段（不必等到构建） |
 
 **规律**：想早期发现拼写错误，就**总是用带 `::` 的别名**。这也是现代 CMake 推荐 ALIAS 的原因之一。R2/R3 会亲眼看到这个对比。
 
@@ -117,14 +120,14 @@ ctest 空跑                              ← 证据：LastTest.log 只有 Start
 
 **做什么**
 
-```bash
+```powershell
 ctest --test-dir build -N              # -N = 只列出已注册的测试，不执行
 ctest --test-dir build -C Debug -N
-ls build/                              # 有没有 tests/ 子目录？
-ls build/bin 2>&1                      # 有没有统一输出目录？
+Get-ChildItem build                    # 有没有 tests/ 子目录？
+Test-Path build\bin                    # 有没有统一输出目录？（期望 False）
 ```
 
-**预期看到**：前两条都输出 `No tests were found!!!`；`build/` 里没有 `tests/`；`build/bin` 不存在。
+**预期看到**（已实测）：前两条都报 `Total Tests: 0`（CMake 4.2 的措辞；旧版本会写 `No tests were found!!!`）；`build/` 里没有 `tests/` 子目录；`Test-Path build\bin` 返回 `False`。
 
 **原理**：CMake 分两段——**配置期**（读 CMakeLists，产出 `.sln` / `.vcxproj` / `CTestTestfile.cmake`）和**构建期**（编译、链接）。`ctest` **不读 CMakeLists**，它只读配置期写出的 `CTestTestfile.cmake`。所以"测试没被注册"永远要去**配置期**找原因，翻构建日志是白费功夫。
 
@@ -226,7 +229,7 @@ ctest --test-dir build -C Debug --output-on-failure
 | `-V` / `-VV` | 显示测试的命令行 / 完整输出 |
 | `--output-on-failure` | 只在失败时打印被测程序的 stdout |
 
-**通过标志**：`ctest` 报 1/1；且 `./build/bin/Debug/mini_tests`（或它实际所在路径）直接跑也返回 0。
+**通过标志**：`ctest` 报 1/1；且直接跑 `.\build\bin\Debug\mini_tests.exe` 后 `$LASTEXITCODE` 为 0。
 
 ### R6 加可执行目标与输出目录，让 exe 首次跑出来（20 分钟）
 
@@ -336,12 +339,13 @@ MINI_FAIL(msg)                       // 无条件失败
 
 **正向**
 
-```bash
+```powershell
 cmake -S . -B build
 cmake --build build --config Debug
-ls build/bin/Debug/                                   # MiniEngine.exe  mini_tests.exe
-./build/bin/Debug/MiniEngine.exe                      # 打印版本号
-./build/bin/Debug/mini_tests ; echo $?                # 1 passed, 0 failed / 退出码 0
+Test-Path build\bin\Debug\MiniEngine.exe              # 期望 True
+.\build\bin\Debug\MiniEngine.exe                      # 打印版本号
+.\build\bin\Debug\mini_tests.exe                      # 1 passed, 0 failed
+$LASTEXITCODE                                          # 期望 0
 ctest --test-dir build -C Debug --output-on-failure    # 100% tests passed, out of 1
 ```
 
