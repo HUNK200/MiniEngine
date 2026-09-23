@@ -1,0 +1,70 @@
+# ============================================================
+# MiniEngine .gitignore
+# 目标：家里 / 公司两台机器同步，任何"本机生成物"都不进仓库
+# ============================================================
+
+# ---- 构建产物（CMake + VS 生成器）----
+build/
+build-*/
+out/
+bin/
+obj/
+[Oo]bj/
+
+# ---- CMake ----
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+Testing/
+CMakeUserPresets.json      # 本机私有预设（含绝对路径），绝不提交
+
+# ---- 编译器 / 链接器中间产物 ----
+*.obj
+*.o
+*.exe
+*.pdb
+*.ilk
+*.idb
+*.exp
+*.lib
+*.dll
+*.so
+*.dylib
+*.a
+
+# ---- Visual Studio ----
+.vs/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.suo
+*.user
+
+# ---- 编辑器：只忽略本机私有项，保留可共享的调试配置 ----
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*~
+
+# ---- 系统 ----
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# ---- 日志 / 临时 ----
+*.log
+*.tmp
+*.bak
+*.orig
+*.rej
+
+# ---- 本机私有笔记（不参与同步）----
+NOTES.local.md
+*.local
