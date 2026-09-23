@@ -8,18 +8,23 @@
 
 ---
 
-## 0. 本机环境基线（实测，方案基于此）
+## 0. 环境基线（家机 / 公司机分列）
 
-| 项 | 实测结果 | 对方案的影响 |
-| --- | --- | --- |
-| CMake | 4.2.1 (`C:\Program Files\CMake\bin\cmake.exe`) | **CMake 4.x 已移除对 `cmake_minimum_required(VERSION < 3.5)` 的兼容**，所有 CMakeLists 最低写 `3.20` |
-| MSVC | VS 2022 Community，cl 14.44 (19.44) | 主力编译器，默认生成器 `Visual Studio 17 2022` |
-| clang | 17.0.6 (`C:\Program Files\LLVM\bin\clang++.exe`) | 第二编译器，走 VS 生成器 `-T ClangCL`，不用单独装 Ninja |
-| g++ / gcc | **未安装** | 本机不验证 Linux 分支，Linux 代码只写不跑 |
-| ninja / make | **未安装** | 默认多配置（VS）生成器，所以**必须带 `--config`／`-C`** |
-| Git | 2.52.0 | 直接 `git init` 起步 |
-| 终端 | Git Bash，`TERM=xterm-256color`，代码页 **936 (GBK)** | 必须切 UTF-8，否则 `┌─┐@#*` 全乱码 |
-| 项目当前状态 | 空目录，只有 `input_plan.md` | 从阶段 0 开始 |
+> ⚠️ 本节原文只有一套路径，而且被写成了"本机"。**2026-09-23 在家机逐条实测，发现两台机器
+> 的工具路径根本不同**（VS 家机装在 E 盘、clang 版本也不同），照一份基线敲命令会直接找不到工具。
+> **以后每台机器只信自己这一列，动手前先跑一次 `cmake --version`。**
+
+| 项 | 家机（2026-09-23 实测） | 公司机 | 对方案的影响 |
+| --- | --- | --- | --- |
+| CMake | **4.4.3** @ `C:\Program Files\CMake\bin`（当天用 `winget install Kitware.CMake` 补装，**装之前家机完全没有 CMake**） | 4.2.1（原记录，未复测） | **CMake 4.x 已移除 `cmake_minimum_required(VERSION < 3.5)` 的兼容**，最低写 `3.20` |
+| MSVC | VS 2022 Community @ **`E:\Program Files\VisualStudio`**（**不在** C 盘）；装了 14.38.33130 / 14.44.35207 两套 toolset；CMake 生成器实测选中 **19.38.33145.0** | cl 14.44 (19.44)（原记录，未复测） | 主力编译器，默认生成器 `Visual Studio 17 2022`；生成器选哪套 toolset 由 VS 自己定，别在文档里硬编码 |
+| clang | **19.1.5** @ `…\VisualStudio\VC\Tools\Llvm\bin`（**不在** `C:\Program Files\LLVM`） | 17.0.6（原记录，未复测） | 第二编译器，走 VS 生成器 `-T ClangCL`，不用单独装 Ninja |
+| Windows SDK | 10.0.22621.0 | 未记录 | — |
+| g++ / gcc | **未安装** | **未安装** | 不验证 Linux 分支，Linux 代码只写不跑 |
+| ninja / make | **未安装**（不阻塞，VS 生成器可用） | **未安装** | 多配置（VS）生成器，所以**必须带 `--config`／`-C`** |
+| Git | 2.52.0；仓库 local 身份 `HUNK <wuunj@126.com>` | 仓库 local 身份 `Wuyangzhi <wu.yangzh@aerok.com.cn>` | **身份按机器各用各的**（见 A.2），不要求两机一致 |
+| 终端 | Git Bash，`TERM=xterm-256color`，代码页 **936 (GBK)** | 同左 | 必须切 UTF-8，否则 `┌─┐@#*` 全乱码 |
+| 项目当前状态 | **S0 完成**（2026-09-23）：`ctest` 1/1 passed | — | 下一步进 S1 FrameBuffer |
 
 ### 标准命令（多配置生成器下）
 
@@ -38,6 +43,8 @@ ctest --test-dir build -C Debug --output-on-failure
 可选：`cmake -S . -B build-clang -G "Visual Studio 17 2022" -T ClangCL` 得到 clang 构建，用来交叉验证 MSVC 没抓到的警告。
 
 > 想让构建快一点再装 Ninja（`winget install Ninja-build.Ninja`），届时 `-G Ninja -DCMAKE_BUILD_TYPE=Debug`，命令回到单配置风格。**这是可选优化，不是前置依赖。**
+
+> 🔧 **家机 2026-09-23 才补装上 CMake**：已经开着的 Git Bash 不会自动拿到新的 PATH，**重开一个终端** `cmake` 就能用了；旧终端里临时用全路径 `"/c/Program Files/CMake/bin/cmake.exe"`。
 
 ### 平台策略（已确认）
 
@@ -212,7 +219,7 @@ S0 骨架 ──► S1 FrameBuffer 出画面 ──► S2 输入 ──► S3 Ga
 | 规模 | ~120 行（几乎全是 CMake） |
 | 可运行效果 | 运行 exe 打印一行版本号；`ctest` 1/1 passed |
 | 验收 | 上面两条命令 + `ctest --test-dir build -C Debug` 全绿；`git commit` 完成 |
-| 坑 | 漏 `/utf-8`（MSVC 在 936 代码页下会报 C4819 或把中文串搞坏）；漏 `--config` 会报"没有可用配置" |
+| 坑 | 漏 `/utf-8`（家机实测：源码里有中文注释时直接 `error C4716: 必须返回一个值`，构建过不去，见 E-1）；漏 `--config` 会报"没有可用配置"；额外设 `CMAKE_RUNTIME_OUTPUT_DIRECTORY_<CFG>` 会让 exe 少掉 Debug 这一层目录（见 C.1） |
 
 ### S1 FrameBuffer —— 屏幕上出现 `@`
 
@@ -411,11 +418,12 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# 多配置生成器(VS)下统一输出位置，方便直接运行
+# 多配置生成器(VS)下统一输出位置，方便直接运行。
+# ⚠️ 只设这一个变量，**不要**再照着老写法设 CMAKE_RUNTIME_OUTPUT_DIRECTORY_<CFG>：
+# 那个变量会被按原样使用（不补配置子目录），exe 会落到 build/bin/MiniEngine.exe，
+# 和附录 A 的 ./build/bin/Debug/MiniEngine.exe 对不上 —— E-6 的坑就埋在这。
+# 实测（2026-09-23 家机）：只设这一条时，exe 正确落在 build/bin/Debug/ 下。
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
-foreach(cfg DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
-    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${cfg} ${CMAKE_BINARY_DIR}/bin)
-endforeach()
 
 option(MINI_BUILD_TESTS "Build unit tests" ON)
 option(MINI_SANITIZE    "Enable ASan/UBSan (clang/gcc)" OFF)
@@ -690,7 +698,7 @@ S13  + Z-buffer：精灵与墙的遮挡关系                           —— �
 
 | # | 风险 | 症状 | 对策 | 触发阶段 |
 | --- | --- | --- | --- | --- |
-| E-1 | **代码页 936** | 框线字符变乱码，MSVC 报 C4819 | `SetConsoleOutputCP(CP_UTF8)` + 编译加 `/utf-8` + 源文件存 UTF-8 | S1 |
+| E-1 | **代码页 936** | 框线字符变乱码，MSVC 报 C4819；**2026-09-23 家机实测更狠：只要源文件里有中文注释，漏 `/utf-8` 就直接 `error C4716: 必须返回一个值`** —— UTF-8 字节被按 GBK 解析后吃掉了行尾换行，把下一行代码吸进注释里，**构建根本过不去，不只是警告** | `SetConsoleOutputCP(CP_UTF8)` + 编译加 `/utf-8` + 源文件存 UTF-8；`tests/test_main.cpp` 的 `source_is_compiled_as_utf8` 用例长期守着这条（并已做过去掉 `/utf-8` 的负向验证） | S0 起（已提前命中）/ S1 视觉验证 |
 | E-2 | **VT 模式未启用** | 出现字面的 `←[H` 而不是光标归位 | `SetConsoleMode(...ENABLE_VIRTUAL_TERMINAL_PROCESSING)`；用 Windows Terminal 而非老 conhost | S1 |
 | E-3 | **终端闪烁** | 画面撕裂/闪动 | 一帧一次 `write`、`ESC[H` 覆写而非 `ESC[2J`、S3 加脏行 diff | S1/S3 |
 | E-4 | **Windows 输入卡死** | 鼠标在终端里点一下后无响应 | 关闭 `ENABLE_QUICK_EDIT_MODE`（需同时置 `ENABLE_EXTENDED_FLAGS`） | S2 |
@@ -974,7 +982,9 @@ git push -u origin main
 git clone https://github.com/<你的用户名>/mini-engine.git
 cd mini-engine
 
-# 1. 身份：两台机必须完全一致，否则同一人看起来像两个人
+# 1. 身份：**按机器各用各的**（2026-09-23 决定，不再要求两机一致）——
+#    公司机用公司邮箱，家机用个人邮箱，各自设成**仓库 local** config 即可，
+#    不会互相覆盖，也不会写进仓库。（家机：HUNK <wuunj@126.com>）
 git config user.name  "Wuyangzhi"
 git config user.email "wu.yangzh@aerok.com.cn"
 
@@ -1008,7 +1018,7 @@ git pull --rebase
 
 > Git Bash（代码页 936）里 `git log` 的中文可能显示成乱码。看日志请用 **VS Code 的终端 / Git 面板**（UTF-8），或临时 `chcp 65001`。这只是显示问题，仓库内容与 GitHub 页面均正常。
 >
-> 以后若想改用个人邮箱作为作者：在只有 1 个 commit 时是零成本（`git config user.email ... && git commit --amend --reset-author --no-edit`），commit 一多就得重写历史。
+> 关于作者邮箱：**2026-09-23 起按机器各用各的**（家机个人邮箱、公司机公司邮箱）。历史里那 2 个 commit 仍保留公司身份，**不打算重写** —— 重写历史会让两机 rebase 变麻烦，而作者名不同不影响任何功能。
 
 ## 附录 B：CMakePresets.json（草案）
 
