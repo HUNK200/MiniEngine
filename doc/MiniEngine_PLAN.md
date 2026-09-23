@@ -117,7 +117,9 @@ c++_simple_engine/
 ├── doc/                        # 全部文档（2026-09-23 起集中于此）
 │   ├── input_plan.md
 │   ├── MiniEngine_PLAN.md      # 本文件
-│   ├── S0_CHECKLIST.md         # S0 清单 + 复习阶梯 + 勾选进度
+│   ├── S0_CHECKLIST.md         # S0 清单 + CMake 补丁清单 + 勾选进度
+│   ├── MINITEST_SPEC.md        # 测试框架 MiniTest 的规格
+│   ├── CTEST_NOTES.md          # CTest 入门与 GoogleTest 分工
 │   └── WORK_MODE.md            # 上班模式开关正文
 │
 ├── .agents/skills/work-mode/    # 上班模式开关的 skill 入口（转发到 doc/WORK_MODE.md）

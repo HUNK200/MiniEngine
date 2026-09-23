@@ -1,11 +1,22 @@
 # S0 实现清单与复习阶梯
 
-> **用法**：在"进度板"里勾进度；从 `R1` 往下走复习阶梯，每步都有"预期现象 + 通过标志"。
+> **用法**：在"进度板"里勾进度。复习阶梯 `R1`~`R8` 是**可选路径**（想彻底弄懂 CMake/CTest 时再走）。
 > 本文件只描述**要什么、怎么验证**，不含实现代码（`AGENTS.md` 约定：AI 默认只出方案）。
 >
-> 相关文件：`doc/MiniEngine_PLAN.md`（阶段定义、附录 A 命令速查）、`doc/CTEST_NOTES.md`（CTest 入门，与 GoogleTest 的分工）、`AGENTS.md`（项目约定）。
+> 相关文件：`doc/MiniEngine_PLAN.md`（阶段定义、附录 A 命令速查）、`doc/CTEST_NOTES.md`（CTest 入门，与 GoogleTest 的分工）、`doc/MINITEST_SPEC.md`（要手写的测试框架规格）、`AGENTS.md`（项目约定）。
 >
 > **环境提醒**：默认 shell 是 **PowerShell**。退出码用 `$LASTEXITCODE`（不是 `echo $?`），路径用反斜杠。
+
+---
+
+## 当前状态（2026-09-23 停在这里）
+
+**已做**：目录结构、三份 CMakeLists 雏形、`main.cpp`（hello world）、`engine` 空库能构建；R1 观察完成。
+
+**阻塞点**：`tests/` 从未进入构建图 → `mini_tests` 编译不出来 → 三份测试文件写了也没法验证。
+**解法**：4 处 CMake 补丁（见第 10 节），全部是几行的东西，不是重构。
+
+**回来后的第一步**：补完 `C1`~`C4` → 按 `doc/MINITEST_SPEC.md` 第 4 节的顺序写 `test_main.cpp` → `MiniTest.h` → `test_smoke.cpp`。
 
 ---
 
@@ -16,13 +27,17 @@
 - [x] `cmake -S . -B build` 能配置通过、`engine` 能构建
 - [x] **R1** 观察：看清 ctest 为什么一个测试都找不到
       → 结论：`if(MINI_BUILD_TESTS)` 恒为假 → `tests/` 从未进配置。证据三条：`ctest -N` 报 `Total Tests: 0`；`build/` 下没有 `tests/` 目录；没有 `CTestTestfile.cmake`
-- [ ] **R2** 加 `option()` + `enable_testing()`，故意撞出第一个配置期报错　**← 当前**
-- [ ] **R3** 加别名，撞出"静默降级"的链接期报错
-- [ ] **R4** 定义 `mini_options`，让链接链通
-- [ ] **R5** 写 MiniTest，拿到第一次 `1/1 passed`
-- [ ] **R6** 加可执行目标与输出目录，让 `MiniEngine.exe` 首次跑出来
+- [ ] **C1** 顶层：用 `option()` 声明 `MINI_BUILD_TESTS`（默认 ON）
+- [ ] **C2** 顶层：`enable_testing()`（必须在 `add_subdirectory` 之前）
+- [ ] **C3** `engine/CMakeLists.txt`：`add_library(MiniEngine::engine ALIAS engine)`
+- [ ] **C4** 顶层：`mini_options` INTERFACE 库（`/utf-8`、`NOMINMAX`、警告等级）
+- [ ] **C5**（可选）统一输出目录五件套 → exe 才会落在 `build\bin\Debug\`
+- [ ] **R5** 写 MiniTest，拿到第一次 `1/1 passed`（规格见 `doc/MINITEST_SPEC.md`）
+- [ ] **R6** 加 `add_executable(MiniEngine main.cpp)`，让 exe 首次跑出来
 - [ ] **R7** 填 Version，验证静态库真的被链上
 - [ ] **R8** 反向验证 + `CMakePresets.json` + 提交
+
+> `R2`~`R4`（"故意撞 CMake 报错"的复习路径）已被 `C1`~`C4` 取代。想弄懂报错时机再回头看，不影响 S0 完成。
 
 ---
 
@@ -399,3 +414,99 @@ ctest --test-dir build -C Debug --output-on-failure    # 100% tests passed, out 
 - [ ] PLAN 附录 A 的 `cmake --preset ms-msvc-debug` 依赖 `CMakePresets.json` 存在 → 做到了才不改文档
 - [ ] PLAN 的 S0 小节写的是"`ctest` 1/1 passed" → 与第 6 节一致
 - [ ] 若实际 target 名/输出路径与 PLAN C.2 不同（**大概率不同**，C.2 是阶段 1 的样子）→ 在 PLAN 的 S0 小节补一行实际结构，别让 C.2 误导三天后的你
+
+---
+
+## 10. CMake 4 处补丁清单（阻塞点解法）
+
+按依赖顺序改，**中间会看到两个报错，都是预期的**——它们正好是"改对了没有"的判据。
+
+### C1 顶层：声明测试开关
+
+| 项 | 要求 |
+| --- | --- |
+| 位置 | `project(...)` 之后、`add_subdirectory(...)` 之前 |
+| API | `option()` |
+| 语义 | 名字 `MINI_BUILD_TESTS`，一句描述，默认 `ON` |
+
+用 `option()` 而不是 `set()`：前者进 CMake 缓存、有真正的 ON/OFF 布尔语义、可被 `-DMINI_BUILD_TESTS=OFF` 覆盖；后者每次 configure 都重置，命令行覆盖会失效。
+
+**验证**：`build\CMakeCache.txt` 里出现 `MINI_BUILD_TESTS:BOOL=ON`。
+
+### C2 顶层：开 CTest
+
+| 项 | 要求 |
+| --- | --- |
+| 位置 | **必须在 `add_subdirectory(...)` 之前**，且必须在**顶层** |
+| API | `enable_testing()` |
+
+它的作用是"从这一层开始生成 `CTestTestfile.cmake` 并向下传播"。写在 `tests/` 里，`ctest` 从顶层找就找不到。
+
+**验证**：`build\CTestTestfile.cmake` 与 `build\tests\CTestTestfile.cmake` 同时出现。
+（可选替代：`include(CTest)` 会额外给一个标准 `BUILD_TESTING` 选项；本项目已用 `MINI_BUILD_TESTS`，不必换。）
+
+**改完 C1 + C2 立刻 configure，会出现第一个报错（预期）**：
+
+```text
+CMake Error at tests/CMakeLists.txt:5 (target_link_libraries):
+  Target "mini_tests" links to:
+    MiniEngine::engine
+  but the target was not found.
+```
+
+它在 `-- Configuring done` 之后、`-- Generating done` **之前**。反过来说：**看到 `-- Generating done` 就等于整个目标图是自洽的**。
+
+### C3 `engine/CMakeLists.txt`：加别名
+
+| 项 | 要求 |
+| --- | --- |
+| 位置 | `add_library(engine STATIC ...)` 之后 |
+| API | `add_library(... ALIAS ...)`，别名名必须是 **`MiniEngine::engine`** |
+
+带 `::` 的名字必须对应真实存在的目标，否则 generate 阶段硬报错——拼写错误当场暴露，这是好事。
+
+**改完 configure 应通过，但构建会撞第二个报错（预期）**：
+
+```text
+LNK1181: cannot open input file 'mini_options.lib'
+```
+
+### C4 顶层：定义 `mini_options`
+
+| 项 | 要求 |
+| --- | --- |
+| 位置 | **必须在 `add_subdirectory(engine)` 之前** |
+| API | `add_library(mini_options INTERFACE)` |
+
+INTERFACE 库不产出二进制，只是"装编译选项的包裹"。内容全部用 **INTERFACE** 作用域：
+
+- `target_compile_definitions(... INTERFACE NOMINMAX WIN32_LEAN_AND_MEAN)`
+- MSVC 分支：`/W4 /permissive- /utf-8 /Zc:__cplusplus`（`/utf-8` 在 936 代码页下是必需品，不是优化）
+- 其他编译器分支：`-Wall -Wextra -Wpedantic -Wshadow`
+- 用 `if(MSVC)` 区分，别假设只有一种编译器
+
+**为什么必须放前面**：`engine` 与 `tests` 都已经写了 `target_link_libraries(... mini_options)`。这个名字不含 `::`，CMake 会当普通库名，必须在使用它的 target 之前定义。
+
+**改完 C4 后，构建的最后一步会失败，同样是预期内**：`tests\*.cpp` 还是空文件 → `unresolved external symbol main`。
+
+> **这个报错出现，就说明 C1~C4 全部改对了**——剩下只是把三份文件写出来（规格见 `doc/MINITEST_SPEC.md`）。
+
+### C5（可选，不阻塞）统一输出目录
+
+不做也能跑，只是 exe 路径会变（落在 `build\tests\Debug\` 或 `build\Debug\` 之类的地方）。做了才是文档里写的 `build\bin\Debug\`。
+
+- `CMAKE_RUNTIME_OUTPUT_DIRECTORY` = `${CMAKE_BINARY_DIR}/bin`
+- **另外**逐个设 `_DEBUG` / `_RELEASE` / `_RELWITHDEBINFO` / `_MINSIZEREL` 四个后缀变量，值同上
+- 配置名必须**全大写**（`_Debug` 无效）；VS 是多配置生成器，只设前者不起作用
+
+没做 C5 时找 exe：`Get-ChildItem -Recurse -Filter mini_tests.exe build`
+
+### 报错对照表
+
+| 现象 | 原因 |
+| --- | --- |
+| `Target ... MiniEngine::engine but the target was not found` | C3 没做，或别名名字拼错 |
+| `cannot open input file 'mini_options.lib'` | C4 没做，或放到了 `add_subdirectory` 之后 |
+| configure 通过但 `ctest -N` 仍报 `Total Tests: 0` | C2 的 `enable_testing()` 写在子目录里了 |
+| `CMakeCache.txt` 里没有 `MINI_BUILD_TESTS` | C1 没做，或用了 `set()`（不进缓存） |
+| `unresolved external symbol main` | 正常，等你写 `test_main.cpp` |
