@@ -934,8 +934,8 @@ while (!shouldQuit) {
 ## 附录 A：命令速查
 
 ```bash
-# ---- 首次配置 ----
-git init
+# ---- 首次配置（家：本机，已完成，保留备查）----
+git init -b main
 cmake --preset ms-msvc-debug          # 或：cmake -S . -B build
 
 # ---- 日常循环 ----
@@ -954,6 +954,61 @@ cmake --build build-clang --config Debug
 # ---- Sanitizer（clang/gcc）----
 cmake -S . -B build-asan -DMINI_SANITIZE=ON
 ```
+
+### 附录 A.1 首次推送到 GitHub（私有仓库）
+
+```bash
+# 1. 先在 GitHub 网页上建一个空仓库（不要勾 README / .gitignore / LICENSE）
+#    建议名：mini-engine
+# 2. 关联远程并推送（SSH 或 HTTPS 二选一）
+git remote add origin https://github.com/<你的用户名>/mini-engine.git   # HTTPS，凭据管理器会弹浏览器登录
+# git remote add origin git@github.com:<你的用户名>/mini-engine.git     # SSH
+git push -u origin main
+```
+
+### 附录 A.2 公司电脑首次 clone 后的必做四步（**关键**）
+
+`.git/config` **不在版本控制里**，所以下面这些设置**不会跟着仓库同步**，每台新机器都要重设一次：
+
+```bash
+git clone https://github.com/<你的用户名>/mini-engine.git
+cd mini-engine
+
+# 1. 身份：两台机必须完全一致，否则同一人看起来像两个人
+git config user.name  "Wuyangzhi"
+git config user.email "wu.yangzh@aerok.com.cn"
+
+# 2. 换行与路径：免疫 Git for Windows 默认的 core.autocrlf=true
+git config core.autocrlf false
+git config core.longpaths true      # build 目录层级深，避开 Windows 260 字符限制
+git config core.quotepath false     # 中文文件名正常显示
+
+# 3. 两机交替开发用 rebase，保持线性历史
+git config pull.rebase true
+
+# 4. 验证：应输出 6 个文件，且全部是 i/lf w/lf
+git ls-files --eol
+```
+
+> ⚠️ **`build/` 绝不能跨机同步**（已在 `.gitignore` 里）。两台机器的 CMake 缓存、生成器、绝对路径都不同，到公司后第一件事是**重新 configure**，不要复制家里的 `build` 目录：
+> ```bash
+> cmake -S . -B build
+> ```
+> 另外，别把仓库放在 OneDrive / 坚果云等网盘同步目录里——网盘同步 `.git/` 会损坏仓库。
+
+### 附录 A.3 两机交接的日常动作
+
+```bash
+# 离开一台机器前（务必 push，否则另一台看不到）
+git add -A && git commit -m "wip: 离开前保存" && git push
+
+# 到另一台机器后（先 pull 再动手，避免分叉）
+git pull --rebase
+```
+
+> Git Bash（代码页 936）里 `git log` 的中文可能显示成乱码。看日志请用 **VS Code 的终端 / Git 面板**（UTF-8），或临时 `chcp 65001`。这只是显示问题，仓库内容与 GitHub 页面均正常。
+>
+> 以后若想改用个人邮箱作为作者：在只有 1 个 commit 时是零成本（`git config user.email ... && git commit --amend --reset-author --no-edit`），commit 一多就得重写历史。
 
 ## 附录 B：CMakePresets.json（草案）
 
