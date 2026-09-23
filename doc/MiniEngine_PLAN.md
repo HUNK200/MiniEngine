@@ -107,14 +107,21 @@ ctest --test-dir build -C Debug --output-on-failure
 
 ```text
 c++_simple_engine/
+├── AGENTS.md                   # 项目约定（必须留根目录：会话级自动加载）
 ├── CMakeLists.txt              # 顶层：标准/选项/子目录
 ├── CMakePresets.json           # 预设 ms-msvc / ms-clang，避免手敲参数
+├── .gitattributes              # 行尾统一 LF（两机同步用）
 ├── .gitignore
-├── .editorconfig               # 统一 UTF-8 / LF-CRLF / 缩进
-├── input_plan.md
-├── MiniEngine_PLAN.md          # 本文件
-├── README.md                   # 阶段 14 再写，别提前写
 ├── main.cpp                    # 唯一入口，<20 行
+├── README.md                   # 阶段 14 再写，别提前写
+│
+├── doc/                        # 全部文档（2026-09-23 起集中于此）
+│   ├── input_plan.md
+│   ├── MiniEngine_PLAN.md      # 本文件
+│   ├── S0_CHECKLIST.md         # S0 清单 + 复习阶梯 + 勾选进度
+│   └── WORK_MODE.md            # 上班模式开关正文
+│
+├── .agents/skills/work-mode/    # 上班模式开关的 skill 入口（转发到 doc/WORK_MODE.md）
 │
 ├── engine/
 │   ├── CMakeLists.txt          # add_library(engine STATIC ...)
@@ -998,7 +1005,7 @@ git config core.quotepath false     # 中文文件名正常显示
 # 3. 两机交替开发用 rebase，保持线性历史
 git config pull.rebase true
 
-# 4. 验证：应输出 6 个文件，且全部是 i/lf w/lf
+# 4. 验证：列出的每个文件都应是 i/lf w/lf（不应出现 i/crlf 或 w/crlf）
 git ls-files --eol
 ```
 

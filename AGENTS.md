@@ -56,11 +56,14 @@
 
 纯命令行（Terminal）的 C++ 2D/3D 游戏引擎实验项目，个人研究用，不是商业项目。
 
+**目录约定**：所有文档放 `doc/`；`AGENTS.md` 必须留在根目录——它是会话级自动加载的项目指令，挪进 `doc/` 就失效了。
+
 | 文件 | 作用 |
 | --- | --- |
-| `input_plan.md` | 我的原始需求（不要改） |
-| `MiniEngine_PLAN.md` | 实施方案：A~G 设计 + H 节 7 天冲刺排期 + 附录命令速查 |
-| `WORK_MODE.md` | 上班碎片时间微任务开关的正文 |
+| `doc/input_plan.md` | 我的原始需求（不要改） |
+| `doc/MiniEngine_PLAN.md` | 实施方案：A~G 设计 + H 节 7 天冲刺排期 + 附录命令速查 |
+| `doc/S0_CHECKLIST.md` | S0 实现清单、当前缺口诊断、cmake/ctest 复习阶梯与勾选进度 |
+| `doc/WORK_MODE.md` | 上班碎片时间微任务开关的正文 |
 | `.agents/skills/work-mode/` | 上面那个开关的 skill 入口 |
 
 ---
@@ -101,7 +104,7 @@ ctest --test-dir build -C Debug --output-on-failure
 - commit 信息用中文，带前缀：`feat:` / `fix:` / `docs:` / `perf:` / `refactor:` / `chore:`
 - 行尾统一 **LF**（由 `.gitattributes` 强制）；源文件 UTF-8 **无 BOM**
 - **绝不提交** `build/`、`CMakeUserPresets.json`、任何含绝对路径的文件
-- 改了行为就同步更新 `MiniEngine_PLAN.md` 的对应小节——文档和代码不能只有一个是对的
+- 改了行为就同步更新 `doc/MiniEngine_PLAN.md` 的对应小节——文档和代码不能只有一个是对的
 - 两台机器（家 / 公司）交替开发，clone 后按 **PLAN 附录 A.2** 重设仓库级 git 配置
 
 ---
