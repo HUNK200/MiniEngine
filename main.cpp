@@ -1,4 +1,6 @@
-#include "mini/core/Version.h"
+// 尖括号 + `mini/` 前缀：引擎头只能从 PUBLIC include 目录找，
+// 不允许用相对路径穿透到 engine/src/（S0_CHECKLIST 第 5.5 节 / R7）
+#include <mini/core/Version.h>
 
 #include <cstdio>
 
