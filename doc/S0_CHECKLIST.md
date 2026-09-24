@@ -9,14 +9,22 @@
 
 ---
 
-## 当前状态（2026-09-23 停在这里）
+## 当前状态（2026-09-24：**S0 已完成并通过验收**）
 
-**已做**：目录结构、三份 CMakeLists 雏形、`main.cpp`（hello world）、`engine` 空库能构建；R1 观察完成。
+**已完成**：目录结构、三份 CMakeLists、`mini_options` INTERFACE 库、`MiniEngine::engine` 别名、`CMakePresets.json`、`Version`、MiniTest 框架。
 
-**阻塞点**：`tests/` 从未进入构建图 → `mini_tests` 编译不出来 → 三份测试文件写了也没法验证。
-**解法**：4 处 CMake 补丁（见第 10 节），全部是几行的东西，不是重构。
+| 验收项 | 结果 |
+| --- | --- |
+| `cmake -S . -B build` | 通过（家机 CMake 4.4.3 / 公司机 4.2.1 各跑一次） |
+| `cmake --build build --config Debug` | 通过，**0 warning** |
+| `ctest --test-dir build -C Debug` | **1/1 passed** |
+| `mini_tests.exe` | `3 passed, 0 failed`（suite：`Core` / `Build` / `TestHarness`） |
+| `MiniEngine.exe` | 打印 `MiniEngine 0.1.0-dev` |
+| 反向验证 | 断言失败 → ctest 报 0%；0 用例 → 退出码 1；两处现场均已还原 |
 
-**回来后的第一步**：补完 `C1`~`C4` → 按 `doc/MINITEST_SPEC.md` 第 4 节的顺序写 `test_main.cpp` → `MiniTest.h` → `test_smoke.cpp`。
+**历史**：曾经的阻塞点是 `tests/` 从未进入构建图（第 3、10 节记录了那次诊断），现已全部补齐。
+
+**下一步**：进入 **S1 FrameBuffer**（阶段定义见 `doc/MiniEngine_PLAN.md` B 节）。
 
 ---
 
@@ -27,17 +35,17 @@
 - [x] `cmake -S . -B build` 能配置通过、`engine` 能构建
 - [x] **R1** 观察：看清 ctest 为什么一个测试都找不到
       → 结论：`if(MINI_BUILD_TESTS)` 恒为假 → `tests/` 从未进配置。证据三条：`ctest -N` 报 `Total Tests: 0`；`build/` 下没有 `tests/` 目录；没有 `CTestTestfile.cmake`
-- [ ] **C1** 顶层：用 `option()` 声明 `MINI_BUILD_TESTS`（默认 ON）
-- [ ] **C2** 顶层：`enable_testing()`（必须在 `add_subdirectory` 之前）
-- [ ] **C3** `engine/CMakeLists.txt`：`add_library(MiniEngine::engine ALIAS engine)`
-- [ ] **C4** 顶层：`mini_options` INTERFACE 库（`/utf-8`、`NOMINMAX`、警告等级）
-- [ ] **C5**（可选）统一输出目录五件套 → exe 才会落在 `build\bin\Debug\`
-- [ ] **R5** 写 MiniTest，拿到第一次 `1/1 passed`（规格见 `doc/MINITEST_SPEC.md`）
-- [ ] **R6** 加 `add_executable(MiniEngine main.cpp)`，让 exe 首次跑出来
-- [ ] **R7** 填 Version，验证静态库真的被链上
-- [ ] **R8** 反向验证 + `CMakePresets.json` + 提交
+- [x] **C1** 顶层：用 `option()` 声明 `MINI_BUILD_TESTS`（默认 ON）
+- [x] **C2** 顶层：`enable_testing()`（必须在 `add_subdirectory` 之前）
+- [x] **C3** `engine/CMakeLists.txt`：`add_library(MiniEngine::engine ALIAS engine)`
+- [x] **C4** 顶层：`mini_options` INTERFACE 库（`/utf-8`、`NOMINMAX`、警告等级）
+- [x] **C5** 统一输出目录 → exe 落在 `build\bin\Debug\`（**只设** `CMAKE_RUNTIME_OUTPUT_DIRECTORY` 即可，原因见坑 #5）
+- [x] **R5** 写 MiniTest，拿到第一次 `1/1 passed`（规格见 `doc/MINITEST_SPEC.md`；2026-09-24 已按规格落成 `suite.name` 分组 + `test_smoke.cpp`）
+- [x] **R6** 加 `add_executable(MiniEngine main.cpp)`，让 exe 首次跑出来
+- [x] **R7** 填 Version，验证静态库真的被链上
+- [x] **R8** 反向验证 + `CMakePresets.json` + 提交（5 个 commit，2026-09-24 已推送 `87e0d73..00ae8ed`）
 
-> `R2`~`R4`（"故意撞 CMake 报错"的复习路径）已被 `C1`~`C4` 取代。想弄懂报错时机再回头看，不影响 S0 完成。
+> 剩下的**只有可选项**：`R2`~`R4`（"故意撞 CMake 报错"的复习路径）已被 `C1`~`C4` 的实战取代，想弄懂"配置期 vs 链接期报错时机"随时回头看；`ms-clang-debug` / `ms-asan` 两个预设还没实测过（计划跟 S4 的 Math 测试一起验）。
 
 ---
 
@@ -66,22 +74,26 @@ ctest --test-dir build -C Debug --output-on-failure
 
 | 文件 | 现状 | 责任 | 不要放什么 |
 | --- | --- | --- | --- |
-| `CMakeLists.txt` | ⚠️ 半成品 | 定标准、定义编译选项接口库、统一输出目录、开 ctest、建可执行目标 | 具体 target 的源文件 |
-| `CMakePresets.json` | ❌ 缺 | 让 `doc/MiniEngine_PLAN.md` 附录 A 的 `cmake --preset` 真能跑 | 绝对路径 |
-| `main.cpp` | ✅ 能编译 | 打印版本号，证明库可用 | 任何"预留的主循环" |
-| `engine/CMakeLists.txt` | ⚠️ 缺别名 | 造 `engine` 静态库 + `MiniEngine::engine` 别名 | 编译选项的重复粘贴 |
-| `engine/include/mini/core/Version.h` | ❌ **空文件** | 唯一 public 头，是"库能对外暴露"的最小证明 | 任何实现 |
-| `engine/src/core/Version.cpp` | ❌ **空文件** | 版本信息的定义 | 任何真实功能 |
-| `tests/CMakeLists.txt` | ⚠️ 依赖缺失 | 造测试可执行文件 + 向 CTest 注册 | 测试逻辑本身 |
-| `tests/MiniTest.h` | ❌ **空文件** | 断言宏 + 自注册机制（header-only） | 依赖任何引擎头 |
-| `tests/test_main.cpp` | ❌ **空文件** | 注册表定义 + 参数解析 + 退出码 | 具体用例 |
-| `tests/test_smoke.cpp` | ❌ **空文件** | 第一个用例 | — |
+| `CMakeLists.txt` | ✅ 完成 | 定标准、定义编译选项接口库、统一输出目录、开 ctest、建可执行目标 | 具体 target 的源文件 |
+| `CMakePresets.json` | ✅ 完成 | 让 `doc/MiniEngine_PLAN.md` 附录 A 的 `cmake --preset` 真能跑 | 绝对路径 |
+| `main.cpp` | ✅ 完成 | 打印版本号，证明库可用 | 任何"预留的主循环" |
+| `engine/CMakeLists.txt` | ✅ 完成 | 造 `engine` 静态库 + `MiniEngine::engine` 别名 | 编译选项的重复粘贴 |
+| `engine/include/mini/core/Version.h` | ✅ 完成 | 唯一 public 头，是"库能对外暴露"的最小证明 | 任何实现 |
+| `engine/src/core/Version.cpp` | ✅ 完成 | 版本信息的定义 | 任何真实功能 |
+| `tests/CMakeLists.txt` | ✅ 完成 | 造测试可执行文件 + 向 CTest 注册（`$<TARGET_FILE:>`） | 测试逻辑本身 |
+| `tests/MiniTest.h` | ✅ 完成（110 → 129 行） | 断言宏 + 自注册机制（header-only，只有声明与宏） | 注册表实例、任何引擎头 |
+| `tests/test_main.cpp` | ✅ 完成 | 注册表定义 + 参数解析 + 退出码 | 具体用例 |
+| `tests/test_smoke.cpp` | ✅ 完成（3 个用例） | 用例本体，按 suite 分组 | runner 逻辑 |
 
-> **重要认知**：`Version.cpp` 现在是空的，但它**照样能编译成 `engine.lib`**——CMake 只要求源文件存在，不要求有内容。所以"能构建"完全不等于"有东西"。这正是 S0 必须写 `Version` 的原因：它是唯一能验证"库真的被使用"的手段。
+> **保留一条历史认知**：`Version.cpp` 一度是空的，但它**照样能被编译成 `engine.lib`**——CMake 只要求源文件存在，不要求有内容。所以"能构建"从不等于"有东西"。现在 `Version` 有实现，正是为了把它变成"静态库真被链接"的证据（见 R7 的验收方式）。
 
 ---
 
-## 3. 当前缺口诊断（证据级）
+## 3. 缺口诊断（2026-09-23 的快照，**已全部修完**）
+
+> 本节是**历史记录**：当时 `tests/` 还没进构建图，下面每条都是照着构建产物实测出来的。
+> G1~G8 现已全部补齐（`ctest -N` 现在报 `Total Tests: 1`，`build/CTestTestfile.cmake` 与 `build/tests/CTestTestfile.cmake` 都在）。
+> 保留它的价值是记住那一类"**静默失败**"——尤其 G1 的 `if(未定义变量)`。
 
 下表每一条都有构建产物作为证据，不是推测。
 
@@ -302,7 +314,7 @@ cmake --build build --config Debug
 - C++ 标准件与 `option()` 声明
 - `mini_options` INTERFACE 库（见 R4）
 - **`enable_testing()` 在 `add_subdirectory()` 之前**（见 R2）
-- 统一输出目录五件套（见 R6）
+- 统一输出目录：**只设** `CMAKE_RUNTIME_OUTPUT_DIRECTORY`（多配置生成器会自动再补一层 `Debug/`，见 R6 与坑 #5）
 - `add_subdirectory(engine)` → `add_subdirectory(tests)` → `add_executable(MiniEngine main.cpp)`
 - 禁用：`include_directories()` / `link_libraries()` / `file(GLOB)` 收集源文件
 
@@ -337,6 +349,12 @@ MINI_FAIL(msg)                       // 无条件失败
 
 **运行期行为**：无参跑全部；`argv[1]` 为 suite 名则只跑该 suite；`--list` 列出用例名后返回 0；输出 `N passed, M failed`；失败行固定三行内：`[FAIL] suite.case` / `file:line` / 表达式原文。
 
+**接口落地情况（2026-09-24）**：已按上面这组签名实现在 `tests/MiniTest.h` / `tests/test_main.cpp` / `tests/test_smoke.cpp`。三处与规格的细化差异，规格文档（`MINITEST_SPEC.md`）里已同步：
+
+- 头里多一个 header-only 的 `inline` 模板 `ToString`（无状态，只负责把断言两侧的值变成字符串）
+- runner 对"suite 名不存在"报错并返回非 0（防手滑打错 suite 名拿到假绿）
+- 断言宏先把条件存进 `const bool` 再判断：否则 `MINI_CHECK_NEAR(0.1 + 0.2, 0.3, 1e-9)` 这种整条都是常量的写法会撞 MSVC 的 **C4127**，把用例代码搞脏（`/W4` 下是硬约束）
+
 **必须想清楚的三件事**：见 R5 的三条关键约束。
 
 **为什么不用更简单的方案**：手写 `{name, fn}` 数组也完全可以，还少 30 行。选自注册是为了顺手覆盖"静态初始化 + 跨 TU"这个真实工程问题。**不想碰就手写数组，别为此纠结。**
@@ -358,25 +376,29 @@ MINI_FAIL(msg)                       // 无条件失败
 cmake -S . -B build
 cmake --build build --config Debug
 Test-Path build\bin\Debug\MiniEngine.exe              # 期望 True
-.\build\bin\Debug\MiniEngine.exe                      # 打印版本号
-.\build\bin\Debug\mini_tests.exe                      # 1 passed, 0 failed
-$LASTEXITCODE                                          # 期望 0
-ctest --test-dir build -C Debug --output-on-failure    # 100% tests passed, out of 1
+.\build\bin\Debug\MiniEngine.exe                      # 打印 MiniEngine 0.1.0-dev
+.\build\bin\Debug\mini_tests.exe                      # 3 passed, 0 failed
+.\build\bin\Debug\mini_tests.exe --list               # 列出 suite.case；$LASTEXITCODE = 0
+.\build\bin\Debug\mini_tests.exe Core                 # 只跑 Core 组：1 passed, 0 failed
+.\build\bin\Debug\mini_tests.exe Nope                 # suite 名不存在 → 报错，退出码 1（不是假绿）
+$LASTEXITCODE                                         # 期望 0
+ctest --test-dir build -C Debug --output-on-failure   # 100% tests passed, out of 1
 ```
 
-无 C4819 警告、无 CMake Warning。
+无 C4819 / C4127 等任何警告、无 CMake Warning。
 
 **反向验证（别跳）**
 
-1. **证明测试不是永远绿**：把 `test_smoke.cpp` 的断言改成故意失败 → 重新构建 → ctest 必须报失败、退出码非 0
-2. **证明警告真的开着**：故意加一个未使用变量 → 重新构建 → 应出现 C4101
-3. **证明库真的被链上**：改一下 `Version.cpp` 里的版本串 → 重新构建 → exe 输出必须跟着变（没变说明你跑的不是刚构建的产物）
+1. **证明测试不是永远绿**：把 `test_smoke.cpp` 的断言改成故意失败 → 重新构建 → 必须打印 `[FAIL] suite.case` + `file:line` + 两侧的值，退出码非 0，`ctest` 报 `0% tests passed`
+2. **证明"0 个用例"不会假绿**：把 `test_smoke.cpp` 从 `add_executable` 里临时去掉 → 重新构建 → 必须打印 `no case registered` 且退出码非 0（这条是防 CTest 报 100% passed 的门闩）
+3. **证明警告真的开着**：故意加一个未使用变量 → 重新构建 → 应出现 C4101
+4. **证明库真的被链上**：改一下 `Version.cpp` 里的版本串 → 重新构建 → exe 输出必须跟着变（没变说明你跑的不是刚构建的产物）
 
-三条都符合预期，S0 才算真的完成。
+四条都符合预期，S0 才算真的完成。**第 1、2 条在 2026-09-24 已实跑过并还原现场**。
 
 ---
 
-## 7. 十个坑
+## 7. 十一个坑
 
 | # | 现象 | 原因与对策 |
 | --- | --- | --- |
@@ -384,12 +406,13 @@ ctest --test-dir build -C Debug --output-on-failure    # 100% tests passed, out 
 | 2 | 构建报"没有可用的配置" | 多配置生成器必须 `--config Debug` |
 | 3 | `ctest` 说 No tests were found | 三个原因按序排查：`tests/` 没进配置 → 没 `enable_testing()` → 漏 `-C Debug` |
 | 4 | `add_library` 报 No SOURCES given | **CMake 不接受没有源文件的库**。所以 S0 不建空的 `game/`；要建就用 `INTERFACE` 类型，等有源文件再改 STATIC |
-| 5 | exe 跑到 `build/Debug/` 或 `build/x64/Debug/` | 只设了 `CMAKE_RUNTIME_OUTPUT_DIRECTORY`，漏了 `_DEBUG`/`_RELEASE`（且必须全大写） |
+| 5 | exe 跑到 `build/Debug/`、`build/x64/Debug/` 或**少了 `Debug` 那一层** | 两种相反的错误：① **只设** `CMAKE_RUNTIME_OUTPUT_DIRECTORY` 时才由生成器自动补 `Debug/`（本项目采用，实测 exe 落在 `build\bin\Debug\`）；② 如果再去逐个设 `_DEBUG`/`_RELEASE` 四个后缀变量，这些变量是**按原样使用**，结果反而掉到 `build/bin/`（家机踩过）。别两边都设 |
 | 6 | 一堆 C4819 / 中文注释乱码 | 漏 `/utf-8`；源文件必须 UTF-8 **无 BOM** |
 | 7 | 找不到 `<mini/core/Version.h>` | `target_include_directories` 漏了/PUBLIC 写成 PRIVATE/路径少 `include` 一层 |
 | 8 | 改了头文件但增量构建没生效 | 检查是否误用 `file(GLOB)` 收集源文件（**S0 明确禁止 GLOB**，手写源文件列表） |
 | 9 | 编译期找不到 `std::max`/`min` | 以后引入 `<windows.h>` 时没定义 `NOMINMAX`（R4 已提前加上） |
 | 10 | CMake 报路径过长 | 已设 `core.longpaths true`；仍失败就 `cmake -S . -B D:/b/mini` 把 build 移出仓库 |
+| 11 | 断言里写常量，MSVC 报 **C4127**（条件表达式是常量） | `if (常量)` 触发。断言宏里先把条件存进 `const bool` 再判断即可绕开（2026-09-24 实测，见 5.4） |
 
 **另外一条不在坑表但要记住**：`if(未定义变量)` **不报错、只当假**。G1 就是死在这里，而且完全静默。以后凡是"某个子目录的 target 神秘消失"，第一个怀疑对象就是它。
 
@@ -407,17 +430,21 @@ ctest --test-dir build -C Debug --output-on-failure    # 100% tests passed, out 
 
 顺序上 3 和 4 可对调。**"每个 commit 都能构建"比切得漂亮重要**——构建不过就合并到下一个。
 
+> **实际落地情况（2026-09-24 记录）**：家机把这批改动合成成了**一个** commit `7115e29 feat: add S0 build skeleton with engine static lib and ctest`（含 CMake、`Version`、`MiniTest.h`、`CMakePresets.json` 全部）；2026-09-24 又按 `MINITEST_SPEC.md` 把测试框架重构了一次（`test: MiniTest 按 suite 分组…`，含新增 `test_smoke.cpp`）。这张表留着当切分参考，不必回头去凑。
+
 ---
 
 ## 9. 文档同步
 
-- [ ] PLAN 附录 A 的 `cmake --preset ms-msvc-debug` 依赖 `CMakePresets.json` 存在 → 做到了才不改文档
-- [ ] PLAN 的 S0 小节写的是"`ctest` 1/1 passed" → 与第 6 节一致
-- [ ] 若实际 target 名/输出路径与 PLAN C.2 不同（**大概率不同**，C.2 是阶段 1 的样子）→ 在 PLAN 的 S0 小节补一行实际结构，别让 C.2 误导三天后的你
+- [x] PLAN 附录 A 的 `cmake --preset ms-msvc-debug` 依赖 `CMakePresets.json` 存在 → 预设已在仓库里，名字核对一致
+- [x] PLAN 的 S0 小节写的是"`ctest` 1/1 passed" → 与第 6 节一致（`mini_tests` 仍是 1 个 CTest 条目，内部 3 个用例）
+- [x] 实际 target 名/输出路径与 PLAN C.2 不同（C.2 是阶段 1 的样子）→ 已在 PLAN 的 S0 小节补"实际结构"一段（2026-09-24），避免 C.2 误导
 
 ---
 
 ## 10. CMake 4 处补丁清单（阻塞点解法）
+
+> **状态（2026-09-24）：C1~C5 已全部落地**，本节保留为"怎么改、改完该看到什么"的复习材料，不是待办。
 
 按依赖顺序改，**中间会看到两个报错，都是预期的**——它们正好是"改对了没有"的判据。
 
@@ -491,13 +518,14 @@ INTERFACE 库不产出二进制，只是"装编译选项的包裹"。内容全�
 
 > **这个报错出现，就说明 C1~C4 全部改对了**——剩下只是把三份文件写出来（规格见 `doc/MINITEST_SPEC.md`）。
 
-### C5（可选，不阻塞）统一输出目录
+### C5 统一输出目录
 
 不做也能跑，只是 exe 路径会变（落在 `build\tests\Debug\` 或 `build\Debug\` 之类的地方）。做了才是文档里写的 `build\bin\Debug\`。
 
-- `CMAKE_RUNTIME_OUTPUT_DIRECTORY` = `${CMAKE_BINARY_DIR}/bin`
-- **另外**逐个设 `_DEBUG` / `_RELEASE` / `_RELWITHDEBINFO` / `_MINSIZEREL` 四个后缀变量，值同上
-- 配置名必须**全大写**（`_Debug` 无效）；VS 是多配置生成器，只设前者不起作用
+- **只设** `CMAKE_RUNTIME_OUTPUT_DIRECTORY` = `${CMAKE_BINARY_DIR}/bin`
+- **不要**再设 `_DEBUG` / `_RELEASE` / `_RELWITHDEBINFO` / `_MINSIZEREL` 四个后缀变量
+
+**为什么"多设反而错"**（2026-09-23 家机踩过，2026-09-24 公司机复验）：多配置生成器下，若**只设** `CMAKE_RUNTIME_OUTPUT_DIRECTORY`，生成器会**自动再补一层配置名** → `build/bin/Debug/`；而 `_<CONFIG>` 后缀变量是**按原样使用**的，一旦设了，`Debug` 那一层就没了 → 变成 `build/bin/`，正好和 PLAN 附录 A 的运行命令 `.\build\bin\Debug\MiniEngine.exe` 对不上。
 
 没做 C5 时找 exe：`Get-ChildItem -Recurse -Filter mini_tests.exe build`
 

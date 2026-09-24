@@ -3,6 +3,8 @@
 > 用途：S0 阶段要手写的三份文件（`tests/MiniTest.h`、`tests/test_main.cpp`、`tests/test_smoke.cpp`）的**方案层规格**。
 > 本文只描述接口、机制、行为与验收，**不含实现代码**（`AGENTS.md` 约定）。
 > 配套：`doc/CTEST_NOTES.md`（CTest 是调度器，不懂断言）、`doc/S0_CHECKLIST.md`（S0 缺口与 CMake 补丁清单）。
+>
+> **实现状态（2026-09-24）：已按本规格落地**，代码在 `tests/MiniTest.h`（宏与声明）、`tests/test_main.cpp`（注册表 + runner）、`tests/test_smoke.cpp`（用例）。落地时补了两处规格没写到的细节，已在第 1、3、6 节标注（`ToString` 模板、"suite 名不存在"要报错、C4127 对策）。
 
 ---
 
@@ -44,12 +46,20 @@ MINI_CHECK_NEAR(a, b, eps)    // 浮点比较；禁写 ==
 MINI_FAIL(msg)                // 无条件失败（留给未实现分支）
 ```
 
-### 头里唯一的函数声明（定义在 `test_main.cpp`）
+### 头里只有两个函数**声明**（定义在 `test_main.cpp`）
 
 ```text
 void RegisterTest(const TestCase&);                                // 注册表入口
 void ReportFailure(const char* file, int line, const char* expr);  // 断言失败时调用
 ```
+
+**外加一个 header-only 的 inline 模板**（2026-09-24 落地时补）：
+
+```text
+template <typename T> std::string ToString(const T&);              // 把断言两侧的值变成字符串
+```
+
+为什么需要它：`MINI_CHECK_EQ` / `MINI_CHECK_NEAR` 要求"失败时打印两侧的值"，但 `ReportFailure` 的签名里没有放值的位置，所以消息只能**在宏里拼好**再传进去，拼消息就要转字符串。它**无状态、不碰注册表**，放头里不会造成下面第 3 条那种"每个 TU 一份"的问题。
 
 ### 两个设计决定与理由
 
@@ -82,8 +92,9 @@ void ReportFailure(const char* file, int line, const char* expr);  // 断言失�
 | --- | --- |
 | 无参数 | 跑全部用例 |
 | `argv[1]` = suite 名 | 只跑该 suite（精确匹配） |
-| `--list` | 列出所有 `suite.name`，**返回 0** |
-| 未知参数 | 打印用法，**返回非 0**（拼错参数要立刻失败，不能静默跑全部） |
+| `argv[1]` = suite 名但**没有对应用例** | 打印 `no case in suite 'X' (N case(s) registered)`，**返回非 0**（手滑打错 suite 名不该拿到假绿；2026-09-24 落地时补的） |
+| `--list` | 列出所有 `suite.name`，**返回 0**（注册表为空时也只打印 `0 case(s)` 并返回 0——它是"列清单"，不是"跑测试"） |
+| 未知参数（`-` 开头但不是 `--list`）或多于 1 个参数 | 打印用法，**返回非 0**（拼错参数要立刻失败，不能静默跑全部） |
 
 **输出格式**：每条一行 `[ OK ] suite.name` 或 `[FAIL] suite.name`；失败时多打 `file:line` 和表达式原文；末尾一行 `N passed, M failed`。
 
@@ -118,7 +129,7 @@ void ReportFailure(const char* file, int line, const char* expr);  // 断言失�
 ```powershell
 .\build\bin\Debug\mini_tests.exe --list          # 列出用例；$LASTEXITCODE = 0
 .\build\bin\Debug\mini_tests.exe ; $LASTEXITCODE  # 期望 0
-ctest --test-dir build -C Debug -N                # 应列出 smoke（不再是 Total Tests: 0）
+ctest --test-dir build -C Debug -N                # 应列出 mini_tests（不再是 Total Tests: 0）
 ctest --test-dir build -C Debug --output-on-failure
 # 反向验证：故意让一个断言失败 → ctest 必须报失败
 ```
@@ -136,6 +147,7 @@ ctest --test-dir build -C Debug --output-on-failure
 | 5 | `--list` 返回失败数而不是 0 | CI 里"列出测试"被当成失败 |
 | 6 | 失败信息不换行 / 不刷新 | 用 `--output-on-failure` 时看不到重点 |
 | 7 | 以后把注册辅助移进静态库 | 未引用的注册对象被链接器丢弃 → 静默 0 个测试，那时需要 `WHOLE_ARCHIVE` |
+| 8 | 断言条件整个是**常量**（如 `MINI_CHECK_NEAR(0.1 + 0.2, 0.3, 1e-9)`） | MSVC `/W4` 会对 `if (常量)` 报 **C4127**。对策：宏里先把条件存进 `const bool` 再 `if (!miniOk)`（2026-09-24 实测，`(void)miniOk;` 顺带挡住 C4189） |
 
 ---
 

@@ -231,6 +231,19 @@ S0 骨架 ──► S1 FrameBuffer 出画面 ──► S2 输入 ──► S3 Ga
 | 验收 | 上面两条命令 + `ctest --test-dir build -C Debug` 全绿；`git commit` 完成 |
 | 坑 | 漏 `/utf-8`（家机实测：源码里有中文注释时直接 `error C4716: 必须返回一个值`，构建过不去，见 E-1）；漏 `--config` 会报"没有可用配置"；额外设 `CMAKE_RUNTIME_OUTPUT_DIRECTORY_<CFG>` 会让 exe 少掉 Debug 这一层目录（见 C.1） |
 
+**实际结构（2026-09-24 两台机器各自实测，与 C.1/C.2 草案的差异以这里为准）**
+
+| 项 | 实际值 |
+| --- | --- |
+| target | `MiniEngine`（exe）、`mini_tests`（测试 exe）、`engine`（STATIC）+ 别名 `MiniEngine::engine`、`mini_options`（INTERFACE，只装编译选项） |
+| 产物路径 | `build/bin/Debug/MiniEngine.exe`、`build/bin/Debug/mini_tests.exe`；静态库在 `build/engine/Debug/engine.lib` |
+| CTest | **1 个条目** `mini_tests`（`ctest` 报 1/1），内部是自制框架的 **3 个用例**（suite：`Core` / `Build` / `TestHarness`），`mini_tests --list` 可列、`mini_tests <suite>` 可单跑 |
+| 源文件 | 引擎侧 S0 只有 `engine/src/core/Version.cpp`——**C.2 草案里的 `FrameBuffer.cpp` / `ConsoleWindows.cpp` 是阶段 1 结束时的样子，S0 不该有** |
+| 测试框架 | 接口按 `doc/MINITEST_SPEC.md` 落地：`MINI_TEST(suite, name)` + `MINI_CHECK` / `MINI_CHECK_EQ` / `MINI_CHECK_NEAR` / `MINI_FAIL`；注册表与 runner 在 `tests/test_main.cpp`，用例在 `tests/test_smoke.cpp` |
+| 验收记录 | 配置通过、构建 **0 warning**、`ctest` 1/1、exe 打印 `MiniEngine 0.1.0-dev`；反向验证（断言故意失败、0 用例）都实跑过 |
+
+> 未做/未验：`ms-clang-debug` 与 `ms-asan` 两个预设尚未实测（计划与 S4 的 Math 测试一起验）。
+
 ### S1 FrameBuffer —— 屏幕上出现 `@`
 
 | 项 | 内容 |
