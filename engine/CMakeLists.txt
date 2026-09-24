@@ -4,6 +4,8 @@
 # 源文件列表按阶段增长（手写，禁用 file(GLOB)）：
 #   S0  src/core/Version.cpp
 #   S1  src/render/FrameBuffer.cpp（纯数据，可单测）
+#       src/render/TerminalPresenter.cpp（唯一 include <windows.h> 的文件，
+#                                         S2 会挪到 platform/）
 # 不要提前把 PLAN C.2 草案里的 Application.cpp / Input.cpp 等写进来 ——
 # 那些文件还不存在，写进来等于构建直接挂（PLAN A.4：结构被复杂度逼出来）。
 # ============================================================
@@ -11,6 +13,7 @@
 add_library(engine STATIC
     src/core/Version.cpp
     src/render/FrameBuffer.cpp
+    src/render/TerminalPresenter.cpp
 )
 
 target_include_directories(engine PUBLIC include)
