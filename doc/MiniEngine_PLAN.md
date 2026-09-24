@@ -257,6 +257,34 @@ S0 骨架 ──► S1 FrameBuffer 出画面 ──► S2 输入 ──► S3 Ga
 | 验收 | 连续运行 10 秒不闪烁；`echo "退出后终端正常"`；画面内容与代码里的坐标一致 |
 | 坑 | 代码页 936 必须切 UTF-8；老 conhost 对 VT 支持不全（用 Windows Terminal）；退出时必须 `ESC[?25h` 恢复光标 |
 
+**S1 落地记录（2026-09-24 公司机，含 5 条接口决策）**
+
+| # | 决策 | 落成 | 代价 / 备注 |
+| --- | --- | --- | --- |
+| 1 | 颜色按 256 来 | `enum class Color : std::uint8_t`；`0~254` = ANSI 256 索引，**`0xFF` = Default 哨兵**（输出 `ESC[39m`/`ESC[49m`）；另给 16 个基础色命名 | 256 色里 **255 号（最亮灰阶）用不了**。真要用时底层换 `uint16_t`，改动只在 `Color.h` 与 `Serialize` 的两处色码 |
+| 2 | 尽量单字节 | `Cell{ char ch; Color fg; Color bg; }` → `sizeof == 3`，用 `static_assert` 钉死；边框走 ASCII `+ - |` | **画不了中文 / UTF-8 制表符**。S13 想画 `█▓▒░` 时把 `ch` 换 `char32_t`（Cell 变 8 字节），使用点只有 Set/Draw/Serialize |
+| 3 | Present 只负责 IO | `FrameBuffer::Serialize()` 产字符串（纯数据、可单测），`Present(fb)` 才碰终端 | 多一层调用，换来 FrameBuffer 能被完整离线测试 |
+| 4 | 终端模式 S1 临时放 render | `engine/src/render/TerminalPresenter.cpp`，全项目**唯一** include `<windows.h>` 的文件；**S2 搬到 `platform/`** | 有一小段"注定要搬家"的代码，头文件里写了 ⚠️ TODO |
+| 5 | Ctrl+C 装 handler | `SetConsoleCtrlHandler`，handler 内只用 `WriteConsoleA`（异步安全）；第一次 Ctrl+C → 还原终端 + 让 main 正常退出，第二次 → 放行让系统直接杀 | — |
+
+**实际结构**
+
+| 项 | 实际值 |
+| --- | --- |
+| 新文件 | `engine/include/mini/render/{Color.h, Cell.h, FrameBuffer.h, TerminalPresenter.h}`、`engine/src/render/{FrameBuffer.cpp, TerminalPresenter.cpp}`、`tests/test_frame_buffer.cpp` |
+| 单测 | `FrameBuffer.*` 6 个用例（**不需要终端**）：Cell 3 字节、越界写忽略、索引线性化、DrawRect 裁剪、越界读、Serialize 颜色压缩 |
+| `ctest` | 仍是 **1 个条目**（`mini_tests`），内部用例 3 → **9** |
+| 帧数据（实测） | 每帧 2411 字节 / 51 个 SGR（2000 格）；25 行 × 80 列；`@` 在 (1,1)、`#` 在 (78,23)、内框角在 (10,5)；逐帧字节完全一致 |
+
+**S1 新踩到的坑（S0 坑表之外）**
+
+| 现象 | 原因与对策 |
+| --- | --- |
+| 帧数据里行尾是 `\r\r\n` | MSVC 的 `std::cout` 是**文本模式**，会把显式写的 `"\r\n"` 再翻译成 `\r\r\n`（屏幕上无害，但字节不再精确、每行白扔 1 字节）。对策：`BeginTerminal` 里 `_setmode(_fileno(stdout), _O_BINARY)`，退出时还原 |
+| 每帧实际 ~37ms（写死 600 帧 = 15 秒以上） | 序列化 + 写终端 + `sleep_for` 的开销叠加。对策：阶段 1 改成按**真实时间**（`steady_clock`）驱动 10 秒，不写死帧数 |
+| 断言里写 `find("ABC")` 会失败 | 同一行里 `A`/`B` 是红色而 `C` 回默认色，中间必然夹着 `ESC[39m`。断言要按"色彩段"写（`find("AB")` + `find("\x1b[39mC")`）—— 这条是 S1 第一次跑测试就撞到的，说明测试确实在干活 |
+| 老 conhost 上 VT 可能部分失效 | 运行前置：用 Windows Terminal。先 `echo "$([char]27)[38;5;196mRED"` 验证终端本身支持 |
+
 ### S2 Platform 抽象层 + 键盘输入
 
 | 项 | 内容 |
