@@ -9,14 +9,15 @@
 
 ---
 
-## 当前状态（2026-09-28：**方案已定稿，实现未开始**）
+## 当前状态（2026-09-28：**步骤 1 已实现并通过，等审核后进步骤 2**）
 
 - **S0 / S1 / S2 均已完成并通过验收**。S2 收口数据：构建 0 warning、`ctest` 1/1、`mini_tests` **16 passed**、真机交互 9/9 通过。
-- 本阶段的四条接口决策已于 **2026-09-28** 拍板（见第 8 节），第 6 节按拍板结果写定。
-- **下一步**：按第 11 节的五个 commit 开始实现。
+- 本阶段的接口决策已拍板（第 8 节共 8 条，其中第 8 条是写步骤 1 时实测发现后补的）。
+- **S3 的实现节奏：一步一停** —— 每完成一个 commit 就报一次（做了什么 / 效果 / 作用），**等审核确认后再动下一步**。
+- 进度：**commit 1 已完成**（`17f3059` + 计时器补完），用例 16 → **24**。**下一步是 commit 2（`render::RowDiff`），未开始。**
 
-> S3 的预估规模：净新增约 **450 行**（`Time`+`FrameStats` ~120、`RowDiff` ~110、`Application` ~150、main 重写 ~30）加两组测试 ~180 行。
-> PLAN 原文估 ~250 行，多出来的部分是**脏行 diff** 与**两组离线测试**这两笔（见第 8 节决策 1）。
+> S3 的预估规模：净新增约 **500 行**（`Time`+`FrameStats` ~150、`platform::Wait` ~110、`RowDiff` ~110、`Application` ~150）加两组测试 ~230 行。
+> PLAN 原文估 ~250 行，多出来的是**脏行 diff**、**两组离线测试**、**高精度计时器**这三笔（见第 8 节决策 1 与 8）。
 
 **S3 必须先收掉 S2 带过来的三件事**（不做就算 S3 没完成）：
 
@@ -30,20 +31,30 @@
 
 ## 进度板
 
-| # | 任务 | 对应 commit |
-| --- | --- | --- |
-| **S3-1** | `core/Time.h`：`Time` + `FrameStats` + `ClampDelta`（header-only 还是 .cpp 见 6.1） | commit 1 |
-| **S3-2** | `tests/test_time.cpp`：7 个用例 | commit 1 |
-| **S3-3** | `render/RowDiff.h/.cpp` + `FrameBuffer::SerializeRow()` | commit 2 |
-| **S3-4** | `tests/test_row_diff.cpp`：8 个用例（含"两条序列化路径一致"的守卫） | commit 2 |
-| **S3-5** | `Console::Present` 返回 `bool`；`ConsoleWindows` 内部接入 `RowDiff` 与写失败检测 | commit 3 |
-| **S3-6** | `core/Application.h/.cpp`：`AppConfig` + `FrameContext` + `IGame` + `Application` | commit 4 |
-| **S3-7** | `main.cpp` 重写成 `DemoGame : IGame` + `Application`（S2 的 HUD 与 `@` 搬进类里） | commit 4 |
-| **S3-8** | resize 接入（检测 + `FrameBuffer::Resize` + 一次 `ESC[2J` + 全量重画） | commit 4 |
-| **S3-9** | 正向验收 7 条 + 反向验证 4 条实跑并**还原现场** | commit 4 |
-| **S3-10** | 文档同步（第 12 节 6 处差异 + PLAN 落地记录 + S2_CHECKLIST 8.5 标已修） | commit 5 |
+| # | 任务 | 对应 commit | 状态 |
+| --- | --- | --- | --- |
+| **S3-1** | `core/Time.h` + `src/core/Time.cpp`：`Time` + `FrameStats` + `ClampDelta` | commit 1 | ✅ |
+| **S3-1b** | `platform/Wait.h` + `src/platform/WaitWindows.cpp`：高精度可等待计时器（**决策 8**，写步骤 1 时实测发现必需） | commit 1 | ✅ |
+| **S3-2** | `tests/test_time.cpp`：**8 个**用例（原计划 7 个 + `PlatformWaitBeatsSleepGranularity`） | commit 1 | ✅ |
+| **S3-3** | `render/RowDiff.h/.cpp` + `FrameBuffer::SerializeRow()` | commit 2 | ⏳ **下一步** |
+| **S3-4** | `tests/test_row_diff.cpp`：8 个用例（含"两条序列化路径一致"的守卫） | commit 2 | — |
+| **S3-5** | `Console::Present` 返回 `bool`；`ConsoleWindows` 内部接入 `RowDiff` 与写失败检测 | commit 3 | — |
+| **S3-6** | `core/Application.h/.cpp`：`AppConfig` + `FrameContext` + `IGame` + `Application` | commit 4 | — |
+| **S3-7** | `main.cpp` 重写成 `DemoGame : IGame` + `Application`（S2 的 HUD 与 `@` 搬进类里） | commit 4 | — |
+| **S3-8** | resize 接入（检测 + `FrameBuffer::Resize` + 一次 `ESC[2J` + 全量重画） | commit 4 | — |
+| **S3-9** | 正向验收 7 条 + 反向验证 4 条实跑并**还原现场** | commit 4 | — |
+| **S3-10** | 文档同步（第 12 节差异 + PLAN 落地记录 + S2_CHECKLIST 8.5 标已修） | commit 5 | — |
 
-- [ ] S3-1 → [ ] S3-2 → [ ] S3-3 → [ ] S3-4 → [ ] S3-5 → [ ] S3-6 → [ ] S3-7 → [ ] S3-8 → [ ] S3-9 → [ ] S3-10
+- [x] S3-1 → [x] S3-1b → [x] S3-2 → [ ] S3-3 → [ ] S3-4 → [ ] S3-5 → [ ] S3-6 → [ ] S3-7 → [ ] S3-8 → [ ] S3-9 → [ ] S3-10
+
+### 实现偏差（逐步追加，与 S2 同格式）
+
+| # | 清单原计划 | 实际做法 | 为什么改 |
+| --- | --- | --- | --- |
+| D1 | `LimitFPS` 里用 `sleep_for` 粗睡 | 改用 `platform::Wait`（高精度可等待计时器） | **实测**：本机 `Sleep` 粒度 15.625ms，而 60fps 目标帧时间 16.667ms 只差 1.04ms → 每 15 帧睡过头一整跳，FPS 在 40~60 抖。详见决策 8 与 8.1 |
+| D2 | 自旋窗口 `spin = duration_cast<milliseconds>(...)` | 用纳秒存，只在最后比较时转换 | 毫秒 cast 会把 `targetFps > 125` 时的 `target/4` 截断成 0（`3.33ms/4 = 0.83ms → 0ms`），白丢精度 |
+| D3 | `tests/test_time.cpp` 7 个用例 | 8 个（增 `PlatformWaitBeatsSleepGranularity`） | 决策 8 是新加的代码路径，必须有东西钉住它（否则以后有人"顺手"改回 `sleep_for` 谁也不知道） |
+| D4 | 原计划 4 条接口决策 | **8 条**（新增 5/6/7 为本人定，8 为实测发现后补） | 5/6/7 是方案阶段的取舍；8 是实现阶段才暴露的（属于"结构被复杂度逼出来"，PLAN A.4 第 2 条） |
 
 ---
 
@@ -76,7 +87,9 @@
 | 文件 | 职责 | 不要放什么 |
 | --- | --- | --- |
 | `engine/include/mini/core/Time.h` | `Time` + `FrameStats` + `ClampDelta`。**不 include `<windows.h>`** | 线程（不限帧的未来版再说） |
-| `engine/src/core/Time.cpp` | 上面那些"要读时钟"的部分（`steady_clock` 调用）。`FrameStats` 与 `ClampDelta` 留在头里（纯逻辑） | — |
+| `engine/src/core/Time.cpp` | 上面那些"要读时钟"的部分（`steady_clock` 调用 + 调 `platform::Wait`）。`FrameStats` 与 `ClampDelta` 留在头里（纯逻辑） | — |
+| `engine/include/mini/platform/Wait.h` | `platform::Wait(nanoseconds)` —— 精确等待（**决策 8**：`Sleep` 的 15.6ms 粒度会毁掉 60fps 限帧） | 任何渲染/时间概念 |
+| `engine/src/platform/WaitWindows.cpp` | 高精度可等待计时器 + 老系统（< Win10 1803）降级回 `sleep_for` | — |
 | `engine/include/mini/core/Application.h` | `AppConfig` + `FrameContext` + `IGame` + `Application` | 任何具体游戏概念 |
 | `engine/src/core/Application.cpp` | `Run()` 的循环本体 | 终端 API（走 `Console`）、事件解析（走 `Input`） |
 | `engine/include/mini/render/RowDiff.h` | 脏行 diff。**纯逻辑、零依赖、可离线单测** | 任何 IO、任何 `<windows.h>` |
@@ -505,9 +518,12 @@ LimitFPS(maxFps):
     if (elapsed >= target): return                  // 已经超时，不睡
 
     remain = target - elapsed
-    spin   = min(2ms, target / 4)                   // ← 关键，见下
+    spin   = min(2ms, target / 4)                   // ← 关键，见下（用纳秒存，别 cast 成毫秒）
+
+    // ⚠️ 必须是 platform::Wait 而不是 sleep_for（决策 8）：
+    //    sleep_for 的粒度是调度器 tick（本机 15.6ms），会把"睡到差 2ms"变成"睡过头一整跳"
     if (remain > spin):
-        sleep_for(remain - spin)                    // 粗睡，一次睡够
+        platform::Wait(remain - spin)               // 粗等，一次等够（精度 <1ms）
     while (now() - m_begin < target):
         yield()                                     // 细磨：把最后一点时间磨掉
 ```
@@ -591,6 +607,21 @@ DrawStatsBar(fb, ctx):
 | 5 | `FrameContext` **不含 `Time&`**（本人定，非上述四问） | 只给值 + `const Input&` | 防止游戏调 `EndFrame`/`LimitFPS` 打乱时序。**PLAN C.3/C.4 的 `m_time` 参数作废**（差异 #1） |
 | 6 | **顶栏由 `Application` 画**，不是游戏画 | `DrawStatsBar` 在 `OnRender` 之后 | 它是引擎的调试能力（PLAN A.4 第 4 条："能看见内部状态必须一开始就有"），不该让每个游戏自己实现；排在后画则游戏盖不掉它 |
 | 7 | **`Console::Present` 改成返回 `bool`** | 写失败 → `Application::RequestQuit()` | 收掉 S2 的孤儿进程遗留问题。改虚函数签名会影响 S2 的调用点，commit 3 一起改 |
+| 8 | **限帧用高精度可等待计时器**（`CreateWaitableTimerExW` + `CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`），封成 `platform::Wait()` | `platform/Wait.h` + `src/platform/WaitWindows.cpp`；`Time::LimitFPS` 不再用 `sleep_for` | **写步骤 1 时实测发现的**：本机 `Sleep` 粒度是调度器 tick **15.625ms**（`Sleep(16)` → 31.26ms），而 60fps 的目标帧时间是 16.667ms —— 只差 1.04ms。用 `sleep_for` 会周期性睡过头一整跳，FPS 在 40~60 抖。高精度计时器**不需要链任何额外库**（kernel32 默认就链），也不用 `timeBeginPeriod`（那个会改全系统定时器精度）。代价：`core::Time` 从此依赖 `platform`（同层内，不新增层间边）；老系统（<1803）自动降级回 `sleep_for` |
+
+### 8.1 决策 8 的实测依据（不是推测）
+
+```
+Sleep(1)  请求 → 实测平均 15.76ms
+Sleep(5)  请求 → 实测平均 15.87ms
+Sleep(14) 请求 → 实测平均 15.42ms
+Sleep(16) 请求 → 实测平均 31.26ms   ← 16ms 睡了两跳
+────────────────────────────────
+platform::Wait(7ms) → 实测 7.05~7.56ms（10 次采样）
+```
+
+两者差了一倍以上。`PlatformWaitBeatsSleepGranularity` 这条用例就是拿这个数据定的上界（12ms）：
+比 15.6ms 的 tick 低 3.6ms 能抓住"有人把 `Wait` 改回 `sleep_for`"，又比实测最大 7.56ms 高 4.4ms 不至于假报警。
 
 ---
 
@@ -604,10 +635,14 @@ DrawStatsBar(fb, ctx):
 | 2 | 拖窗口/断点后实体瞬移 | 几百毫秒的大 dt。`ClampDelta` 夹到 0.05。**但顶栏 `Frame:` 要用未夹的值**，否则你永远看不到那次卡顿 |
 | 3 | FPS 恒等于目标值、从不波动 | `BeginFrame` 放到了 `LimitFPS` 之后 → dt 只度量干活耗时。这是"看起来完美"的假绿，反向验证 2 专门钉它 |
 | 4 | 60fps 稳定跑成 59.9 / 59.94 | 用 `float(1.0f/60)` 累加误差。用 `nanoseconds(1e9/maxFps)` 整数算 |
-| 5 | 高帧率下 CPU 跑满 | 自旋窗口写死 2ms。改成 `min(2ms, target/4)` |
+| 5 | 高帧率下 CPU 跑满 | 自旋窗口写死 2ms。改成 `min(2ms, target/4)`。**注意用纳秒存**：`targetFps > 125` 时 `target/4 < 8ms`，一 `duration_cast` 到毫秒就截断成 0（等于完全不细磨） |
 | 6 | `Fps()` 被单帧尖峰拉飞 | 用了 `平均(1/dtᵢ)`。要用 `1 / 平均(dtᵢ)` |
 | 7 | 顶栏数字反应迟钝 | 窗口是**帧数**不是秒数。60 帧在 10fps 下是 6 秒。调 `kWindow` 而不是改算法 |
 | 8 | `Fps()` 在没样本时除以零 | `m_count == 0` 直接返回 0 |
+| 9 | **60fps 限帧周期性掉到 ~33，FPS 在 40~60 抖** | 用了 `std::this_thread::sleep_for`。本机实测 `Sleep` 粒度 = 调度器 tick **15.625ms**（`Sleep(16)` → **31.26ms**），而目标帧时间是 16.667ms，只差 1.04ms —— 每帧相位漂 1.04ms，大约每 15 帧就睡过头一整跳。对策：`platform::Wait`（决策 8）。反向验证可以试把 `Wait` 改回 `sleep_for`，顶栏立刻开始抖 |
+| 10 | `SetWaitableTimer` 等到的不是 14ms 而是"马上返回"或"永不返回" | 它的到期时间单位是 **100 纳秒**，且**负数才表示相对时间**（正数被当绝对时间，即 1970 年 → 立即到期）。`due.QuadPart = -(ns / 100)`，并注意不足 100ns 时别变成 0（0 表示"立即"） |
+| 11 | 老系统（Win10 1803 以前）上 `CreateWaitableTimerExW` 失败 | 那个 flag 是 1803 才有的。降级路径必须存在：句柄为 `nullptr` 时退回 `sleep_for`，**不抛异常、不崩**（行为退回 15.6ms 粒度）。另外 `CREATE_WAITABLE_TIMER_HIGH_RESOLUTION` 这个宏在老 SDK 里没有，要自己 `#ifndef` 兜一个 |
+| 12 | 每次 `Wait` 都 `CreateWaitableTimer` / `CloseHandle` | 那个开销比等 2ms 还大。计时器句柄**懒创建 + 进程内复用**（函数内 `static`，magic static 保证线程安全），故意不 `Close` |
 
 ### 9.2 渲染与脏行 diff
 
@@ -659,6 +694,7 @@ ctest --test-dir build -C Debug --output-on-failure    # 期望 1/1（内部 16 
 | `FpsZeroSamplesIsZero` | 未 `Push` 时 `Fps() == 0`，不除零 |
 | `WindowOverwritesOldest` | 塞 `kWindow + 10` 个样本后只有最近 `kWindow` 个算在内 |
 | `MaxFrameMsSurvivesWindow` | 尖峰滑出窗口后 `MaxFrameMs()` 仍记得它 |
+| `PlatformWaitBeatsSleepGranularity` | `platform::Wait(7ms)` 耗时落在 **6.5~12ms**：上界卡在 15.6ms 的调度器 tick 之下，钉住决策 8（有人把 `Wait` 改回 `sleep_for` 就会红） |
 
 `tests/test_row_diff.cpp`：
 

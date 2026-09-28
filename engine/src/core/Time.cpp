@@ -1,14 +1,22 @@
 #include "mini/core/Time.h"
 
+#include "mini/platform/Wait.h"
+
 #include <chrono>
 #include <thread>
 
 // ============================================================
 // core::Time 里"要读时钟"的那部分（S3）
 //
-// 头里只留纯逻辑（ClampDelta / FrameStats），所有 steady_clock 与 sleep_for
+// 头里只留纯逻辑（ClampDelta / FrameStats），所有 steady_clock 与等待
 // 都收在这一个文件里 —— 这样 FrameStats 的窗口算法能被离线单测，
-// 而"睡多久"这种依赖系统调度器的事只在一个地方，改的时候不用翻遍代码。
+// 而"等多久、怎么等"只在一个地方，改的时候不用翻遍代码。
+//
+// ⚠️ 等待用的是 `platform::Wait` 而**不是** `std::this_thread::sleep_for`：
+//    Windows 上 Sleep 的粒度是调度器 tick（本机实测 15.625ms），而 60fps 的
+//    目标帧时间 16.667ms 只比它大 1.04ms —— 用 sleep_for 会周期性睡过头一整跳
+//    （实测 Sleep(16) → 31.26ms），顶栏 FPS 会在 40~60 之间抖。
+//    见 platform/Wait.h 的注释与 doc/S3_CHECKLIST.md 的决策 8。
 // ============================================================
 
 namespace mini::core {
@@ -72,14 +80,19 @@ void Time::LimitFPS(int maxFps) noexcept
     // **不能写死 2ms**：targetFps=300 时目标帧时间只有 3.33ms，
     // 2ms 自旋占了 60% 的帧时间 —— 限帧器自己变成 CPU 烧穿机。
     // 取 1/4 让高帧率下自旋窗口自动缩小。
-    auto spin = std::chrono::milliseconds(2);
+    //
+    // 用纳秒而不是毫秒存：targetFps > 125 时 target/4 < 8ms，
+    // 一 cast 到毫秒就截断成 0（等于完全不细磨），精度白白丢掉。
+    auto spin = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::milliseconds(2));
     const auto quarter = target / 4;
     if (quarter < spin) {
-        spin = std::chrono::duration_cast<std::chrono::milliseconds>(quarter);
+        spin = quarter;
     }
 
     if (remain > spin) {
-        std::this_thread::sleep_for(remain - spin);
+        // platform::Wait 而不是 sleep_for：后者的粒度是调度器 tick（本机 15.6ms），
+        // 在这里会把"睡到差 2ms"直接变成"睡过头一整跳"。见文件头注释。
+        platform::Wait(remain - spin);
     }
 
     // 细磨：把最后一点时间用 yield 蹭掉。

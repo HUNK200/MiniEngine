@@ -1,7 +1,9 @@
 #include "MiniTest.h"
 
 #include <mini/core/Time.h>
+#include <mini/platform/Wait.h>
 
+#include <chrono>
 #include <cstddef>
 
 // ------------------------------------------------------------
@@ -125,4 +127,20 @@ MINI_TEST(Time, MaxFrameMsSurvivesWindow)
     stats.Reset();
     MINI_CHECK_NEAR(stats.MaxFrameMs(), 0.0f, 1e-6f);    // 只有 Reset 能清
     MINI_CHECK_EQ(stats.SampleCount(), std::size_t{0});
+}
+
+// platform::Wait 的精度是 S3 限帧能不能达到 58~61 的**前提**。
+//
+// 本机实测（10 次采样）：`Wait(7ms)` → 7.05~7.56ms，而 `sleep_for(7ms)` → 16.10ms。
+// 上界取 12ms：比 15.6ms 的调度器 tick 低 3.6ms（能抓住"有人把 Wait 改回 sleep_for"），
+// 又比实测最大 7.56ms 高 4.4ms（高负载下不至于假报警）。
+MINI_TEST(Time, PlatformWaitBeatsSleepGranularity)
+{
+    const auto start = std::chrono::steady_clock::now();
+    mini::platform::Wait(std::chrono::milliseconds(7));
+    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - start).count();
+
+    MINI_CHECK(us >= 6500);   // 不能早醒
+    MINI_CHECK(us < 12000);   // 关键：不能是 15.6ms 的调度器 tick
 }

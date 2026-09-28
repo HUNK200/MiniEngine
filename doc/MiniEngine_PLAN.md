@@ -131,7 +131,7 @@ c++_simple_engine/
 │   ├── CMakeLists.txt          # add_library(engine STATIC ...)
 │   ├── include/mini/           # 公共头（对外只暴露这层）
 │   │   ├── core/       Application.h  Time.h  Logger.h  Config.h  NonCopyable.h
-│   │   ├── platform/   Console.h  Input.h  InputState.h  KeyCode.h    # 只做 Windows
+│   │   ├── platform/   Console.h  Input.h  InputState.h  KeyCode.h  Wait.h    # 只做 Windows
 │   │   ├── math/       Vec2.h  Vec3.h  Rect.h  AABB.h  Ray.h  MathUtils.h
 │   │   ├── render/     Cell.h  Color.h  FrameBuffer.h  RowDiff.h  Renderer2D.h
 │   │   │               Camera.h  Viewport.h  Renderer3D.h  RayCaster.h
@@ -348,7 +348,7 @@ S0 骨架 ──► S1 FrameBuffer 出画面 ──► S2 输入 ──► S3 Ga
 | 规模 | 净新增约 **450 行**（`Time`+`FrameStats` ~120、`RowDiff` ~110、`Application` ~150、main 重写 ~30）+ 两组测试 ~180 行。PLAN 原估 ~250 行，多出来的是**脏行 diff** 与**两组离线测试**（决策 1） |
 | 可运行效果 | 顶栏 `FPS: 59.9  Frame: 16.7ms  Work: 0.3ms  Rows: 2/25`；`MiniEngine.exe 300` 能看到 FPS 上升而 `Work` 不变；拖窗口画面跟手重排 |
 | 验收 | 限帧 60 时 FPS 落在 58~61；`MaxFrameMs()` 长时间运行不出现尖峰；拖大/拖小窗口无残影且**不上滚**；**直接关控制台窗口进程立刻消失**（S2 遗留问题） |
-| 坑 | **Windows 上 `Sleep(1)` 实际睡 ~15.6ms**，必须混合睡眠（先睡到差 `spin`，再自旋）。**`spin = min(2ms, targetFrame/4)`，写死 2ms 会在高帧率下把 CPU 烧穿** |
+| 坑 | **Windows 上 `Sleep(1)` 实际睡 ~15.6ms**，必须混合睡眠（先睡到差 `spin`，再自旋）。**`spin = min(2ms, targetFrame/4)`，写死 2ms 会在高帧率下把 CPU 烧穿**。⚠️ **2026-09-28 写步骤 1 时实测推翻了"混合睡眠就够"这个前提**：粒度是调度器 tick **15.625ms**，而 60fps 目标帧时间 16.667ms 只差 1.04ms → 用 `sleep_for` 会**每 15 帧左右睡过头一整跳**（`Sleep(16)` 实测 31.26ms），FPS 在 40~60 抖。**必须用 `platform::Wait`（高精度可等待计时器，精度 <1ms，不需链额外库）**，见 S3 决策 8 |
 | 设计结论 | **用 variable dt + `dt = min(dt, 0.05)`**。本项目没有需要固定步长的物理（无重力、无弹性），引入 fixed update 只会让输入手感变差。等 S9 子弹高速穿透问题真的出现时，再考虑"子弹用子步进"这种局部方案，而不是全引擎改结构 |
 
 > **从 S2 带过来的一件事（S3 必须一起收掉）**：`Application` 出现后要顺手修掉"关窗口留下孤儿进程"——
@@ -364,6 +364,10 @@ S0 骨架 ──► S1 FrameBuffer 出画面 ──► S2 输入 ──► S3 Ga
 | 2 | **`DemoGame` 放 `main.cpp` 的匿名 namespace** | `main.cpp` 240 → 约 120 行 | 仍超过 A.2 写的"<20 行"；**不提前建 `game/` 静态库**（PLAN 与顶层 CMakeLists 都定了 S5 才建） |
 | 3 | **resize 做：检测 + `FrameBuffer::Resize` + 一次 `ESC[2J` + 全量重画** | `Run` 第 ③ 步 | 相机边界 clamp 仍归 S6。代价：多约 20 行，且"最后一行/最后一列会不会滚屏"必须肉眼实测 |
 | 4 | 新建 **`doc/S3_CHECKLIST.md`** | — | 与 S0/S2 同格式。S3 跨 5 个 commit 且要改 S2 的两个接口，比 S1 更值得单独存档 |
+| 5 | **限帧用高精度可等待计时器**，封成 `platform::Wait()` | `platform/Wait.h` + `src/platform/WaitWindows.cpp`；`Time::LimitFPS` 不用 `sleep_for` | **写步骤 1 时实测发现的**（不是方案阶段想到的）：本机 `Sleep` 粒度 15.625ms vs 60fps 目标帧时间 16.667ms，只差 1.04ms → 每 15 帧睡过头一整跳。高精度计时器**不需链额外库**，也不用 `timeBeginPeriod`（那个会改全系统定时器精度）。`Wait(7ms)` 实测 7.05~7.56ms |
+
+**实现进度（一步一停，2026-09-28 起）**：commit 1（`Time` + `FrameStats` + `platform::Wait`）已完成，用例 16 → **24**；
+commit 2~5（`RowDiff` / `Present` 改造 / `Application` + 新 main / 文档收口）**未开始**，等逐步审核。
 
 决策表**之外**还有三处与 C.3/C.4 草案不同，已直接改进原文：`FrameContext` 去掉 `Time&`、`IGame` 从 `unique_ptr` 改成引用、
 顶栏由 `Application` 在 `game.OnRender` **之后**画。
