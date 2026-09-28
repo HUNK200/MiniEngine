@@ -368,8 +368,13 @@ S0 骨架 ──► S1 FrameBuffer 出画面 ──► S2 输入 ──► S3 Ga
 
 **实现进度（一步一停，2026-09-28 起）**：commit 1（`Time` + `FrameStats` + `platform::Wait`）、
 commit 2（`RowDiff` + `FrameBuffer::SerializeRow`）、commit 3（`Present` 返回 `bool` + 内部接入 `RowDiff` + 终端存活检测）
-已完成，用例 16 → **34**，实测脏行帧比全量帧省 **10.5 倍**字节，**S2 的孤儿进程问题已修并实测通过**；
-commit 4~5（`Application` + 新 main + resize / 文档收口）**未开始**，等逐步审核。
+已提交，用例 16 → **34**，实测脏行帧比全量帧省 **10.5 倍**字节，**S2 的孤儿进程问题已修并实测通过**；
+**commit 4（`core::Application` + `IGame` + 新 `main.cpp`）代码已写完，待构建/运行验证**；
+commit 5（文档收口）未开始。
+
+**分工约定（2026-09-28 追加）**：**编译与运行由本人执行，AI 只做代码编辑**。
+所以 commit 4 在本人验证通过之前不提交 —— "每个 commit 都要能编译"是 PLAN 附录 D 的硬规矩，
+而 AI 无法自证这一点。详见 `doc/S3_CHECKLIST.md` 顶部的分工约定表。
 
 决策表**之外**还有三处与 C.3/C.4 草案不同，已直接改进原文：`FrameContext` 去掉 `Time&`、`IGame` 从 `unique_ptr` 改成引用、
 顶栏由 `Application` 在 `game.OnRender` **之后**画。

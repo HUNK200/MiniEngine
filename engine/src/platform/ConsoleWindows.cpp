@@ -117,6 +117,7 @@ public:
 
     bool        Present(const render::FrameBuffer& fb) override;
     ConsoleSize Size() const override;
+    int         LastFrameRowsSent() const override;
 
 private:
     // 脏行 diff：只把内容变了的行交给终端。它是"防闪烁/少写"那条线的落点，
@@ -273,6 +274,13 @@ ConsoleSize ConsoleWindows::Size() const
     // 缓冲区通常比窗口高得多（滚动条那部分不算"屏幕"）
     return ConsoleSize{ static_cast<int>(info.srWindow.Right  - info.srWindow.Left + 1),
                         static_cast<int>(info.srWindow.Bottom - info.srWindow.Top  + 1) };
+}
+
+int ConsoleWindows::LastFrameRowsSent() const
+{
+    // 上一帧的统计（本帧的要等 Present 之后才有）。顶栏差一帧无妨，
+    // 换来的是"画顶栏"和"提交帧"之间没有循环依赖。
+    return m_rowDiff.LastStats().rowsSent;
 }
 
 } // namespace

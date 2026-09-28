@@ -12,13 +12,17 @@
 #       src/core/Time.cpp（Time 里碰 steady_clock / 等待的部分；
 #                          纯逻辑的 ClampDelta / FrameStats 留在 Time.h，可离线单测）
 #       src/render/RowDiff.cpp（脏行 diff：只发变化的行。纯逻辑、可离线单测）
-# 不要提前把 PLAN C.2 草案里的 Application.cpp / Input.cpp 等写进来 ——
-# 那些文件还不存在，写进来等于构建直接挂（PLAN A.4：结构被复杂度逼出来）。
+#       src/core/Application.cpp（主循环：时间/输入推进/尺寸对齐/提交/顶栏。
+#                                不认识具体游戏，也不认识终端 —— 走 Console 抽象）
+# 不要提前把**后面阶段**的文件写进来 —— 那些文件还不存在，写进来等于构建直接挂
+# （PLAN A.4：结构被复杂度逼出来）。比如 S3 之后才有的 src/render/Terminal.cpp、
+# src/game/*。S3 已经把 PLAN C.2 草案里的 Application.cpp 落实了，所以它在列表里。
 # ============================================================
 
 add_library(engine STATIC
     src/core/Version.cpp
     src/core/Time.cpp
+    src/core/Application.cpp
     src/render/FrameBuffer.cpp
     src/render/RowDiff.cpp
     src/platform/ConsoleWindows.cpp

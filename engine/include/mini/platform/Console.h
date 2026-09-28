@@ -51,6 +51,13 @@ public:
     // 终端**可视区**宽高（srWindow，不是缓冲区尺寸）。
     // S2 没用它（main 按固定 80x25 建 FrameBuffer）；S3 每帧比较它来响应窗口缩放。
     virtual ConsoleSize Size() const = 0;
+
+    // 上一帧真正**发出去**的行数（脏行 diff 的结果）。顶栏的 "Rows: n/总行数" 用它。
+    //
+    // 为什么是"上一帧"：本帧到底发了多少行，要等 Present() 之后才知道，
+    // 而顶栏是在 Present() **之前**画的。差一帧在视觉上没差别，
+    // 但能避免"先画顶栏就要先知道发送量、而发送量又要先画完才知道"的循环依赖。
+    [[nodiscard]] virtual int LastFrameRowsSent() const = 0;
 };
 
 // 唯一的创建入口。

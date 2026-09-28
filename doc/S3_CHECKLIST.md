@@ -9,13 +9,27 @@
 
 ---
 
-## 当前状态（2026-09-28：**步骤 1~3 已实现并通过，等审核后进步骤 4**）
+## 当前状态（2026-09-28：**步骤 1~3 已提交并通过；步骤 4 代码已写完，待构建/运行验证**）
 
 - **S0 / S1 / S2 均已完成并通过验收**。S2 收口数据：构建 0 warning、`ctest` 1/1、`mini_tests` **16 passed**、真机交互 9/9 通过。
 - 本阶段的接口决策已拍板（第 8 节共 8 条，其中第 8 条是写步骤 1 时实测发现后补的）。
-- **S3 的实现节奏：一步一停** —— 每完成一个 commit 就报一次（做了什么 / 效果 / 作用），**等审核确认后再动下一步**。
-- 进度：**commit 1、2、3 已完成**，用例 16 → **34**。**下一步是 commit 4（`Application` + 新 main + resize），未开始。**
-- 已修复的 S2 遗留问题：**孤儿进程**（`Present()` 返回 false → 主循环退出），并有**可复现的验证方法**（见 10.3）。
+- 进度：**commit 1、2、3 已提交**（`17f3059`/`9f0a375`/`dce6b5e`/`a6deebb`），用例 16 → **34**。
+  **commit 4 的代码已全部写完但还没提交** —— 见下面的分工约定。
+- 已修复的 S2 遗留问题：**孤儿进程**（`Present()` 返回 false → 主循环退出），并有**可复现的验证方法**（见 10.2 第 7 条）。
+
+### ⚠️ 分工约定（2026-09-28 追加）
+
+**编译与运行由本人执行，AI 只做代码编辑。** 具体：
+
+| 谁 | 做什么 |
+| --- | --- |
+| AI | 只改/建源文件。**不跑 `cmake`、不跑 `ctest`、不跑 exe** |
+| 本人 | 构建、跑测试、跑 exe、看现象，把结果回报 |
+| AI | 按回报的结果决定下一步（改 bug / 收尾 / 继续下一步） |
+
+推论：**一个步骤的 commit 由本人在验证通过后决定何时打**。
+在验证之前，改动只留在工作区（因为"每个 commit 都要能编译"是 PLAN 附录 D 的硬规矩，
+而 AI 没法自证这一点）。报告里会明确写出"待你执行什么、期望看到什么"。
 
 > S3 的预估规模：净新增约 **500 行**（`Time`+`FrameStats` ~150、`platform::Wait` ~110、`RowDiff` ~110、`Application` ~150）加两组测试 ~230 行。
 > PLAN 原文估 ~250 行，多出来的是**脏行 diff**、**两组离线测试**、**高精度计时器**这三笔（见第 8 节决策 1 与 8）。
@@ -40,13 +54,15 @@
 | **S3-3** | `render/RowDiff.h/.cpp` + `FrameBuffer::SerializeRow()` | commit 2 | ✅ |
 | **S3-4** | `tests/test_row_diff.cpp`：**10 个**用例（原计划 8 个 + 收益守卫 + 字节等价性守卫） | commit 2/3 | ✅ |
 | **S3-5** | `Console::Present` 返回 `bool`；`ConsoleWindows` 内部接入 `RowDiff` 与存活检测 | commit 3 | ✅ |
-| **S3-6** | `core/Application.h/.cpp`：`AppConfig` + `FrameContext` + `IGame` + `Application` | commit 4 | ⏳ **下一步** |
-| **S3-7** | `main.cpp` 重写成 `DemoGame : IGame` + `Application`（S2 的 HUD 与 `@` 搬进类里） | commit 4 | — |
-| **S3-8** | resize 接入（检测 + `FrameBuffer::Resize` + 一次 `ESC[2J` + 全量重画） | commit 4 | — |
-| **S3-9** | 正向验收 7 条 + 反向验证 4 条实跑并**还原现场** | commit 4 | — |
+| **S3-6** | `core/Application.h/.cpp`：`AppConfig` + `FrameContext` + `IGame` + `Application` | commit 4 | 📝 **代码已写，待构建** |
+| **S3-7** | `main.cpp` 重写成 `DemoGame : IGame` + `Application`（S2 的 HUD 与 `@` 搬进类里） | commit 4 | 📝 **代码已写，待构建** |
+| **S3-8** | resize 接入（检测 + `FrameBuffer::Resize` + 一次 `ESC[2J` + 全量重画） | commit 4 | 📝 **代码已写，待肉眼验** |
+| **S3-9** | 正向验收 7 条 + 反向验证 4 条实跑并**还原现场** | commit 4 | ⏳ 待本人执行 |
 | **S3-10** | 文档同步（第 12 节差异 + PLAN 落地记录 + S2_CHECKLIST 8.5 标已修） | commit 5 | — |
 
 - [x] S3-1 → [x] S3-1b → [x] S3-2 → [x] S3-3 → [x] S3-4 → [x] S3-5 → [ ] S3-6 → [ ] S3-7 → [ ] S3-8 → [ ] S3-9 → [ ] S3-10
+
+📝 = **代码已写完、未构建未提交**（按分工约定，等本人验证后再打 commit）
 
 ### 实现偏差（逐步追加，与 S2 同格式）
 
@@ -62,6 +78,9 @@
 | D8 | `Present` 里只做"写完检查 `std::cout` 是否失败" | **每帧先查一次 `GetConsoleMode`**（终端还在不在），写失败检测降为兜底 | 脏行 diff 生效后，**内容没变的帧一个字节都不发** —— 而"没写"就没有失败信号。画面静止时（S2 的演示、以后的暂停）只靠写失败根本发现不了终端已经死了。代价是一次约 1μs 的 syscall，相对 16ms 帧时间可忽略。见坑 #29 |
 | D9 | resize 时发 `ESC[2J` | **首帧不发**（`m_hasPresented` 门闩） | 刚进备用屏本来就是空的，清它纯属浪费；而且"清屏"只应该在真正需要时出现（每帧清屏正是闪烁的根源，E-3） |
 | D10 | `tests/test_row_diff.cpp` 到 9 个为止 | 再增 `FullFrameMatchesLegacySerializeBytes`（第 10 个） | 步骤 3 的验收要求"画面与 S2 **逐字符一致**"，而这条**不需要终端就能验**：新全量帧的字节 == 老的 `ESC[H` + `Serialize()`。没有它，这个声明就只剩"我觉得一样" |
+| D11 | `Console` 只加尺寸查询 | 再加一个 `[[nodiscard]] virtual int LastFrameRowsSent() const` | 顶栏要显示 `Rows: 2/24`。**不引入 `RowDiff::Stats` 类型**：那样 platform 的公共头就要 include render/RowDiff.h，为一个数字把两层耦合起来不划算。只回一个 int，够用且零耦合。刻意**不**回 `bytes` —— 顶栏不显示它，加了就是没人用的接口 |
+| D12 | 顶栏与游戏共用第 0 行（S2 的顶框就在第 0 行） | **第 0 行归 Application**，游戏的版面整体下移一行（顶框 1 / HUD 2~4 / 分隔 5 / 活动区 6~h-3 / 提示 h-2 / 底框 h-1） | 顶栏要盖在游戏之上（PLAN A.4 第 4 条），共用一行就会跟游戏的顶框打架 —— 顶框被数字切掉一半，看着像 bug。让出第 0 行是最省事且不会有歧义的分法。代价：`main.cpp` 的版面常量整体 +1，S2 的"逐格一致"变成"逐格一致但下移一行" |
+| D13 | `DemoGame` 里直接读 `ctx.input` 画 HUD | `DemoGame` 自己缓存 `const Input*`（在 `OnUpdate` 里存） | 引擎只在 `OnUpdate` 给 `FrameContext`，而 `OnRender` 只拿到 `FrameBuffer` —— 可是 HUD **要在画的时候**读按键状态。两条路：(a) 缓存指针（本版选的，2 行）；(b) 把 `FrameContext` 也给 `OnRender`（改虚函数签名）。选 (a) 是因为它不动机已定稿的 `IGame` 接口，代价是 `OnRender` 前必须有过一次 `OnUpdate`（`Run()` 的帧序保证了），所以留了一个 `nullptr` 判断兜底。**如果以后更多游戏要在画的时候读输入，就该换成 (b)** —— 这个口子先记在这 |
 
 ---
 
