@@ -26,7 +26,7 @@
 | ninja / make | **未安装**（不阻塞，VS 生成器可用） | **未安装** | 多配置（VS）生成器，所以**必须带 `--config`／`-C`** |
 | Git | 2.52.0；仓库 local 身份 `HUNK <wuunj@126.com>` | 2.52.0；**仓库级身份未设**，当前只吃全局 `Wuyangzhi <wu.yangzh@aerok.com.cn>`（补设见 A.2） | **身份按机器各用各的**（见 A.2），不要求两机一致 |
 | Shell / 终端 | Git Bash，`TERM=xterm-256color`，代码页 **936 (GBK)** | **PowerShell（主力）**，Git Bash 也能用；VS Code 内置终端是 UTF-8，传统控制台代码页 **936 (GBK)** | **给用户的命令一律按 PowerShell 写**：退出码用 `$LASTEXITCODE`（不是 `echo $?`）、路径用反斜杠；终端输出必须切 UTF-8，否则 `┌─┐@#*` 全乱码 |
-| 项目当前状态 | **S2 实现完成**（2026-09-28）：构建 0 warning、`ctest` 1/1、`mini_tests` 16 passed | **S2 自动验收通过**；交互验收（鼠标/切窗口/肉眼）**待真机手工做** | **下一步：跑 S2 手工验收**（`doc/S2_CHECKLIST.md` 9.1 / 9.2），过了再进 S3 |
+| 项目当前状态 | **S2 验收完成**（2026-09-28）：构建 0 warning、`ctest` 1/1、`mini_tests` 16 passed | **交互验收真机确认通过**（9 条现象）；遗留 1 条已知问题（关窗口的孤儿进程）留给 S3 | **下一步进 S3 Game Loop / Time / FPS**（`doc/S2_CHECKLIST.md` 已收口） |
 
 ### 标准命令（PowerShell + 多配置生成器）
 
@@ -322,7 +322,7 @@ S0 骨架 ──► S1 FrameBuffer 出画面 ──► S2 输入 ──► S3 Ga
 | 删除 | `engine/include/mini/render/TerminalPresenter.h`、`engine/src/render/TerminalPresenter.cpp`（S1 的临时房客，到期搬走） |
 | 单测 | `ctest` 仍是 **1 个条目**（`mini_tests`），内部用例 9 → **16**（新增 suite：`InputState` 5 个、`KeyCode` 2 个） |
 | 自动验收 | 构建 **0 warning**；`ctest` 1/1；`mini_tests` 16 passed；`MiniEngine.exe > out.txt` 抛 `runtime_error` + exit 1（**没进备用屏**）；反向验证第 3 条（删 `m_pulse` → 测试变红）已实跑并还原现场 |
-| 交互验收 | **待手工执行**：9.1 的 8 条现象（鼠标点击、切窗口、肉眼抓一帧的 `Released`）在自动化环境里驱动不了（见坑表最后一条）。**在真机上跑完之前，S2 不算验收完成** |
+| 交互验收 | ✅ **2026-09-28 真机 Windows Terminal 确认通过**：9.1 的 9 条现象（三行 HUD、`Held`、`Released` 闪一帧、`Pressed`、Q 干净退出、拖选后仍响应、切窗口不卡键、改尺寸不崩、`@` 每按一次走一格且按住不连走），详表见 `doc/S2_CHECKLIST.md` 9.1 |
 
 **S2 新踩到的坑（S0/S1 坑表之外）**
 
@@ -332,6 +332,8 @@ S0 骨架 ──► S1 FrameBuffer 出画面 ──► S2 输入 ──► S3 Ga
 | 长按不走飞，正好是判定顺序带来的 | 自动重复会不断把 `m_pulse` 置回 true，但 `Get()` 里 `was && now`（Held）排在 `pulse` 前面，所以按住不放**不会**被打回 `Pressed`。把顺序换掉，按住 W 会让 `@` 一直走 |
 | `KeyFromVirtualKey` 的参数必须是 16 位 | `wVirtualKeyCode` 是 WORD。先截成 `uint8_t` 再查表，会把高位非零的码**悄悄折到别的键**上（`0x0100` → 查到 `0x00`）。改成 `uint16_t` + 范围判断 |
 | `winpty` 驱动不了这个程序做自动验收 | `winpty` 拒绝把管道当 tty（报 `stdin is not a tty`），所以"喂一个 q 进去看它退不退"这条自动化路子走不通。**结论：交互验收只能手工做** —— 这也正是把四态状态机拆成 `InputState` 的价值：能自动测的部分已经全部自动测了 |
+| **关窗口会留下锁住 exe 的孤儿进程**（`LNK1168`，构建直接失败） | 不用 Q 退出而是直接关控制台窗口时，父 shell 被杀、子进程成孤儿，控制台也没了 → 它**永远等不到 `CTRL_CLOSE_EVENT`**，一直对着死控制台 `Present()`。根因是 `Present()` 从不检查 `std::cout` 写是否成功（控制台死后只是静静置 `failbit`）。**兜底**：`taskkill /F /IM MiniEngine.exe`。**修法留给 S3**（见下） |
+| 诊断时最容易被带偏的一条 | **"能改名"不等于"没被占用"**：Windows 加载器允许 rename 一个正在运行的 exe，只禁止 write。所以判断文件被占用要**试着写**（重链接一次），不是试着改名 |
 
 ### S3 Game Loop / Time / FPS
 
@@ -346,6 +348,11 @@ S0 骨架 ──► S1 FrameBuffer 出画面 ──► S2 输入 ──► S3 Ga
 | 验收 | 限帧 60 时 FPS 落在 58~61；`dt` 长时间运行不出现尖峰（打印 max dt 验证） |
 | 坑 | **Windows 上 `Sleep(1)` 实际睡 ~15.6ms**，必须混合睡眠（先睡到差 2ms，再自旋） |
 | 设计结论 | **用 variable dt + `dt = min(dt, 0.05)`**。本项目没有需要固定步长的物理（无重力、无弹性），引入 fixed update 只会让输入手感变差。等 S9 子弹高速穿透问题真的出现时，再考虑"子弹用子步进"这种局部方案，而不是全引擎改结构 |
+
+> **从 S2 带过来的一件事（别忘）**：`Application` 出现后要顺手修掉"关窗口留下孤儿进程"——
+> `Console::Present()` 检测写失败（控制台已死时 `std::cout` 只静静置 `failbit`，主循环毫无察觉）→ 调统一的退出入口。
+> 现在没有 `Application`，退出信号零散地散在 `main` 的 `while` 条件里，正好在这里一并收口。
+> 背景见 S2 坑表最后两条与 `doc/S2_CHECKLIST.md` 8.5。
 
 ### S4 Math 库 + 单元测试
 
