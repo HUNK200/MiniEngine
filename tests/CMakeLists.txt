@@ -8,6 +8,7 @@
 #   test_smoke.cpp       —— S0 的用例
 #   test_frame_buffer.cpp—— S1 的用例（不需要终端：FrameBuffer 不碰 IO）
 #   test_input_state.cpp —— S2 的用例（不需要终端：四态状态机与 VK 映射是纯逻辑）
+#   test_time.cpp        —— S3 的用例（不需要时钟：ClampDelta / FrameStats 是纯逻辑）
 # 新加用例文件必须在这里手写进源文件列表（S0 明确禁用 file(GLOB)）。
 # ============================================================
 
@@ -16,6 +17,7 @@ add_executable(mini_tests
     test_smoke.cpp
     test_frame_buffer.cpp
     test_input_state.cpp
+    test_time.cpp
 )
 
 target_include_directories(mini_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
