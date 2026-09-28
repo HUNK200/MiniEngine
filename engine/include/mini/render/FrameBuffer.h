@@ -10,8 +10,8 @@
 // FrameBuffer —— 屏幕后缓冲（S1）
 //
 // 职责：**只管像素，不碰 IO**。
-//   - 它是"后缓冲"，终端屏幕是"前缓冲"，Present() 就是交换（见 TerminalPresenter）
-//   - 所有终端 API 都在 TerminalPresenter 里，所以这个类**可以离线单测**
+//   - 它是"后缓冲"，终端屏幕是"前缓冲"，Present() 就是交换（见 platform::Console）
+//   - 所有终端 API 都在 platform::Console 里，所以这个类**可以离线单测**
 //
 // 依赖方向：render 内部自洽，不依赖 platform，不认识 game。
 //
