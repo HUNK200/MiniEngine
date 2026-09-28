@@ -26,7 +26,7 @@
 | ninja / make | **未安装**（不阻塞，VS 生成器可用） | **未安装** | 多配置（VS）生成器，所以**必须带 `--config`／`-C`** |
 | Git | 2.52.0；仓库 local 身份 `HUNK <wuunj@126.com>` | 2.52.0；**仓库级身份未设**，当前只吃全局 `Wuyangzhi <wu.yangzh@aerok.com.cn>`（补设见 A.2） | **身份按机器各用各的**（见 A.2），不要求两机一致 |
 | Shell / 终端 | Git Bash，`TERM=xterm-256color`，代码页 **936 (GBK)** | **PowerShell（主力）**，Git Bash 也能用；VS Code 内置终端是 UTF-8，传统控制台代码页 **936 (GBK)** | **给用户的命令一律按 PowerShell 写**：退出码用 `$LASTEXITCODE`（不是 `echo $?`）、路径用反斜杠；终端输出必须切 UTF-8，否则 `┌─┐@#*` 全乱码 |
-| 项目当前状态 | **S0 完成**（2026-09-23）：`ctest` 1/1 passed | **S0 复测通过**（2026-09-24）：配置通过、构建 0 warning、`ctest` 1/1、exe 打印 `0.1.0-dev` | 下一步进 **S1 FrameBuffer** |
+| 项目当前状态 | **S1 完成**（2026-09-24）：构建 0 warning、`ctest` 1/1、`mini_tests` 9 passed | **S1 复跑同上**（2026-09-28） | **下一步进 S2 Platform + 键盘输入**；施工图与验收见 `doc/S2_CHECKLIST.md`，方案已定稿、无阻塞 |
 
 ### 标准命令（PowerShell + 多配置生成器）
 
@@ -118,6 +118,7 @@ c++_simple_engine/
 │   ├── input_plan.md
 │   ├── MiniEngine_PLAN.md      # 本文件
 │   ├── S0_CHECKLIST.md         # S0 清单 + CMake 补丁清单 + 勾选进度
+│   ├── S2_CHECKLIST.md         # S2 施工图：接口决策 + 坑表 + 测试计划 + 正/反向验收
 │   ├── MINITEST_SPEC.md        # 测试框架 MiniTest 的规格
 │   ├── CTEST_NOTES.md          # CTest 入门与 GoogleTest 分工
 │   └── WORK_MODE.md            # 上班模式开关正文
@@ -128,7 +129,7 @@ c++_simple_engine/
 │   ├── CMakeLists.txt          # add_library(engine STATIC ...)
 │   ├── include/mini/           # 公共头（对外只暴露这层）
 │   │   ├── core/       Application.h  Time.h  Logger.h  Config.h  NonCopyable.h
-│   │   ├── platform/   Console.h  ConsoleWindows.h  Input.h  KeyCode.h    # 只做 Windows
+│   │   ├── platform/   Console.h  Input.h  InputState.h  KeyCode.h    # 只做 Windows
 │   │   ├── math/       Vec2.h  Vec3.h  Rect.h  AABB.h  Ray.h  MathUtils.h
 │   │   ├── render/     Cell.h  Color.h  FrameBuffer.h  Renderer2D.h
 │   │   │               Camera.h  Viewport.h  Renderer3D.h  RayCaster.h
@@ -137,7 +138,8 @@ c++_simple_engine/
 │   │   ├── physics/    Collision.h  PhysicsSystem.h
 │   │   ├── ai/         StateMachine.h  EnemyController.h
 │   │   └── debug/      DebugOverlay.h  Profiler.h
-│   └── src/                    # 与 include 镜像的 .cpp
+│   └── src/                    # 与 include 镜像的 .cpp；S2 起 platform/ 下放 Windows 实现
+│                               #   （唯一允许出现 <windows.h> 的地方，公共头一个都不能有）
 │
 ├── game/
 │   ├── CMakeLists.txt          # add_library(game STATIC ...)
@@ -167,7 +169,7 @@ main.cpp  →  game  →  engine  →  标准库
 - `engine` **绝不 include `game`**；`game` 绝不直接 include `<windows.h>`。
 - `math` 是 header-only、零依赖、`constexpr`，可以被任何层包含。
 - `render` 不认识的"游戏概念"（Player、Enemy 一律不认识），只认坐标和字符。
-- 只有 `platform/` 里允许出现 `#ifdef _WIN32` / `#include <windows.h>`。**这条规则的唯一例外是阶段 1**（还没抽象平台时允许临时写在 `render/Console` 里），阶段 2 必须把它挪走。
+- 只有 `platform/` 里允许出现 `#ifdef _WIN32` / `#include <windows.h>`，且只出现在 `engine/src/platform/` 的 `.cpp` 里——**公共头一个都不能有**。（S1 曾把终端代码临时放在 `render/TerminalPresenter.*`，**该例外已于 S2 终结**；`render` 从此不反向依赖任何一层。）
 
 ### A.4 为什么这么设计
 
@@ -290,13 +292,16 @@ S0 骨架 ──► S1 FrameBuffer 出画面 ──► S2 输入 ──► S3 Ga
 | 项 | 内容 |
 | --- | --- |
 | 目标 | `platform::Console` + `platform::Input`，`@` 能响应按键移动（先用瞬时移动验证输入通路） |
-| 实现 | 接口类 `IConsole`；**Windows 实现**：`ReadConsoleInput` / `PeekConsoleInput`，并关闭 `ENABLE_QUICK_EDIT_MODE`；`KeyCode` 枚举；三态 `Pressed/Held/Released`。**不写 Linux 分支**（`AGENTS.md` 约定：只做 Windows） |
+| 实现 | `platform::Console` / `platform::Input` 是**抽象基类 + 工厂**（`MakeConsole()` / `MakeInput()`），Windows 实现全藏在 `.cpp` 里；用 `ReadConsoleInputW` 轮询事件，关闭 `ENABLE_QUICK_EDIT_MODE`（须**同时**置 `ENABLE_EXTENDED_FLAGS`）并打开 `ENABLE_WINDOW_INPUT` 才能收到 `FOCUS_EVENT`；`KeyCode` 枚举；**四态** `Up/Pressed/Held/Released`。**不写 Linux 分支**（`AGENTS.md` 约定：只做 Windows） |
 | C++ 知识 | 抽象接口、`std::unique_ptr` + 工厂函数、RAII（构造开终端模式，析构恢复）、`enum class`、位标志 |
 | 引擎知识 | 输入轮询（poll）模型 vs 回调模型、按键边沿与持续状态 |
-| 规模 | ~250 行（只有 Windows 一条路径） |
+| 规模 | 净新增约 300 行，另有 165 行搬迁（S1 的 `TerminalPresenter.cpp` 归位到 `platform/`）；仍然只有 Windows 一条路径。比原估多出的部分是"可离线单测的状态机"与"抽象基类 + 工厂"两笔包装 |
 | 可运行效果 | 屏幕上实时显示 `W: Held  SPACE: Pressed  Q: Released`；按 Q 退出 |
-| 验收 | 长按 W 显示 Held；松开显示 Released 仅一帧；**鼠标在终端里点一下之后输入仍然正常** |
-| 坑 | ① 必须 `&~ENABLE_QUICK_EDIT_MODE` 并配合 `ENABLE_EXTENDED_FLAGS`，否则点一下控制台就"卡死"；② 忘了处理 `WINDOW_BUFFER_SIZE_EVENT`，改窗口大小后画面错位；③ 退出路径要恢复终端状态（显示光标、还原代码页），否则一次崩溃就让终端一直不正常 |
+| 验收 | 长按 W 显示 Held；松开显示 Released 仅一帧；**鼠标在终端里点一下之后输入仍然正常**；切走窗口 2 秒再切回无任何键卡在 Held；`MiniEngine.exe > out.txt` 抛异常 + 人话提示，**不是**静默无画面 |
+| 坑 | ① 必须 `&~ENABLE_QUICK_EDIT_MODE` 并配合 `ENABLE_EXTENDED_FLAGS`，否则点一下控制台就"卡死"；② `WINDOW_BUFFER_SIZE_EVENT` 在 S2 **只安全丢弃**（自适应画面归 S3/S6，见 E-12）；③ 退出路径要恢复终端状态（显示光标、还原代码页），否则一次崩溃就让终端一直不正常；④ **一帧内 down+up 的极速按键**必须用 `m_pulse` 兜住，否则会静默漏键；⑤ 未映射的 VK 必须丢弃，否则多个键一起写 `Unknown` 槽位互相干扰 |
+
+> **S2 详细施工图见 `doc/S2_CHECKLIST.md`** —— 接口签名与四态判定表、16 条坑表、7 个离线测试用例、正向 8 条 + 反向 4 条验收、五个 commit 的切分与勾选进度。
+> 本节只留阶段定义与决策，实现清单不在两处重复，避免改了一处漏另一处。
 
 ### S3 Game Loop / Time / FPS
 
@@ -597,21 +602,31 @@ private:
 // engine/include/mini/platform/Input.h  —— 骨架
 namespace mini::platform {
 
-enum class Key { Unknown, W, A, S, D, Q, E, Space, Escape, F1, F2, F3, F4, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Enter, R, /*...*/ };
+enum class Key : std::uint8_t { Unknown = 0, W, A, S, D, Q, E, R, Space, Enter, Escape, Tab,
+                                ArrowUp, ArrowDown, ArrowLeft, ArrowRight, F1, F2, F3, F4,
+                                Count };   // Count = 哨兵，等于数组长度
 
-enum class KeyState { Released, Pressed, Held };   // Pressed 只维持一帧
+// 四态（2026-09-28 定稿；原三态 {Released, Pressed, Held} 无法区分"刚抬起"与"一直没按过"）：
+//   Up       一直没按
+//   Pressed  本帧刚按下，含"本帧内按下又抬起"的极速点击；只维持一帧
+//   Held     持续按住
+//   Released 本帧刚抬起；只维持一帧
+enum class KeyState : std::uint8_t { Up, Pressed, Held, Released };
+// IsDown() == (Pressed || Held)；Get() 的判定顺序必须 Held 先于 Pressed
+// （否则长按会被"本帧见过 down"的 pulse 误判成 Pressed）—— 见 doc/S2_CHECKLIST.md 6.3
 
 class Input {
 public:
     virtual ~Input() = default;
-    virtual void BeginFrame() = 0;          // 把 Pressed 降级为 Held，处理 Released
+    virtual void BeginFrame() = 0;          // 帧尾推进：m_downPrev = m_downAtEnd，本帧的 down 脉冲清零
     virtual void Poll()       = 0;          // 非阻塞读事件
-    virtual bool IsDown(Key k) const = 0;   // Held || Pressed
+    virtual bool IsDown(Key k) const = 0;   // Pressed || Held
     virtual KeyState Get(Key k) const = 0;
-    virtual bool QuitRequested() const = 0; // Ctrl+C / ESC / 窗口关闭
+    virtual bool QuitRequested() const = 0; // 只反映"外部强制退出"：Ctrl+C / 关窗口（**不含 ESC**，见 S2 决策 4）
 };
 
-std::unique_ptr<Input> MakeInput();         // 平台工厂（.cpp 里 #ifdef 分派）
+std::unique_ptr<Input> MakeInput();         // 平台工厂。只做 Windows，所以没有 ifdef 分派文件：
+                                            // 工厂函数直接定义在 src/platform/InputWindows.cpp 里
 } // namespace mini::platform
 ```
 
@@ -759,7 +774,7 @@ S13  + Z-buffer：精灵与墙的遮挡关系                           —— �
 | E-9 | **迭代器失效** | 射击时随机崩溃 | 禁止"遍历中增删"；用延迟删除队列（`toRemove` 列表）或 `swap-erase` 倒序遍历 | S9 |
 | E-10 | **穿透** | 子弹跳过敌人、玩家高速穿墙 | 分轴移动（S7）；子弹子步进（S9）；`dt` clamp（S3） | S7/S9 |
 | E-11 | **Game Loop 设计错误** | 高刷屏上游戏速度变快、暂停恢复瞬移 | variable dt 且 `dt = min(dt, 0.05)`；暂停时不累积时间 | S3/S10 |
-| E-12 | **终端改尺寸** | 画面错位、越界写 | `WINDOW_BUFFER_SIZE_EVENT`/`TIOCGWINSZ` + `FrameBuffer::Resize` + 重画 | S2/S6 |
+| E-12 | **终端改尺寸** | 画面错位、越界写 | **S2 只把 `WINDOW_BUFFER_SIZE_EVENT` 安全丢弃**（不崩、不误当按键）；S3 起每帧比较 `FrameBuffer` 尺寸与 `Console::Size()`，变了才 `FrameBuffer::Resize` + 重画。**不走事件驱动**——S3 本来就有帧循环，轮询更简单且不会漏 | S3/S6 |
 | E-13 | **Ray Casting 鱼眼/裂缝** | 墙呈弧形、墙面有竖缝 | `cos` 校正；DDA 的 `sideDistX/Y` 初值按方向取 `(1-delta)` 或 `delta`；`rayDir` 归一化 | S12 |
 | E-14 | **ECS 过度设计** | 花两天改架构，游戏没进展 | 见 D.1：停在 D-1，需要时按具体类型分容器 | S10+ |
 | E-15 | **Profiler 失真** | 计时器被优化掉、被测代码因分配而变慢 | `std::atomic_signal_fence`/`DoNotOptimize`、固定大小环形缓冲、零分配 | S11 |
