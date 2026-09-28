@@ -199,6 +199,32 @@ MINI_TEST(RowDiff, SerializeAndSerializeRowAgree)
     MINI_CHECK(fb.SerializeRow(fb.Height()).empty());
 }
 
+// 【等价性守卫】全量帧必须与"老写法"逐字节相同。
+//
+//   老写法（S1/S2 的 Present）：先发 ESC[H，再发 FrameBuffer::Serialize()
+//   新写法（接入 RowDiff 之后）：RowDiff 的全量帧
+//
+// 这条就是"接上脏行 diff 之后**画面不会变**"的证据 —— 不需要终端，
+// 因为它比的是字节流。画面变了首先会在字节上体现出来（多一个/少一个序列）。
+// S2 那 9 条肉眼验收的结论就靠这条继续成立，不然等于白做。
+MINI_TEST(RowDiff, FullFrameMatchesLegacySerializeBytes)
+{
+    FrameBuffer fb(6, 3);
+    fb.Clear();
+    fb.Set(0, 0, 'A', Color::Red);
+    fb.Set(1, 0, 'B', Color::Red);          // 同色，不该多发色码
+    fb.Set(5, 2, '#', Color::BrightBlue);
+
+    RowDiff diff;
+    const std::string now = Frame(diff, fb);
+    const std::string legacy = std::string("\x1b[H") + std::string(fb.Serialize());
+
+    MINI_CHECK_EQ(now, legacy);
+
+    // 再确认一下"老写法"确实是 S1/S2 那套（帧首归位 + 帧首重置 SGR）
+    MINI_CHECK(legacy.starts_with("\x1b[H\x1b[39;49m"));
+}
+
 // 脏行 diff 的**收益**也要有一条守卫。
 //
 // 它同时是"前提没被破坏"的总开关：如果哪天 SerializeRow 变得依赖别的内容，

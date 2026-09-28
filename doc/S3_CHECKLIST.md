@@ -9,12 +9,13 @@
 
 ---
 
-## 当前状态（2026-09-28：**步骤 1 已实现并通过，等审核后进步骤 2**）
+## 当前状态（2026-09-28：**步骤 1~3 已实现并通过，等审核后进步骤 4**）
 
 - **S0 / S1 / S2 均已完成并通过验收**。S2 收口数据：构建 0 warning、`ctest` 1/1、`mini_tests` **16 passed**、真机交互 9/9 通过。
 - 本阶段的接口决策已拍板（第 8 节共 8 条，其中第 8 条是写步骤 1 时实测发现后补的）。
 - **S3 的实现节奏：一步一停** —— 每完成一个 commit 就报一次（做了什么 / 效果 / 作用），**等审核确认后再动下一步**。
-- 进度：**commit 1、2 已完成**，用例 16 → **33**。**下一步是 commit 3（`Console::Present` 改造），未开始。**
+- 进度：**commit 1、2、3 已完成**，用例 16 → **34**。**下一步是 commit 4（`Application` + 新 main + resize），未开始。**
+- 已修复的 S2 遗留问题：**孤儿进程**（`Present()` 返回 false → 主循环退出），并有**可复现的验证方法**（见 10.3）。
 
 > S3 的预估规模：净新增约 **500 行**（`Time`+`FrameStats` ~150、`platform::Wait` ~110、`RowDiff` ~110、`Application` ~150）加两组测试 ~230 行。
 > PLAN 原文估 ~250 行，多出来的是**脏行 diff**、**两组离线测试**、**高精度计时器**这三笔（见第 8 节决策 1 与 8）。
@@ -37,15 +38,15 @@
 | **S3-1b** | `platform/Wait.h` + `src/platform/WaitWindows.cpp`：高精度可等待计时器（**决策 8**，写步骤 1 时实测发现必需） | commit 1 | ✅ |
 | **S3-2** | `tests/test_time.cpp`：**8 个**用例（原计划 7 个 + `PlatformWaitBeatsSleepGranularity`） | commit 1 | ✅ |
 | **S3-3** | `render/RowDiff.h/.cpp` + `FrameBuffer::SerializeRow()` | commit 2 | ✅ |
-| **S3-4** | `tests/test_row_diff.cpp`：**9 个**用例（原计划 8 个 + `DirtyFrameIsFarSmallerThanFullFrame`） | commit 2 | ✅ |
-| **S3-5** | `Console::Present` 返回 `bool`；`ConsoleWindows` 内部接入 `RowDiff` 与写失败检测 | commit 3 | ⏳ **下一步** |
-| **S3-6** | `core/Application.h/.cpp`：`AppConfig` + `FrameContext` + `IGame` + `Application` | commit 4 | — |
+| **S3-4** | `tests/test_row_diff.cpp`：**10 个**用例（原计划 8 个 + 收益守卫 + 字节等价性守卫） | commit 2/3 | ✅ |
+| **S3-5** | `Console::Present` 返回 `bool`；`ConsoleWindows` 内部接入 `RowDiff` 与存活检测 | commit 3 | ✅ |
+| **S3-6** | `core/Application.h/.cpp`：`AppConfig` + `FrameContext` + `IGame` + `Application` | commit 4 | ⏳ **下一步** |
 | **S3-7** | `main.cpp` 重写成 `DemoGame : IGame` + `Application`（S2 的 HUD 与 `@` 搬进类里） | commit 4 | — |
 | **S3-8** | resize 接入（检测 + `FrameBuffer::Resize` + 一次 `ESC[2J` + 全量重画） | commit 4 | — |
 | **S3-9** | 正向验收 7 条 + 反向验证 4 条实跑并**还原现场** | commit 4 | — |
 | **S3-10** | 文档同步（第 12 节差异 + PLAN 落地记录 + S2_CHECKLIST 8.5 标已修） | commit 5 | — |
 
-- [x] S3-1 → [x] S3-1b → [x] S3-2 → [x] S3-3 → [x] S3-4 → [ ] S3-5 → [ ] S3-6 → [ ] S3-7 → [ ] S3-8 → [ ] S3-9 → [ ] S3-10
+- [x] S3-1 → [x] S3-1b → [x] S3-2 → [x] S3-3 → [x] S3-4 → [x] S3-5 → [ ] S3-6 → [ ] S3-7 → [ ] S3-8 → [ ] S3-9 → [ ] S3-10
 
 ### 实现偏差（逐步追加，与 S2 同格式）
 
@@ -58,6 +59,9 @@
 | D5 | `SerializeRow(y)` 原计划只说"颜色码规则与 `Serialize()` 一致" | 契约收紧成：**假定行首是默认色，且输出只取决于这一行**；`RowDiff` 在每行脏行定位之后**自己补 `ESC[39;49m`** | 绝对定位之后终端的 SGR 是上次写的残留（可能是任何颜色），而 `SerializeRow` 的色码是按"起点为默认色"生成的 —— 不重置的话这一行第一个格子的颜色就是错的。同时这条契约正是 `RowDiff` 比较的前提 |
 | D6 | `tests/test_row_diff.cpp` 8 个用例 | 9 个（增 `DirtyFrameIsFarSmallerThanFullFrame`） | 原计划只测"输出正确"，没测"输出更少"。加了这条之后，**如果哪天 `SerializeRow` 变得依赖别的内容（每行每帧都变 → 每帧全量），它会立刻变红** —— 这是整个脏行 diff 的总开关 |
 | D7 | `Serialize()` 的逐格循环留在原地 | 抽成私有 `AppendRowTo(out, y, curFg, curBg)`，`Serialize()` 与 `SerializeRow()` 共用 | 坑 #15 的根治办法：不是"两处写得一样"，而是**物理上只有一处**。共用之后"两条路径颜色规则不一致"这类错不可能发生 |
+| D8 | `Present` 里只做"写完检查 `std::cout` 是否失败" | **每帧先查一次 `GetConsoleMode`**（终端还在不在），写失败检测降为兜底 | 脏行 diff 生效后，**内容没变的帧一个字节都不发** —— 而"没写"就没有失败信号。画面静止时（S2 的演示、以后的暂停）只靠写失败根本发现不了终端已经死了。代价是一次约 1μs 的 syscall，相对 16ms 帧时间可忽略。见坑 #29 |
+| D9 | resize 时发 `ESC[2J` | **首帧不发**（`m_hasPresented` 门闩） | 刚进备用屏本来就是空的，清它纯属浪费；而且"清屏"只应该在真正需要时出现（每帧清屏正是闪烁的根源，E-3） |
+| D10 | `tests/test_row_diff.cpp` 到 9 个为止 | 再增 `FullFrameMatchesLegacySerializeBytes`（第 10 个） | 步骤 3 的验收要求"画面与 S2 **逐字符一致**"，而这条**不需要终端就能验**：新全量帧的字节 == 老的 `ESC[H` + `Serialize()`。没有它，这个声明就只剩"我觉得一样" |
 
 ---
 
@@ -672,6 +676,7 @@ platform::Wait(7ms) → 实测 7.05~7.56ms（10 次采样）
 | 26 | 游戏这一帧拿到旧尺寸 | resize 检测放在 `OnUpdate` 之后。必须在之前 |
 | 27 | 新增 `.cpp` 忘了进 CMake | 禁用 `file(GLOB)`，手写源文件列表（S0 坑 #8）。`Time.cpp` / `WaitWindows.cpp` / `RowDiff.cpp` / `Application.cpp` 四个都要加 |
 | 28 | `Application` 析构顺序出错 | 成员声明顺序必须 Console → Input → FrameBuffer；析构自动逆序（FrameBuffer 先没、Console 最后恢复终端）。**别用 `unique_ptr` 之外的手工 new/delete** |
+| 29 | **终端死了但进程不退出**（S2 那个孤儿进程） | 只靠"写完看 `std::cout` 是否失败"是**不够的**：脏行 diff 让"内容没变的帧一个字节都不发"，而**没写就没有失败信号** —— 画面静止时永远发现不了终端已经没了。对策：每帧先 `GetConsoleMode(g_hOut, &mode) == 0` → 返回 false。写失败检测留着当兜底（也顺手覆盖"写到别处失败"） |
 
 ---
 
@@ -713,6 +718,7 @@ ctest --test-dir build -C Debug --output-on-failure    # 期望 1/1（内部 16 
 | `LastRowHasNoTrailingCrLf` | 全量帧里 `\r\n` 恰好 `rows-1` 个，且不以它结尾 |
 | `SerializeAndSerializeRowAgree` | 第 0 行段 == `ESC[39;49m` + `SerializeRow(0)`；改别的行后这一行字节不变；越界给空 ← **前提守卫** |
 | `DirtyFrameIsFarSmallerThanFullFrame` | 80×25 只动 2 行时输出 ≥ 小 10 倍 ← **收益守卫 + 前提总开关** |
+| `FullFrameMatchesLegacySerializeBytes` | 全量帧的字节 == 老的 `ESC[H` + `Serialize()` ← **"画面与 S2 逐字符一致"的机器证据**（步骤 3 新增） |
 
 **实测字节数（80×25 全空白，本机）**：全量帧 **2059 B** → 只动 2 行 **197 B**，**省 10.5 倍**。
 60fps 下相当于从 120KB/s 降到 11KB/s。
@@ -724,17 +730,41 @@ ctest --test-dir build -C Debug --output-on-failure    # 期望 1/1（内部 16 
 .\build\bin\Debug\MiniEngine.exe 300      # 高帧率
 ```
 
-| # | 操作 | 必须看到 | 
-| --- | --- | --- |
-| 1 | 启动 | 顶栏 `FPS: 59.x  Frame: 16.7ms  Work: 0.2ms  Rows: 2/25` |
-| 2 | 挂着看 30 秒 | FPS 稳定在 **58~61**，不来回跳；`Work` 稳定在 1ms 以内 |
-| 3 | 不停按键移动 `@` | FPS **不下降**（脏行 diff 生效：只有顶栏和 `@` 那几行在动，`Rows:` 是个位数） |
-| 4 | **拖大 / 拖小终端窗口** | 画面立刻跟着重排：边框贴新宽度、`@` 被夹在新边界内、**无残影**、不崩、**不上滚** |
-| 5 | `MiniEngine.exe 300` | FPS 明显上升（200+），而 `Work` 基本不变 → 证明限帧真的在限帧，不是工作变快 |
-| 6 | 按 Q / Ctrl+C | 干净退出，回原屏，光标可见，`$LASTEXITCODE` = 0 |
-| 7 | **直接关控制台窗口** | 进程**立刻消失**（`tasklist /FI "IMAGENAME eq MiniEngine.exe"` 查不到）→ S2 遗留问题已修 |
+| # | 操作 | 必须看到 | 步骤 3 后的状态 |
+| --- | --- | --- | --- |
+| 1 | 启动 | 顶栏 `FPS: 59.x  Frame: 16.7ms  Work: 0.2ms  Rows: 2/25` | ⏳ 待步骤 4（顶栏还没做） |
+| 2 | 挂着看 30 秒 | FPS 稳定在 **58~61**，不来回跳；`Work` 稳定在 1ms 以内 | ⏳ 待步骤 4 |
+| 3 | 不停按键移动 `@` | FPS **不下降**（脏行 diff 生效：只有顶栏和 `@` 那几行在动，`Rows:` 是个位数） | 部分可验：脏行 diff 已接上，但顶栏没有数字 |
+| 4 | **拖大 / 拖小终端窗口** | 画面立刻跟着重排：边框贴新宽度、`@` 被夹在新边界内、**无残影**、不崩、**不上滚** | ⏳ 待步骤 4（resize 还没接） |
+| 5 | `MiniEngine.exe 300` | FPS 明显上升（200+），而 `Work` 基本不变 | ⏳ 待步骤 4（命令行参数还没做） |
+| 6 | 按 Q / Ctrl+C | 干净退出，回原屏，光标可见，`$LASTEXITCODE` = 0 | ✅ **步骤 3 即可验** |
+| 7 | **杀掉它的 conhost（= 控制台被销毁）** | 进程**自己退出** → S2 遗留的孤儿进程问题已修 | ✅ **步骤 3 已实测通过**，recipe 见下 |
 
 第 2 条要看 30 秒以上、第 4 条要反复拖几次（尤其拖到很窄再拖回来）。
+
+**第 7 条的可复现做法**（我实测过，不需要改任何代码）：
+
+```powershell
+# 1. 给它一个独立控制台
+$p = Start-Process -FilePath ".\build\bin\Debug\MiniEngine.exe" -PassThru
+Start-Sleep -Seconds 2
+
+# 2. 找到属于它的 conhost 并杀掉 —— 这会**销毁控制台**，
+#    而且不会给 MiniEngine 发 CTRL_CLOSE_EVENT（这正是 S2 那个孤儿场景）
+$con = Get-CimInstance Win32_Process |
+       Where-Object { $_.Name -eq "conhost.exe" -and $_.ParentProcessId -eq $p.Id }
+Stop-Process -Id ($con | Select-Object -First 1).ProcessId -Force
+
+# 3. 3 秒后它应该已经不在了
+Start-Sleep -Seconds 3
+Get-Process -Id $p.Id -ErrorAction SilentlyContinue   # 期望：什么都没有
+```
+
+**实测结果（2026-09-28）**：MiniEngine 在 conhost 被杀后 **3 秒内自己退出**。
+修之前它会在那里对着死控制台一直写，锁住 `MiniEngine.exe` 让后续构建全部 `LNK1168`。
+
+> 为什么"关控制台窗口"不是好测试：那会发 `CTRL_CLOSE_EVENT`，S2 的 handler 已经能处理它了 ——
+> **它从来不是那个 bug**。bug 的场景是"控制台被销毁但事件没送到"，所以要用上面这种杀 conhost 的办法。
 
 ### 10.3 反向验证（四条，必须实跑并还原现场）
 

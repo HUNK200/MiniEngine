@@ -39,10 +39,17 @@ public:
 
     // 光标归位（ESC[H，**不清屏**）+ 写整屏 + flush。
     // 一帧只写一次终端 —— PLAN C.5 防闪烁的第一条措施。
-    virtual void Present(const render::FrameBuffer& fb) = 0;
+    // （**脏行 diff 之后**，这一句要改成"一帧最多写一次"：内容没变时一个字节都不发）
+    //
+    // 【返回值】false = **终端已经不在了**（控制台被销毁 / 写失败）。
+    //
+    // 为什么要返回值：把"终端可能没了"变成类型系统里的东西，逼调用方处理，
+    // 而不是让它悄悄烂在循环里。背景是 S2 实测的那个坑 —— 关掉控制台窗口后
+    // 进程成孤儿，对着死控制台一直写，**锁住 exe 让后续所有构建失败（LNK1168）**。
+    [[nodiscard]] virtual bool Present(const render::FrameBuffer& fb) = 0;
 
     // 终端**可视区**宽高（srWindow，不是缓冲区尺寸）。
-    // S2 不用它（main 仍按固定 80x25 建 FrameBuffer），留给 S3 建/重建后缓冲。
+    // S2 没用它（main 按固定 80x25 建 FrameBuffer）；S3 每帧比较它来响应窗口缩放。
     virtual ConsoleSize Size() const = 0;
 };
 

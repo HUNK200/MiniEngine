@@ -238,7 +238,13 @@ int main()
             MovePlayer(player, *input);
 
             DrawFrame(fb, *input, player);                    // 3. 全部画进后缓冲
-            console->Present(fb);                             // 4. 一帧只写一次终端
+
+            // 4. 提交（脏行 diff 之后是"一帧最多写一次"：内容没变时一个字节都不发）
+            //    返回 false = 终端已经不在了 → 立刻退出。
+            //    这是 S2 那个坑的收口处：关掉控制台窗口后进程不再变成锁住 exe 的孤儿。
+            if (!console->Present(fb)) {
+                break;
+            }
 
             input->BeginFrame();                              // 5. 帧尾推进
             std::this_thread::sleep_for(16ms);

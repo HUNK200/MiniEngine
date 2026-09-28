@@ -1,6 +1,7 @@
 #include "mini/platform/Console.h"
 
 #include "mini/render/FrameBuffer.h"
+#include "mini/render/RowDiff.h"
 
 #include <windows.h>
 
@@ -114,8 +115,19 @@ public:
     ConsoleWindows();
     ~ConsoleWindows() override;
 
-    void        Present(const render::FrameBuffer& fb) override;
+    bool        Present(const render::FrameBuffer& fb) override;
     ConsoleSize Size() const override;
+
+private:
+    // 脏行 diff：只把内容变了的行交给终端。它是"防闪烁/少写"那条线的落点，
+    // 所以放在**唯一的终端写入方**（Console）里，而不是让调用方自己拼字节。
+    render::RowDiff m_rowDiff;
+
+    // 上一次 Present 的画布尺寸。变了 → RowDiff 快照可能失效 + 需要清一次屏。
+    int  m_lastWidth  = 0;
+    int  m_lastHeight = 0;
+    // 首帧不发作 ESC[2J：刚进备用屏，本来就是空的，清它纯属浪费（也就不是"闪烁"）。
+    bool m_hasPresented = false;
 };
 
 ConsoleWindows::ConsoleWindows()
@@ -204,15 +216,51 @@ ConsoleWindows::~ConsoleWindows()
     (void)::SetConsoleCtrlHandler(CtrlHandler, FALSE);
 }
 
-void ConsoleWindows::Present(const render::FrameBuffer& fb)
+bool ConsoleWindows::Present(const render::FrameBuffer& fb)
 {
-    // 光标归位（**不清屏**！ESC[2J 正是闪烁的根源）+ 整屏 + 刷一次
-    std::cout << "\x1b[H";
-    const std::string_view pixels = fb.Serialize();
-    if (!pixels.empty()) {
-        std::cout.write(pixels.data(), static_cast<std::streamsize>(pixels.size()));
+    // ---- ① 终端还在不在？----
+    //
+    // 为什么单独查一次、而不是只靠"写完看 std::cout 的 failbit"：
+    //   脏行 diff 生效之后，**内容没变的帧一个字节都不发** —— 而"没写"就没有失败信号。
+    //   比如画面完全静止时（S2 的演示、或以后暂停的游戏），只靠写失败检测根本发现不了
+    //   终端已经死了。所以这一层是主力，写失败检测是兜底。
+    //   代价是一次 GetConsoleMode，约 1μs，和 16ms 的帧时间比可以忽略。
+    DWORD outMode = 0;
+    if (g_hOut == INVALID_HANDLE_VALUE || ::GetConsoleMode(g_hOut, &outMode) == 0) {
+        return false;   // 控制台已被销毁（关窗口留下的孤儿进程就死在这条上）
     }
-    std::cout.flush();
+
+    // ---- ② 尺寸变了？----
+    const int w = fb.Width();
+    const int h = fb.Height();
+    if (w != m_lastWidth || h != m_lastHeight) {
+        // **唯一允许清屏的地方**：尺寸变化。清屏 + 重画的那一瞬就是闪烁的来源，
+        // 所以每帧 ESC[2J 是禁忌，只有这里例外（PLAN E-3 的原始教训）。
+        // 首帧除外：刚进备用屏，本来就是空的。
+        if (m_hasPresented) {
+            std::cout << "\x1b[2J";
+            m_rowDiff.Invalidate();   // 清完屏必须全量重画，否则屏幕上会缺一块
+        }
+        m_lastWidth  = w;
+        m_lastHeight = h;
+    }
+
+    // ---- ③ 拼帧（只含变化的行）并一次写出去 ----
+    const std::string_view frame = m_rowDiff.Compose(fb);
+    if (!frame.empty()) {
+        std::cout.write(frame.data(), static_cast<std::streamsize>(frame.size()));
+        std::cout.flush();
+
+        // 兜底：真写失败了（句柄被别的路径弄坏、重定向目标满了……）也算终端不可用。
+        // 注意 std::cout 的 failbit 一旦置上就**不会自己清**，所以这里直接返回 false，
+        // 让上层退出 —— 不要把同一个 cout 留着复用（见 S3 检查单坑 #25）。
+        if (!std::cout) {
+            return false;
+        }
+    }
+
+    m_hasPresented = true;
+    return true;
 }
 
 ConsoleSize ConsoleWindows::Size() const
