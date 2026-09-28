@@ -37,9 +37,12 @@ cmake --build build --config Debug
 
 # 运行（S0 起把 exe 统一输出到 build/bin/）
 .\build\bin\Debug\MiniEngine.exe
+.\build\bin\Debug\MiniEngine.exe 300    # S3 起：第一个参数 = 目标帧率（300 = 不限帧观察）
 
 # 测试（-C 不能漏，否则 CTest 找不到配置）
 ctest --test-dir build -C Debug --output-on-failure
+.\build\bin\Debug\mini_tests.exe           # 全部用例
+.\build\bin\Debug\mini_tests.exe RowDiff   # 只跑某个 suite（S3 起有 suite 过滤）
 ```
 
 可选：`cmake -S . -B build-clang -G "Visual Studio 17 2022" -T ClangCL` 得到 clang 构建，用来交叉验证 MSVC 没抓到的警告。
@@ -112,7 +115,8 @@ c++_simple_engine/
 ├── .gitattributes              # 行尾统一 LF（两机同步用）
 ├── .gitignore
 ├── main.cpp                    # 唯一入口。S3 起含临时 DemoGame（IGame 实现），
-│                               #   等 S5 建了 game/ 才会回到 <20 行
+│                               #   等 S5 建了 game/ 才会回到 <20 行。
+│                               #   DemoGame 的版面从**第 1 行**开始 —— 第 0 行留给顶栏
 ├── README.md                   # 阶段 14 再写，别提前写
 │
 ├── doc/                        # 全部文档（2026-09-23 起集中于此）
@@ -153,7 +157,12 @@ c++_simple_engine/
 └── tests/
     ├── CMakeLists.txt
     ├── MiniTest.h              # 自制极简断言框架（~80 行）
-    ├── test_main.cpp
+    ├── test_main.cpp           # runner：注册表 + suite 过滤 + 汇总（退出码 = 失败用例数）
+    ├── test_smoke.cpp          # S0（1 个）
+    ├── test_frame_buffer.cpp   # S1
+    ├── test_input_state.cpp    # S2（四态状态机，可离线测）
+    ├── test_time.cpp           # S3（clamp / FPS 算法 / platform::Wait 精度）8 个
+    ├── test_row_diff.cpp       # S3（脏行格式 + 收益守卫 + 字节等价性）10 个
     ├── test_math.cpp
     ├── test_collision.cpp
     ├── test_tilemap.cpp
@@ -334,26 +343,34 @@ S0 骨架 ──► S1 FrameBuffer 出画面 ──► S2 输入 ──► S3 Ga
 | 长按不走飞，正好是判定顺序带来的 | 自动重复会不断把 `m_pulse` 置回 true，但 `Get()` 里 `was && now`（Held）排在 `pulse` 前面，所以按住不放**不会**被打回 `Pressed`。把顺序换掉，按住 W 会让 `@` 一直走 |
 | `KeyFromVirtualKey` 的参数必须是 16 位 | `wVirtualKeyCode` 是 WORD。先截成 `uint8_t` 再查表，会把高位非零的码**悄悄折到别的键**上（`0x0100` → 查到 `0x00`）。改成 `uint16_t` + 范围判断 |
 | `winpty` 驱动不了这个程序做自动验收 | `winpty` 拒绝把管道当 tty（报 `stdin is not a tty`），所以"喂一个 q 进去看它退不退"这条自动化路子走不通。**结论：交互验收只能手工做** —— 这也正是把四态状态机拆成 `InputState` 的价值：能自动测的部分已经全部自动测了 |
-| **关窗口会留下锁住 exe 的孤儿进程**（`LNK1168`，构建直接失败） | 不用 Q 退出而是直接关控制台窗口时，父 shell 被杀、子进程成孤儿，控制台也没了 → 它**永远等不到 `CTRL_CLOSE_EVENT`**，一直对着死控制台 `Present()`。根因是 `Present()` 从不检查 `std::cout` 写是否成功（控制台死后只是静静置 `failbit`）。**兜底**：`taskkill /F /IM MiniEngine.exe`。**修法留给 S3**（见下） |
+| **关窗口会留下锁住 exe 的孤儿进程**（`LNK1168`，构建直接失败）—— **已在 S3 修复 ✅** | 不用 Q 退出而是直接关控制台窗口时，父 shell 被杀、子进程成孤儿，控制台也没了 → 它**永远等不到 `CTRL_CLOSE_EVENT`**，一直对着死控制台 `Present()`。根因是 `Present()` 从不检查 `std::cout` 写是否成功（控制台死后只是静静置 `failbit`）。**兜底**（只在老版本上还需要）：`taskkill /F /IM MiniEngine.exe`。<br>**S3 的修法**：`Present()` 返回 `bool` + `Application::RequestQuit()`。**但不能只查写失败** —— 脏行 diff 让"内容没变的帧一个字节都不发"，**没写就没有失败信号**，所以每帧先用 `GetConsoleMode` 判终端存活（`S3_CHECKLIST` 坑 #29）。<br>**正确的验证方式**：关窗口会发 `CTRL_CLOSE_EVENT`，那从来不是这个 bug；要"给它一个独立控制台 + 杀掉属于它的 `conhost.exe`"，recipe 见 `S3_CHECKLIST` 10.2 第 7 条 |
 | 诊断时最容易被带偏的一条 | **"能改名"不等于"没被占用"**：Windows 加载器允许 rename 一个正在运行的 exe，只禁止 write。所以判断文件被占用要**试着写**（重链接一次），不是试着改名 |
 
-### S3 Game Loop / Time / FPS
+### S3 Game Loop / Time / FPS（✅ 2026-09-28 完成）
 
 | 项 | 内容 |
 | --- | --- |
 | 目标 | `Application` 类 + 主循环 + 顶栏实时 FPS/FrameTime |
-| 实现 | `Time::Update()`（`steady_clock`）、滑动窗口 FPS、混合睡眠限帧、脏行 diff 提交 |
-| C++ 知识 | `std::chrono`、`duration_cast`、`std::this_thread::sleep_for`、RAII 计时、静态局部变量 |
-| 引擎知识 | variable dt vs fixed dt、dt clamp、帧率限制、为什么"限帧"和"垂直同步"不是一回事 |
-| 规模 | 净新增约 **450 行**（`Time`+`FrameStats` ~120、`RowDiff` ~110、`Application` ~150、main 重写 ~30）+ 两组测试 ~180 行。PLAN 原估 ~250 行，多出来的是**脏行 diff** 与**两组离线测试**（决策 1） |
-| 可运行效果 | 顶栏 `FPS: 59.9  Frame: 16.7ms  Work: 0.3ms  Rows: 2/25`；`MiniEngine.exe 300` 能看到 FPS 上升而 `Work` 不变；拖窗口画面跟手重排 |
-| 验收 | 限帧 60 时 FPS 落在 58~61；`MaxFrameMs()` 长时间运行不出现尖峰；拖大/拖小窗口无残影且**不上滚**；**直接关控制台窗口进程立刻消失**（S2 遗留问题） |
+| 实现 | `Time::BeginFrame/EndFrame/LimitFPS`（`steady_clock`）、滑动窗口 FPS、`platform::Wait` 高精度限帧、`render::RowDiff` 脏行 diff 提交 |
+| C++ 知识 | `std::chrono`、`duration_cast`、RAII 计时、静态局部变量、聚合体初始化、`[[nodiscard]]` |
+| 引擎知识 | variable dt vs fixed dt、dt clamp、帧率限制、为什么"限帧"和"垂直同步"不是一回事、脏行 diff 与"没写就没有失败信号" |
+| 规模 | 实际净新增约 **500 行** + 两组测试 **230 行**（原估 450 行；多出来的是**高精度计时器** `platform::Wait` 与两个守卫用例） |
+| 可运行效果 | 顶栏 `FPS  60.0 \| Frame  16.7ms \| Work  0.3ms \| Rows  1/24`；`MiniEngine.exe 300` 能看到 FPS 上升而 `Work` 不变；拖窗口画面跟手重排 |
+| 验收 | 限帧 60 时 FPS 落在 58~61；拖大/拖小窗口无残影且**不上滚**；**控制台被销毁后进程自己退出**（S2 遗留问题，见下方注明） |
 | 坑 | **Windows 上 `Sleep(1)` 实际睡 ~15.6ms**，必须混合睡眠（先睡到差 `spin`，再自旋）。**`spin = min(2ms, targetFrame/4)`，写死 2ms 会在高帧率下把 CPU 烧穿**。⚠️ **2026-09-28 写步骤 1 时实测推翻了"混合睡眠就够"这个前提**：粒度是调度器 tick **15.625ms**，而 60fps 目标帧时间 16.667ms 只差 1.04ms → 用 `sleep_for` 会**每 15 帧左右睡过头一整跳**（`Sleep(16)` 实测 31.26ms），FPS 在 40~60 抖。**必须用 `platform::Wait`（高精度可等待计时器，精度 <1ms，不需链额外库）**，见 S3 决策 8 |
 | 设计结论 | **用 variable dt + `dt = min(dt, 0.05)`**。本项目没有需要固定步长的物理（无重力、无弹性），引入 fixed update 只会让输入手感变差。等 S9 子弹高速穿透问题真的出现时，再考虑"子弹用子步进"这种局部方案，而不是全引擎改结构 |
 
-> **从 S2 带过来的一件事（S3 必须一起收掉）**：`Application` 出现后要顺手修掉"关窗口留下孤儿进程"——
-> `Console::Present()` 改成返回 `bool`（控制台已死时 `std::cout` 只静静置 `failbit`，主循环毫无察觉）→ `Application::RequestQuit()`。
-> 现在没有 `Application`，退出信号零散地散在 `main` 的 `while` 条件里，正好在这里一并收口。
+> **验收里那一条要按实际情况理解**：原写"直接关控制台窗口进程立刻消失"，
+> 但关窗口会发 `CTRL_CLOSE_EVENT`，S2 的 handler 早就处理了 —— **它从来不是那个 bug**。
+> 真正的坑是"**控制台被销毁但事件没送到**"。所以验证方式改成：
+> 给它一个独立控制台，然后杀掉属于它的 `conhost.exe`，进程应**在 3 秒内自己退出**。
+> recipe 在 `doc/S3_CHECKLIST.md` 10.2 第 7 条（2026-09-28 已跑通 ✅）。
+
+> **从 S2 带过来的一件事 —— 已在 S3 收口 ✅**：
+> `Console::Present()` 现在返回 `[[nodiscard]] bool`（控制台已死时返回 false），
+> 由 `Application::RequestQuit()` 统一收口。**注意实现比原计划多了一层**：
+> 只查写失败不够，因为脏行 diff 让"内容没变的帧一个字节都不发"——
+> **没写就没有失败信号**，所以每帧先用 `GetConsoleMode` 判终端存活。见 `S3_CHECKLIST` 坑 #29。
 > 背景见 S2 坑表最后两条与 `doc/S2_CHECKLIST.md` 8.5。
 
 **S3 方案定稿（2026-09-28，四条决策）** —— 完整施工图见 **`doc/S3_CHECKLIST.md`**
@@ -366,15 +383,37 @@ S0 骨架 ──► S1 FrameBuffer 出画面 ──► S2 输入 ──► S3 Ga
 | 4 | 新建 **`doc/S3_CHECKLIST.md`** | — | 与 S0/S2 同格式。S3 跨 5 个 commit 且要改 S2 的两个接口，比 S1 更值得单独存档 |
 | 5 | **限帧用高精度可等待计时器**，封成 `platform::Wait()` | `platform/Wait.h` + `src/platform/WaitWindows.cpp`；`Time::LimitFPS` 不用 `sleep_for` | **写步骤 1 时实测发现的**（不是方案阶段想到的）：本机 `Sleep` 粒度 15.625ms vs 60fps 目标帧时间 16.667ms，只差 1.04ms → 每 15 帧睡过头一整跳。高精度计时器**不需链额外库**，也不用 `timeBeginPeriod`（那个会改全系统定时器精度）。`Wait(7ms)` 实测 7.05~7.56ms |
 
-**实现进度（一步一停，2026-09-28 起）**：commit 1（`Time` + `FrameStats` + `platform::Wait`）、
-commit 2（`RowDiff` + `FrameBuffer::SerializeRow`）、commit 3（`Present` 返回 `bool` + 内部接入 `RowDiff` + 终端存活检测）
-已提交，用例 16 → **34**，实测脏行帧比全量帧省 **10.5 倍**字节，**S2 的孤儿进程问题已修并实测通过**；
-**commit 4（`core::Application` + `IGame` + 新 `main.cpp`）代码已写完，待构建/运行验证**；
-commit 5（文档收口）未开始。
+**实现进度（→ 2026-09-28：S3 完成）**
 
-**分工约定（2026-09-28 追加）**：**编译与运行由本人执行，AI 只做代码编辑**。
-所以 commit 4 在本人验证通过之前不提交 —— "每个 commit 都要能编译"是 PLAN 附录 D 的硬规矩，
-而 AI 无法自证这一点。详见 `doc/S3_CHECKLIST.md` 顶部的分工约定表。
+`S3 已完成并通过验收`（本人构建 + 运行确认）。6 个 commit：
+
+| # | commit | 内容 |
+| --- | --- | --- |
+| 1 | `17f3059` | `core::Time` + `FrameStats`（dt clamp + 滑动窗口 FPS） |
+| 1b | `9f0a375` | `platform::Wait` 高精度等待（决策 8 的产物，见上表第 5 条） |
+| 2 | `dce6b5e` | `render::RowDiff` + `FrameBuffer::SerializeRow` |
+| 3 | `a6deebb` | `Console::Present` 返回终端存活，内部接入 `RowDiff` |
+| 4 | `1d45702` | `core::Application` + `IGame`，`main` 退化为 `DemoGame` |
+| 5 | （本次收口） | 文档同步：本节的落地记录 + `S2_CHECKLIST` 8.5 标已修 + `AGENTS.md` 1.4 |
+
+**可自动验证的数据**：用例 16 → **34 passed**，`ctest` 1/1，构建 0 warning；
+脏行帧比全量帧省 **10.5 倍**字节（80×25 实测 2059 B → 197 B）。
+
+**实测与本节原估不一致的三处**（都是落地后才知道的，别按原文理解）：
+
+| 项 | 原文估 | 实际 |
+| --- | --- | --- |
+| 顶栏格式 | `FPS: 59.9  Frame: 16.7ms  Work: 0.3ms  Rows: 2/25` | `FPS  60.0 \| Frame  16.7ms \| Work  0.3ms \| Rows  1/24`（字段用 `\|` 分隔；**总行数是画布行数 24**，因为第 0 行被顶栏占掉） |
+| 规模 | 净新增约 450 行 | 约 **500 行** + 两组测试 ~230 行（多出的是高精度计时器与两个守卫用例） |
+| 退出方式 | "直接关控制台窗口进程立刻消失" | 关窗口本来就能退（`CTRL_CLOSE_EVENT` 早就处理了）。**真正的坑是"控制台被销毁但事件没送到"**，验证要用"杀掉属于它的 `conhost.exe`"，见 `S3_CHECKLIST` 10.2 第 7 条 |
+
+**S3 没做完的两件小事**（不影响结项，留给需要时补）：
+`S3_CHECKLIST` 10.3 的反向验证 1/2/4（改代码才能验，要 FPS 顶栏观察）；
+`mini_tests.exe Nope` 那道 S0 门闩的复验。
+
+**分工约定（2026-09-28 追加，已固化进 `AGENTS.md` 1.4）**：
+**编译与运行由本人执行，AI 只做代码编辑** —— 所以本节的"已通过"都是本人回报的结果，
+AI 不会自己跑构建或 exe。一个步骤的 commit 由本人在验证通过后决定何时打。
 
 决策表**之外**还有三处与 C.3/C.4 草案不同，已直接改进原文：`FrameContext` 去掉 `Time&`、`IGame` 从 `unique_ptr` 改成引用、
 顶栏由 `Application` 在 `game.OnRender` **之后**画。
@@ -605,14 +644,14 @@ main.cpp
 > ② `FrameContext` **不含 `Time&`**——游戏拿到可变 `Time&` 就能调 `EndFrame()`/`LimitFPS()` 把循环时序搞乱，而且没有编译器拦得住。
 
 ```cpp
-// engine/include/mini/core/Application.h   —— S3 定稿
+// engine/include/mini/core/Application.h   —— S3 定稿（2026-09-28 已落地，与代码一致）
 namespace mini::core {
 
 struct AppConfig {
     int  width     = 0;      // 0 = 用终端当前尺寸（推荐）
     int  height    = 0;
     int  targetFps = 60;     // <=0 = 不限帧
-    bool showStats = true;   // 顶栏
+    bool showStats = true;   // 顶栏。打开时**第 0 行归 Application**，游戏从第 1 行开始画
 };
 
 // 一帧的输入快照。只有值和 const 引用，**没有 Time&**。
@@ -648,11 +687,20 @@ private:
     AppConfig                          m_cfg;
     std::unique_ptr<platform::Console> m_console;
     std::unique_ptr<platform::Input>   m_input;
+    platform::ConsoleSize              m_size{};   // 声明在 FrameBuffer 之前：画布尺寸的来源
     render::FrameBuffer                m_frameBuffer;
     Time                               m_time;
-    platform::ConsoleSize              m_size{};
     bool                               m_quit = false;
 };
+// 实落地的两处补充（2026-09-28）：
+//   ① 拷贝/移动四个特殊成员显式 = delete（持有 unique_ptr + 独占终端）
+//   ② m_size 声明在 m_frameBuffer **之前** —— 初始化列表里 m_frameBuffer 用 m_size 构造
+
+// Console 侧新增的唯一接口（顶栏要显示 "Rows n/总行数"）：
+//     [[nodiscard]] virtual int LastFrameRowsSent() const = 0;   // 上一帧发出去的行数
+// 刻意**不**返回 RowDiff::Stats —— 那会让 platform 的公共头去 include render/RowDiff.h，
+// 为一个数字把两层耦合起来不划算；也刻意不返回 bytes（顶栏不显示，加了就是死接口）。
+// 也刻意是"上一帧"：本帧的要等 Present() 之后才有，而顶栏在 Present() **之前**画。
 
 } // namespace mini::core
 ```

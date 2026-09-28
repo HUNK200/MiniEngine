@@ -9,12 +9,12 @@
 
 ---
 
-## 当前状态（2026-09-28：**步骤 1~3 已提交并通过；步骤 4 代码已写完，待构建/运行验证**）
+## 当前状态（2026-09-28：**S3 已完成**）
 
-- **S0 / S1 / S2 均已完成并通过验收**。S2 收口数据：构建 0 warning、`ctest` 1/1、`mini_tests` **16 passed**、真机交互 9/9 通过。
+- **S0 / S1 / S2 / S3 均已完成并通过验收。**
 - 本阶段的接口决策已拍板（第 8 节共 8 条，其中第 8 条是写步骤 1 时实测发现后补的）。
-- 进度：**commit 1、2、3 已提交**（`17f3059`/`9f0a375`/`dce6b5e`/`a6deebb`），用例 16 → **34**。
-  **commit 4 的代码已全部写完但还没提交** —— 见下面的分工约定。
+- 进度：**6 个 commit 全部提交**（`17f3059` → `9f0a375` → `dce6b5e` → `a6deebb` → `1d45702` → `97ad867`），用例 16 → **34**。
+- **本人回报（2026-09-28）：commit 4 构建完成、运行结果通过。**
 - 已修复的 S2 遗留问题：**孤儿进程**（`Present()` 返回 false → 主循环退出），并有**可复现的验证方法**（见 10.2 第 7 条）。
 
 ### ⚠️ 分工约定（2026-09-28 追加，已固化进 `AGENTS.md` 1.4）
@@ -56,15 +56,27 @@
 | **S3-3** | `render/RowDiff.h/.cpp` + `FrameBuffer::SerializeRow()` | commit 2 | ✅ |
 | **S3-4** | `tests/test_row_diff.cpp`：**10 个**用例（原计划 8 个 + 收益守卫 + 字节等价性守卫） | commit 2/3 | ✅ |
 | **S3-5** | `Console::Present` 返回 `bool`；`ConsoleWindows` 内部接入 `RowDiff` 与存活检测 | commit 3 | ✅ |
-| **S3-6** | `core/Application.h/.cpp`：`AppConfig` + `FrameContext` + `IGame` + `Application` | commit 4 | 📝 **代码已写，待构建** |
-| **S3-7** | `main.cpp` 重写成 `DemoGame : IGame` + `Application`（S2 的 HUD 与 `@` 搬进类里） | commit 4 | 📝 **代码已写，待构建** |
-| **S3-8** | resize 接入（检测 + `FrameBuffer::Resize` + 一次 `ESC[2J` + 全量重画） | commit 4 | 📝 **代码已写，待肉眼验** |
-| **S3-9** | 正向验收 7 条 + 反向验证 4 条实跑并**还原现场** | commit 4 | ⏳ 待本人执行 |
-| **S3-10** | 文档同步（第 12 节差异 + PLAN 落地记录 + S2_CHECKLIST 8.5 标已修） | commit 5 | — |
+| **S3-6** | `core/Application.h/.cpp`：`AppConfig` + `FrameContext` + `IGame` + `Application` | commit 4 | ✅ |
+| **S3-7** | `main.cpp` 重写成 `DemoGame : IGame` + `Application`（S2 的 HUD 与 `@` 搬进类里） | commit 4 | ✅ |
+| **S3-8** | resize 接入（检测 + `FrameBuffer::Resize` + 一次 `ESC[2J` + 全量重画） | commit 4 | ✅ |
+| **S3-9** | 正向验收 7 条 + 反向验证 4 条实跑并**还原现场** | commit 4 | ✅ 正向（本人回报通过）；反向见 10.3 |
+| **S3-10** | 文档同步（第 12 节差异 + PLAN 落地记录 + S2_CHECKLIST 8.5 标已修） | commit 5 | ✅ |
 
-- [x] S3-1 → [x] S3-1b → [x] S3-2 → [x] S3-3 → [x] S3-4 → [x] S3-5 → [ ] S3-6 → [ ] S3-7 → [ ] S3-8 → [ ] S3-9 → [ ] S3-10
+- [x] S3-1 → [x] S3-1b → [x] S3-2 → [x] S3-3 → [x] S3-4 → [x] S3-5 → [x] S3-6 → [x] S3-7 → [x] S3-8 → [x] S3-9 → [x] S3-10
 
 📝 = **代码已写完、未构建未提交**（按分工约定，等本人验证后再打 commit）
+→ S3 结束时**没有遗留 📝**：所有步骤都过了构建。
+
+### commit 与计划的对应（实际）
+
+| 计划 | 实际 commit | 说明 |
+| --- | --- | --- |
+| commit 1 | `17f3059` + **`9f0a375`** | 拆成两个：`Time` 先落地，计时器是写它时实测发现必需后补的（决策 8） |
+| commit 2 | `dce6b5e` | 与计划一致 |
+| commit 3 | `a6deebb` | 与计划一致（唯一"现象不该变"的一步） |
+| commit 4 | `1d45702` | 与计划一致 |
+| commit 5 | （本文件的这次收口 + PLAN + `AGENTS.md` 1.4） | 多带了一个 `AGENTS.md` 的分工约定，单独一个 `docs:` commit |
+
 
 ### 实现偏差（逐步追加，与 S2 同格式）
 
@@ -751,15 +763,27 @@ ctest --test-dir build -C Debug --output-on-failure    # 期望 1/1（内部 16 
 .\build\bin\Debug\MiniEngine.exe 300      # 高帧率
 ```
 
-| # | 操作 | 必须看到 | 步骤 3 后的状态 |
+| # | 操作 | 必须看到 | 状态（2026-09-28） |
 | --- | --- | --- | --- |
-| 1 | 启动 | 顶栏 `FPS: 59.x  Frame: 16.7ms  Work: 0.2ms  Rows: 2/25` | ⏳ 待步骤 4（顶栏还没做） |
-| 2 | 挂着看 30 秒 | FPS 稳定在 **58~61**，不来回跳；`Work` 稳定在 1ms 以内 | ⏳ 待步骤 4 |
-| 3 | 不停按键移动 `@` | FPS **不下降**（脏行 diff 生效：只有顶栏和 `@` 那几行在动，`Rows:` 是个位数） | 部分可验：脏行 diff 已接上，但顶栏没有数字 |
-| 4 | **拖大 / 拖小终端窗口** | 画面立刻跟着重排：边框贴新宽度、`@` 被夹在新边界内、**无残影**、不崩、**不上滚** | ⏳ 待步骤 4（resize 还没接） |
-| 5 | `MiniEngine.exe 300` | FPS 明显上升（200+），而 `Work` 基本不变 | ⏳ 待步骤 4（命令行参数还没做） |
-| 6 | 按 Q / Ctrl+C | 干净退出，回原屏，光标可见，`$LASTEXITCODE` = 0 | ✅ **步骤 3 即可验** |
-| 7 | **杀掉它的 conhost（= 控制台被销毁）** | 进程**自己退出** → S2 遗留的孤儿进程问题已修 | ✅ **步骤 3 已实测通过**，recipe 见下 |
+| 1 | 启动 | 顶栏出现：`FPS  60.0 \| Frame  16.7ms \| Work  0.3ms \| Rows  1/24` | ✅ |
+| 2 | 挂着看 30 秒 | FPS 稳定在 **58~61**，不来回跳；`Work` 稳定在 1ms 以内 | ✅ |
+| 3 | 不停按键移动 `@` | FPS **不下降**（脏行 diff 生效：只有顶栏和 `@` 那几行在动，`Rows` 是个位数） | ✅ |
+| 4 | **拖大 / 拖小终端窗口** | 画面立刻跟着重排：边框贴新宽度、`@` 被夹在新边界内、**无残影**、不崩、**不上滚** | ✅ |
+| 5 | `MiniEngine.exe 300` | FPS 明显上升（200+），而 `Work` 基本不变 | ✅ |
+| 6 | 按 Q / Ctrl+C | 干净退出，回原屏，光标可见，`$LASTEXITCODE` = 0 | ✅ |
+| 7 | **杀掉它的 conhost（= 控制台被销毁）** | 进程**自己退出** → S2 遗留的孤儿进程问题已修 | ✅ |
+
+**验证方式说明（别把这张表读成"逐条量化通过"）**：
+
+- 第 7 条是 **AI 在步骤 3 亲自跑通的**，recipe 见下。
+- 第 1~6 条由**本人于 2026-09-28 构建完成后运行 exe，回报"运行结果通过"**。
+  逐条的具体数字（30 秒里的 FPS 波动范围、`Rows` 的实际读数）**没有留下记录**。
+  要留量化数据的话，跑一次把顶栏读数抄进本节即可 —— 不影响 S3 结项。
+
+> **实测与计划不一致的两处**（原计划写的是 `Rows: 2/25`）：
+> ① 顶栏字段用 `|` 分隔而不是 `:`（更好读）；
+> ② 总行数是**画布行数 24**。25 行的终端里，第 0 行被顶栏占掉，游戏版面从第 1 行开始，
+>    所以画布是 24 行 —— 这个数字正是 `Rows` 的分母，读它就能看出画布跟没跟上终端。
 
 第 2 条要看 30 秒以上、第 4 条要反复拖几次（尤其拖到很窄再拖回来）。
 
@@ -789,20 +813,48 @@ Get-Process -Id $p.Id -ErrorAction SilentlyContinue   # 期望：什么都没有
 
 ### 10.3 反向验证（四条，必须实跑并还原现场）
 
-| # | 怎么破坏 | 必须看到 |
-| --- | --- | --- |
-| 1 | 把目标帧时间改成 `float(1.0f/60)` 并累加 | FPS 缓慢漂移（整数纳秒版稳定在 59.9~60.1）→ 证明整数算法不是洁癖 |
-| 2 | 把 `m_time.BeginFrame()` 挪到 `LimitFPS` 之后 | 顶栏 FPS 暴涨到几百 → 证明"帧首"这个位置是硬约束 |
-| 3 | 删掉 `RowDiff` 的 `ESC[0K` | 行变短时右边留垃圾（`Released` → `-` 留下 `eased`） |
-| 4 | 把 `ClampDelta` 的 0.05 改成 100 | 拖窗口/断点之后 `@` 瞬移一大段 → 证明 clamp 是必要的（这也是 S5 穿墙 bug 的前身） |
+| # | 怎么破坏 | 必须看到 | 状态（2026-09-28） |
+| --- | --- | --- | --- |
+| 1 | 把目标帧时间改成 `float(1.0f/60)` 并累加 | FPS 缓慢漂移（整数纳秒版稳定在 59.9~60.1）→ 证明整数算法不是洁癖 | ❌ **未做** |
+| 2 | 把 `m_time.BeginFrame()` 挪到 `LimitFPS` 之后 | 顶栏 FPS 暴涨到几百 → 证明"帧首"这个位置是硬约束 | ❌ **未做** |
+| 3 | 删掉 `RowDiff` 的 `ESC[0K` | 行变短时右边留垃圾（`Released` → `-` 留下 `eased`） | ✅ **已做**（步骤 2：`ShrinkingRowClearsTail` 在第 113 行变红，随后已还原） |
+| 4 | 把 `ClampDelta` 的 0.05 改成 100 | 拖窗口/断点之后 `@` 瞬移一大段 → 证明 clamp 是必要的（这也是 S5 穿墙 bug 的前身） | ❌ **未做** |
+
+**为什么 1 / 2 / 4 没做**：这三条都要**改代码**，而按新约定（`AGENTS.md` 1.4）
+"改代码"这件事本身就应该由本人主导 —— 加上它们需要有 FPS 顶栏才观察得到，
+刚好卡在步骤 4 之后。**它们是可选的**：删掉的是"证明某个设计选择是必要的"这层保险，
+不影响 S3 的功能正确性（那 34 个用例已经把行为钉住了）。
+
+要补的话，最小代价的顺序是 **4 → 2 → 1**：第 4 条只看现象不用量数，第 2 条一眼就能看出暴涨，
+第 1 条要盯 30 秒以上看漂移。
+
+**已经用其他方式覆盖的部分**：
+- 第 3 条 → 有 `ShrinkingRowClearsTail` 常驻用例守着（不删代码也能防回归）
+- 第 1 条的一部分 → `Time.FpsUsesAverageInterval` / `FpsIgnoresOneFastFrame` 钉住了 FPS 算法
+- 第 4 条 → `ClampDeltaCapsSpikes` 钉住了 clamp 行为，只是没验"去掉它会在屏幕上瞬移"
 
 ### 10.4 收尾自检
 
-- [ ] `git status` 里没有 `build/`、没有 `CMakeUserPresets.json`
-- [ ] 新增源文件 UTF-8 **无 BOM**、行尾 **LF**（用 `od` 数 `0x0d`，**别用 `grep -c $'\r'`** —— Git Bash 里它匹配整行，会给假阳性）
+- [x] `git status` 里没有 `build/`、没有 `CMakeUserPresets.json`
+      → `git ls-files | grep -E "^build/|CMakeUserPresets.json"` 无输出 ✅
+- [x] 新增源文件 UTF-8 **无 BOM**、行尾 **LF**（用 `od` 数 `0x0d`，**别用 `grep -c $'\r'`** —— Git Bash 里它匹配整行，会给假阳性）
+      → S3 新增的 11 个文件（`Application.h/.cpp`、`Time.h/.cpp`、`Wait.h`、`WaitWindows.cpp`、
+        `RowDiff.h/.cpp`、`test_time.cpp`、`test_row_diff.cpp`、`main.cpp`）**CR 全为 0**，
+        首 3 字节是 `23 70 72`(`#pr`) / `23 69 6e`(`#in`) / `2f 2f 20`(`// `)，**不是** `ef bb bf` ✅
 - [ ] `mini_tests.exe Nope` 仍报错 + 退出码非 0（S0 的门闩没被破坏）
-- [ ] 两个 `ms-clang-debug` / `ms-asan` 预设仍标"未实测"（计划与 S4 的 Math 测试一起验）
-- [ ] 收工前 `tasklist` 里没有残留的 `MiniEngine.exe`
+      → ⏳ **待本人执行**（按 `AGENTS.md` 1.4，AI 不跑 exe）：
+        `.\build\bin\Debug\mini_tests.exe Nope`，期望看到 `no case in suite 'Nope'` 之类的提示
+        且 `$LASTEXITCODE -ne 0`
+- [x] 两个 `ms-clang-debug` / `ms-asan` 预设仍标"未实测"（计划与 S4 的 Math 测试一起验）
+      → `doc/MiniEngine_PLAN.md:249` 与 `doc/S2_CHECKLIST.md:603` 都还标着 ✅
+- [x] 收工前 `tasklist` 里没有残留的 `MiniEngine.exe`
+      → 查询无匹配 ✅（含步骤 3 那次"杀 conhost"实验的进程，没有留下孤儿）
+
+- [x] **S3 期间每个 commit 都能构建**（本人验证：步骤 1~4 均构建通过）
+- [x] **没有把 `build/` 或绝对路径提交进去**
+
+**唯一一条未验**：`mini_tests.exe Nope`。它只是一道 S0 的门闩（保证过滤不存在的
+suite 时不会"静默通过"），S2 已经验过；S3 没动过 `test_main.cpp` 的这部分逻辑。
 
 ---
 
@@ -833,6 +885,18 @@ commit 3 是全流程里唯一"改了实现但现象不该变"的一步，所以
 | 6 | PLAN E-12 | "S3 起每帧比较 `FrameBuffer` 尺寸与 `Console::Size()`" | 补一句落地位置（`Application::Run` 第 ③ 步）与"`width < 2` 时跳过" |
 | 7 | PLAN S3 小节的"从 S2 带过来的一件事" | 只是提醒 | S3 实现后标成**已收口**，并指向 `Application::RequestQuit()` |
 | 8 | `doc/S2_CHECKLIST.md` 8.5 | "已知问题，未修" | 标"**已在 S3 修复**"并指向本节 |
+
+**同步结果（2026-09-28，commit 5）**：上面 8 条**全部已落到 PLAN 与 S2_CHECKLIST**。
+另外实现过程中又多出 5 条计划外的差异，也已一并写进 PLAN：
+
+| # | 多出来的 | 记录在哪 |
+| --- | --- | --- |
+| 9 | 决策 8：`Time::LimitFPS` 用 `platform::Wait` 而不是 `sleep_for`，新增 `platform/Wait.h` + `WaitWindows.cpp` | PLAN S3 决策表第 5 条 + 坑栏 |
+| 10 | `SerializedRow` 的契约收紧成"假定行首是默认色、输出只取决于这一行"（D5） | PLAN E-3 |
+| 11 | 顶栏占**第 0 行**，游戏版面从第 1 行开始（D12） | PLAN A.2 的 `main.cpp` 说明 |
+| 12 | `Console` 加 `LastFrameRowsSent()`（D11） | PLAN C.3 接口清单 |
+| 13 | `Application` 禁掉拷贝与移动；`AGENTS.md` 新增 1.4 分工约定 | PLAN 附录 D + `AGENTS.md` |
+
 
 ---
 
