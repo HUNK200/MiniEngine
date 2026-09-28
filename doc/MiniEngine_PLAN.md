@@ -26,7 +26,7 @@
 | ninja / make | **未安装**（不阻塞，VS 生成器可用） | **未安装** | 多配置（VS）生成器，所以**必须带 `--config`／`-C`** |
 | Git | 2.52.0；仓库 local 身份 `HUNK <wuunj@126.com>` | 2.52.0；**仓库级身份未设**，当前只吃全局 `Wuyangzhi <wu.yangzh@aerok.com.cn>`（补设见 A.2） | **身份按机器各用各的**（见 A.2），不要求两机一致 |
 | Shell / 终端 | Git Bash，`TERM=xterm-256color`，代码页 **936 (GBK)** | **PowerShell（主力）**，Git Bash 也能用；VS Code 内置终端是 UTF-8，传统控制台代码页 **936 (GBK)** | **给用户的命令一律按 PowerShell 写**：退出码用 `$LASTEXITCODE`（不是 `echo $?`）、路径用反斜杠；终端输出必须切 UTF-8，否则 `┌─┐@#*` 全乱码 |
-| 项目当前状态 | **S2 验收完成**（2026-09-28）：构建 0 warning、`ctest` 1/1、`mini_tests` 16 passed | **交互验收真机确认通过**（9 条现象）；遗留 1 条已知问题（关窗口的孤儿进程）留给 S3 | **下一步进 S3 Game Loop / Time / FPS**（`doc/S2_CHECKLIST.md` 已收口） |
+| 项目当前状态 | **S2 验收完成**（2026-09-28）：构建 0 warning、`ctest` 1/1、`mini_tests` 16 passed | **S2 交互验收真机确认通过**（9 条现象）；遗留的孤儿进程问题已排进 S3 | **S3 方案已定稿**（`doc/S3_CHECKLIST.md`，四条决策已拍板），**实现未开始** |
 
 ### 标准命令（PowerShell + 多配置生成器）
 
@@ -111,7 +111,8 @@ c++_simple_engine/
 ├── CMakePresets.json           # 预设 ms-msvc / ms-clang，避免手敲参数
 ├── .gitattributes              # 行尾统一 LF（两机同步用）
 ├── .gitignore
-├── main.cpp                    # 唯一入口，<20 行
+├── main.cpp                    # 唯一入口。S3 起含临时 DemoGame（IGame 实现），
+│                               #   等 S5 建了 game/ 才会回到 <20 行
 ├── README.md                   # 阶段 14 再写，别提前写
 │
 ├── doc/                        # 全部文档（2026-09-23 起集中于此）
@@ -119,6 +120,7 @@ c++_simple_engine/
 │   ├── MiniEngine_PLAN.md      # 本文件
 │   ├── S0_CHECKLIST.md         # S0 清单 + CMake 补丁清单 + 勾选进度
 │   ├── S2_CHECKLIST.md         # S2 施工图：接口决策 + 坑表 + 测试计划 + 正/反向验收
+│   ├── S3_CHECKLIST.md         # S3 施工图：Application/Time/RowDiff + 验收
 │   ├── MINITEST_SPEC.md        # 测试框架 MiniTest 的规格
 │   ├── CTEST_NOTES.md          # CTest 入门与 GoogleTest 分工
 │   └── WORK_MODE.md            # 上班模式开关正文
@@ -131,7 +133,7 @@ c++_simple_engine/
 │   │   ├── core/       Application.h  Time.h  Logger.h  Config.h  NonCopyable.h
 │   │   ├── platform/   Console.h  Input.h  InputState.h  KeyCode.h    # 只做 Windows
 │   │   ├── math/       Vec2.h  Vec3.h  Rect.h  AABB.h  Ray.h  MathUtils.h
-│   │   ├── render/     Cell.h  Color.h  FrameBuffer.h  Renderer2D.h
+│   │   ├── render/     Cell.h  Color.h  FrameBuffer.h  RowDiff.h  Renderer2D.h
 │   │   │               Camera.h  Viewport.h  Renderer3D.h  RayCaster.h
 │   │   ├── world/      World.h  Entity.h  Transform.h  Velocity.h  Health.h
 │   │   │               TileMap.h  Scene.h
@@ -343,16 +345,29 @@ S0 骨架 ──► S1 FrameBuffer 出画面 ──► S2 输入 ──► S3 Ga
 | 实现 | `Time::Update()`（`steady_clock`）、滑动窗口 FPS、混合睡眠限帧、脏行 diff 提交 |
 | C++ 知识 | `std::chrono`、`duration_cast`、`std::this_thread::sleep_for`、RAII 计时、静态局部变量 |
 | 引擎知识 | variable dt vs fixed dt、dt clamp、帧率限制、为什么"限帧"和"垂直同步"不是一回事 |
-| 规模 | ~250 行 |
-| 可运行效果 | 顶栏 `FPS: 59.9  Frame: 16.7ms`；把限帧改成 300 能看到 FPS 上升；dt 数值稳定不抖 |
-| 验收 | 限帧 60 时 FPS 落在 58~61；`dt` 长时间运行不出现尖峰（打印 max dt 验证） |
-| 坑 | **Windows 上 `Sleep(1)` 实际睡 ~15.6ms**，必须混合睡眠（先睡到差 2ms，再自旋） |
+| 规模 | 净新增约 **450 行**（`Time`+`FrameStats` ~120、`RowDiff` ~110、`Application` ~150、main 重写 ~30）+ 两组测试 ~180 行。PLAN 原估 ~250 行，多出来的是**脏行 diff** 与**两组离线测试**（决策 1） |
+| 可运行效果 | 顶栏 `FPS: 59.9  Frame: 16.7ms  Work: 0.3ms  Rows: 2/25`；`MiniEngine.exe 300` 能看到 FPS 上升而 `Work` 不变；拖窗口画面跟手重排 |
+| 验收 | 限帧 60 时 FPS 落在 58~61；`MaxFrameMs()` 长时间运行不出现尖峰；拖大/拖小窗口无残影且**不上滚**；**直接关控制台窗口进程立刻消失**（S2 遗留问题） |
+| 坑 | **Windows 上 `Sleep(1)` 实际睡 ~15.6ms**，必须混合睡眠（先睡到差 `spin`，再自旋）。**`spin = min(2ms, targetFrame/4)`，写死 2ms 会在高帧率下把 CPU 烧穿** |
 | 设计结论 | **用 variable dt + `dt = min(dt, 0.05)`**。本项目没有需要固定步长的物理（无重力、无弹性），引入 fixed update 只会让输入手感变差。等 S9 子弹高速穿透问题真的出现时，再考虑"子弹用子步进"这种局部方案，而不是全引擎改结构 |
 
-> **从 S2 带过来的一件事（别忘）**：`Application` 出现后要顺手修掉"关窗口留下孤儿进程"——
-> `Console::Present()` 检测写失败（控制台已死时 `std::cout` 只静静置 `failbit`，主循环毫无察觉）→ 调统一的退出入口。
+> **从 S2 带过来的一件事（S3 必须一起收掉）**：`Application` 出现后要顺手修掉"关窗口留下孤儿进程"——
+> `Console::Present()` 改成返回 `bool`（控制台已死时 `std::cout` 只静静置 `failbit`，主循环毫无察觉）→ `Application::RequestQuit()`。
 > 现在没有 `Application`，退出信号零散地散在 `main` 的 `while` 条件里，正好在这里一并收口。
 > 背景见 S2 坑表最后两条与 `doc/S2_CHECKLIST.md` 8.5。
+
+**S3 方案定稿（2026-09-28，四条决策）** —— 完整施工图见 **`doc/S3_CHECKLIST.md`**
+
+| # | 决策 | 落成 | 代价 / 备注 |
+| --- | --- | --- | --- |
+| 1 | **脏行 diff 做，且抽成可单测的 `render::RowDiff`** | `RowDiff.h/.cpp` + `FrameBuffer::SerializeRow()` + 8 个离线用例 | 多一对文件 + 约 100 行，换来"省了多少行/字节"**可自动验证**，并关掉 E-3。代价：它活在一个前提上（同一行两次序列化必须逐字节相同），所以必须有专门守这条的用例 |
+| 2 | **`DemoGame` 放 `main.cpp` 的匿名 namespace** | `main.cpp` 240 → 约 120 行 | 仍超过 A.2 写的"<20 行"；**不提前建 `game/` 静态库**（PLAN 与顶层 CMakeLists 都定了 S5 才建） |
+| 3 | **resize 做：检测 + `FrameBuffer::Resize` + 一次 `ESC[2J` + 全量重画** | `Run` 第 ③ 步 | 相机边界 clamp 仍归 S6。代价：多约 20 行，且"最后一行/最后一列会不会滚屏"必须肉眼实测 |
+| 4 | 新建 **`doc/S3_CHECKLIST.md`** | — | 与 S0/S2 同格式。S3 跨 5 个 commit 且要改 S2 的两个接口，比 S1 更值得单独存档 |
+
+决策表**之外**还有三处与 C.3/C.4 草案不同，已直接改进原文：`FrameContext` 去掉 `Time&`、`IGame` 从 `unique_ptr` 改成引用、
+顶栏由 `Application` 在 `game.OnRender` **之后**画。
+
 
 ### S4 Math 库 + 单元测试
 
@@ -564,45 +579,72 @@ add_library(MiniEngine::engine ALIAS engine)
 
 ```text
 main.cpp
-  └─ Engine::Application            // 组装 + 拥有所有子系统
-        ├─ Logger&                  // 静态/单例皆可，先简单
-        ├─ platform::Console&       // 终端模式：UTF-8 / VT / 隐藏光标 / 尺寸
-        ├─ platform::Input&         // Poll() → 按键三态
-        ├─ render::FrameBuffer&     // 后缓冲：w*h 个 Cell
-        ├─ core::Time&              // deltaTime / fps / frameTime
-        └─ std::unique_ptr<IGame>   // 游戏侧实现，Application 不认识具体游戏
+  └─ core::Application               // 组装 + 拥有所有子系统
+        ├─ platform::Console&       // 终端模式：UTF-8 / VT / 隐藏光标 / 尺寸 / Present
+        ├─ platform::Input&         // Poll() → 按键四态
+        ├─ render::FrameBuffer&     // 后缓冲：w*h 个 Cell（尺寸随终端变）
+        ├─ core::Time&              // dt / FrameMs / WorkMs / fps（**不传给游戏**）
+        └─ IGame&                   // 游戏侧实现，Application 不认识具体游戏
 ```
 
-关键点：**`Application` 拥有 `IGame`，`Game` 拥有游戏内容，`Application` 不认识 Player。** 这样 `engine` 库不会反向依赖 `game`。
+关键点：**`Application` 只持 `IGame&`（不拥有），`Game` 拥有游戏内容，`Application` 不认识 Player。** 这样 `engine` 库不会反向依赖 `game`，游戏对象的生命周期由调用方（S3 里是 `main`）管。
+
+> **注意两处与最初草案不同**（2026-09-28 S3 定稿，完整理由见 `doc/S3_CHECKLIST.md` 第 4、8 节）：
+> ① `IGame` 从 `unique_ptr<IGame>` 改成 `IGame&`——`Application` 不需要拥有它，少一层所有权；
+> ② `FrameContext` **不含 `Time&`**——游戏拿到可变 `Time&` 就能调 `EndFrame()`/`LimitFPS()` 把循环时序搞乱，而且没有编译器拦得住。
 
 ```cpp
-// engine/include/mini/core/Application.h   —— 骨架，仅声明
+// engine/include/mini/core/Application.h   —— S3 定稿
 namespace mini::core {
 
-struct AppConfig { int width = 80; int height = 25; int targetFps = 60; };
+struct AppConfig {
+    int  width     = 0;      // 0 = 用终端当前尺寸（推荐）
+    int  height    = 0;
+    int  targetFps = 60;     // <=0 = 不限帧
+    bool showStats = true;   // 顶栏
+};
+
+// 一帧的输入快照。只有值和 const 引用，**没有 Time&**。
+struct FrameContext {
+    float deltaSeconds = 0.0f;   // 已 clamp（kMaxDelta = 0.05）
+    float frameMs      = 0.0f;   // 帧间隔，未 clamp
+    float workMs       = 0.0f;   // 本帧干活耗时
+    float fps          = 0.0f;
+    int   screenWidth  = 0;
+    int   screenHeight = 0;
+    const platform::Input& input;
+};
 
 class IGame {
 public:
     virtual ~IGame() = default;
-    virtual void OnStart()  = 0;
-    virtual void OnUpdate(const struct FrameContext& ctx) = 0;  // dt / input / time
+    virtual void OnStart() = 0;
+    virtual void OnUpdate(const FrameContext& ctx) = 0;
     virtual void OnRender(render::FrameBuffer& fb) = 0;
-    virtual bool ShouldQuit() const = 0;
+    [[nodiscard]] virtual bool ShouldQuit() const = 0;
 };
 
 class Application {
 public:
-    explicit Application(AppConfig cfg);
-    ~Application();                       // RAII：恢复终端、显示光标、离开备用屏
+    explicit Application(AppConfig cfg = {});   // 构造顺序：Console → Input → FrameBuffer
+    ~Application();                             // RAII：恢复终端、显示光标、离开备用屏
 
     void Run(IGame& game);
+
+    void RequestQuit() noexcept;                // **统一退出入口**（S2 的孤儿进程问题靠它收口）
+    [[nodiscard]] bool QuitRequested() const noexcept;
 private:
-    AppConfig                     m_cfg;
-    std::unique_ptr<platform::Console> m_console;   // 工厂：Win/Lin 各一份实现
+    AppConfig                          m_cfg;
+    std::unique_ptr<platform::Console> m_console;
     std::unique_ptr<platform::Input>   m_input;
     render::FrameBuffer                m_frameBuffer;
-    core::Time                         m_time;
+    Time                               m_time;
+    platform::ConsoleSize              m_size{};
+    bool                               m_quit = false;
 };
+
+} // namespace mini::core
+```
 
 } // namespace mini::core
 ```
@@ -667,31 +709,59 @@ std::unique_ptr<Input> MakeInput();         // 平台工厂。只做 Windows，�
 } // namespace mini::platform
 ```
 
-### C.4 Game Loop（第一阶段定稿）
+### C.4 Game Loop（**2026-09-28 S3 定稿**）
 
 ```cpp
 void Application::Run(IGame& game)
 {
     game.OnStart();
-    while (!game.ShouldQuit() && !m_input->QuitRequested())
+    while (!QuitRequested())
     {
-        m_time.BeginFrame();                 // 记录帧起点，算 dt / fps
+        m_time.BeginFrame();                 // ① 帧首：算 dt / FrameMs（第一帧为 0）
 
-        m_input->Poll();                     // 把键盘事件收进内部状态表
+        m_input->Poll();                     // ② 把键盘事件收进内部状态表
 
-        FrameContext ctx{ m_time.Delta(), *m_input, m_time };
-        game.OnUpdate(ctx);                  // ← 目前只有 Game 层更新
+        // ③ 对齐画布尺寸（E-12：不走事件驱动，每帧轮询更简单也不会漏）
+        const ConsoleSize size = m_console->Size();
+        if (size != m_size && size.width >= 2 && size.height >= 2) {
+            m_frameBuffer.Resize(size.width, size.height);
+            m_size = size;
+        }
+
+        FrameContext ctx{ m_time.Delta(), m_time.FrameMs(), m_time.WorkMs(), m_time.Fps(),
+                          m_frameBuffer.Width(), m_frameBuffer.Height(), *m_input };
+        game.OnUpdate(ctx);                  // ④ 只有 Game 层更新
 
         m_frameBuffer.Clear();               // 后缓冲
         game.OnRender(m_frameBuffer);        // 全部绘制进后缓冲
-        m_console->Present(m_frameBuffer);   // 一次性提交（唯一的终端写入）
+        if (m_cfg.showStats) {
+            DrawStatsBar(m_frameBuffer, ctx);   // ⑤ 顶栏由 Application 画，且在游戏**之后**
+        }
 
-        m_input->BeginFrame();               // 三态状态机推进
-        m_time.EndFrame();
-        m_time.LimitFPS(m_cfg.targetFps);    // 混合睡眠限帧
+        if (!m_console->Present(m_frameBuffer)) {   // ⑥ 一次性提交（唯一的终端写入）
+            RequestQuit();                          //    终端已死 → 退出（S2 孤儿进程的根治）
+        }
+
+        m_input->BeginFrame();               // ⑦ 帧尾：四态状态机推进
+        m_time.EndFrame();                   //    算 WorkMs 并塞进 FrameStats
+        m_time.LimitFPS(m_cfg.targetFps);    //    混合睡眠限帧
+
+        if (m_input->QuitRequested() || game.ShouldQuit()) {
+            RequestQuit();
+        }
     }
 }
 ```
+
+**五个顺序硬约束**（写反就出怪现象，方向见 `doc/S3_CHECKLIST.md` 7.1）：
+
+| 约束 | 写反的后果 |
+| --- | --- |
+| `BeginFrame` 在循环**最前**，不是 `LimitFPS` 之后 | dt 只度量干活耗时 → 顶栏报 3000fps，"性能完美"的假绿 |
+| `Poll` 在 `OnUpdate` 前、`BeginFrame` 在 `OnUpdate` 后 | `Pressed` 永远看不到（S2 已踩过） |
+| resize 检测在 `OnUpdate` 之前 | 游戏这一帧拿到旧尺寸，按旧尺寸算的位置画到画布外 |
+| 顶栏在 `game.OnRender` **之后**画 | 游戏能把 FPS 数字盖掉 |
+| `Present` 在 `Clear` + `OnRender` 之后 | 提交的是上一帧残留 |
 
 第一阶段**故意不拆 Physical/AI 子阶段**：现在只有一个实体，拆了就是空函数。等 S7/S8 真正把 `PhysicsSystem` / `AiSystem` 写出来时，再把 `OnUpdate` 拆成：
 
@@ -802,7 +872,7 @@ S13  + Z-buffer：精灵与墙的遮挡关系                           —— �
 | --- | --- | --- | --- | --- |
 | E-1 | **代码页 936** | 框线字符变乱码，MSVC 报 C4819；**2026-09-23 家机实测更狠：只要源文件里有中文注释，漏 `/utf-8` 就直接 `error C4716: 必须返回一个值`** —— UTF-8 字节被按 GBK 解析后吃掉了行尾换行，把下一行代码吸进注释里，**构建根本过不去，不只是警告** | `SetConsoleOutputCP(CP_UTF8)` + 编译加 `/utf-8` + 源文件存 UTF-8；`tests/test_main.cpp` 的 `source_is_compiled_as_utf8` 用例长期守着这条（并已做过去掉 `/utf-8` 的负向验证） | S0 起（已提前命中）/ S1 视觉验证 |
 | E-2 | **VT 模式未启用** | 出现字面的 `←[H` 而不是光标归位 | `SetConsoleMode(...ENABLE_VIRTUAL_TERMINAL_PROCESSING)`；用 Windows Terminal 而非老 conhost | S1 |
-| E-3 | **终端闪烁** | 画面撕裂/闪动 | 一帧一次 `write`、`ESC[H` 覆写而非 `ESC[2J`、S3 加脏行 diff | S1/S3 |
+| E-3 | **终端闪烁** | 画面撕裂/闪动 | 一帧一次 `write`、`ESC[H` 覆写而非 `ESC[2J`、S3 加脏行 diff。**2026-09-28 S3 方案已定稿**：落地为 `render::RowDiff`（只发变化的行，`ESC[{row};1H` 定位 + `ESC[0K` 擦尾；**只有尺寸变化后的第一次**才允许 `ESC[2J`）。见 `doc/S3_CHECKLIST.md` 6.2 / 9.2 | S1/S3 |
 | E-4 | **Windows 输入卡死** | 鼠标在终端里点一下后无响应 | 关闭 `ENABLE_QUICK_EDIT_MODE`（需同时置 `ENABLE_EXTENDED_FLAGS`） | S2 |
 | E-5 | **Sleep 精度** | 限帧 60 实测 32 FPS | 混合睡眠：`sleep_for(remain - 2ms)` 后自旋；或 `timeBeginPeriod(1)`（可选，需链 `winmm`） | S3 |
 | E-6 | **多配置生成器** | `ctest` 找不到测试、exe 路径猜错 | 所有构建命令带 `--config Debug`，ctest 带 `-C Debug`；统一 `CMAKE_RUNTIME_OUTPUT_DIRECTORY` | S0 |
@@ -811,7 +881,7 @@ S13  + Z-buffer：精灵与墙的遮挡关系                           —— �
 | E-9 | **迭代器失效** | 射击时随机崩溃 | 禁止"遍历中增删"；用延迟删除队列（`toRemove` 列表）或 `swap-erase` 倒序遍历 | S9 |
 | E-10 | **穿透** | 子弹跳过敌人、玩家高速穿墙 | 分轴移动（S7）；子弹子步进（S9）；`dt` clamp（S3） | S7/S9 |
 | E-11 | **Game Loop 设计错误** | 高刷屏上游戏速度变快、暂停恢复瞬移 | variable dt 且 `dt = min(dt, 0.05)`；暂停时不累积时间 | S3/S10 |
-| E-12 | **终端改尺寸** | 画面错位、越界写 | **S2 只把 `WINDOW_BUFFER_SIZE_EVENT` 安全丢弃**（不崩、不误当按键）；S3 起每帧比较 `FrameBuffer` 尺寸与 `Console::Size()`，变了才 `FrameBuffer::Resize` + 重画。**不走事件驱动**——S3 本来就有帧循环，轮询更简单且不会漏 | S3/S6 |
+| E-12 | **终端改尺寸** | 画面错位、越界写 | **S2 只把 `WINDOW_BUFFER_SIZE_EVENT` 安全丢弃**（不崩、不误当按键）；S3 起每帧比较 `FrameBuffer` 尺寸与 `Console::Size()`，变了才 `FrameBuffer::Resize` + 重画。**不走事件驱动**——S3 本来就有帧循环，轮询更简单且不会漏。**2026-09-28 S3 方案已定稿**：落在 `Application::Run` 第 ③ 步，`width < 2 \|\| height < 2` 时**跳过**（别拿 `Resize` 抛的异常当控制流）；相机边界 clamp 仍归 S6。见 `doc/S3_CHECKLIST.md` 6.3 / 9.3 | S3/S6 |
 | E-13 | **Ray Casting 鱼眼/裂缝** | 墙呈弧形、墙面有竖缝 | `cos` 校正；DDA 的 `sideDistX/Y` 初值按方向取 `(1-delta)` 或 `delta`；`rayDir` 归一化 | S12 |
 | E-14 | **ECS 过度设计** | 花两天改架构，游戏没进展 | 见 D.1：停在 D-1，需要时按具体类型分容器 | S10+ |
 | E-15 | **Profiler 失真** | 计时器被优化掉、被测代码因分配而变慢 | `std::atomic_signal_fence`/`DoNotOptimize`、固定大小环形缓冲、零分配 | S11 |

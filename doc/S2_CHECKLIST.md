@@ -485,6 +485,10 @@ cmake --build build --config Debug # 之后构建就正常了
 S3 的 `Application` 会有统一的退出入口，放在那里比现在零敲碎打更好。
 （这条已经同时记进 PLAN 的 S2 坑表，别让它只活在这份清单里。）
 
+> **2026-09-28 更新**：S3 方案已定稿，这条**已排进 S3** —— `Console::Present` 改成返回 `bool`，
+> 写失败由 `Application::RequestQuit()` 收口（见 `doc/S3_CHECKLIST.md` 决策 7、6.4 节与验收项 7）。
+> 本节的两个诊断结论（"能改名 ≠ 没被占用"、孤儿进程的成因）**继续有效，别删**。
+
 ---
 
 ## 9. 验收

@@ -64,6 +64,7 @@
 | `doc/MiniEngine_PLAN.md` | 实施方案：A~G 设计 + H 节 7 天冲刺排期 + 附录命令速查 |
 | `doc/S0_CHECKLIST.md` | S0 实现清单、缺口诊断、CMake 补丁清单、勾选进度 |
 | `doc/S2_CHECKLIST.md` | S2 施工图：文件清单、接口决策、坑表、测试计划、正/反向验收、commit 切分 |
+| `doc/S3_CHECKLIST.md` | S3 施工图：Application/Time/RowDiff、时间与限帧的坑、验收与 commit 切分 |
 | `doc/MINITEST_SPEC.md` | 要手写的测试框架 MiniTest 的规格（接口、注册机制、runner 行为、坑） |
 | `doc/CTEST_NOTES.md` | CTest 入门：与 GoogleTest 的分工、命令速查、PowerShell 差异 |
 | `doc/WORK_MODE.md` | 上班碎片时间微任务开关的正文 |
