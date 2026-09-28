@@ -158,9 +158,9 @@ c++_simple_engine/
     ├── CMakeLists.txt
     ├── MiniTest.h              # 自制极简断言框架（~80 行）
     ├── test_main.cpp           # runner：注册表 + suite 过滤 + 汇总（退出码 = 失败用例数）
-    ├── test_smoke.cpp          # S0（1 个）
-    ├── test_frame_buffer.cpp   # S1
-    ├── test_input_state.cpp    # S2（四态状态机，可离线测）
+    ├── test_smoke.cpp          # S0（3 个）
+    ├── test_frame_buffer.cpp   # S1（6 个）
+    ├── test_input_state.cpp    # S2（7 个，四态状态机 + VK 映射）
     ├── test_time.cpp           # S3（clamp / FPS 算法 / platform::Wait 精度）8 个
     ├── test_row_diff.cpp       # S3（脏行格式 + 收益守卫 + 字节等价性）10 个
     ├── test_math.cpp
