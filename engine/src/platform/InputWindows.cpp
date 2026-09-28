@@ -12,7 +12,7 @@
 // platform::Input 的 Windows 实现（S2）
 //
 // 本文件**只做一件有含量的事**：把 Win32 的 INPUT_RECORD 翻译成
-// InputState::OnKeyDown / OnKeyUp / OnFocusLost。三态/四态逻辑一行都不在这里，
+// InputState::OnKeyDown / OnKeyUp / OnFocusLost。四态的判定逻辑一行都不在这里，
 // 全部在 InputState.h —— 那边的代码不碰 windows.h，所以可以被单元测试完整覆盖。
 //
 // 它不设置输入模式：关 QUICK_EDIT、开 WINDOW_INPUT 都是 Console 构造时做的
