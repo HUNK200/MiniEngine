@@ -366,8 +366,9 @@ S0 骨架 ──► S1 FrameBuffer 出画面 ──► S2 输入 ──► S3 Ga
 | 4 | 新建 **`doc/S3_CHECKLIST.md`** | — | 与 S0/S2 同格式。S3 跨 5 个 commit 且要改 S2 的两个接口，比 S1 更值得单独存档 |
 | 5 | **限帧用高精度可等待计时器**，封成 `platform::Wait()` | `platform/Wait.h` + `src/platform/WaitWindows.cpp`；`Time::LimitFPS` 不用 `sleep_for` | **写步骤 1 时实测发现的**（不是方案阶段想到的）：本机 `Sleep` 粒度 15.625ms vs 60fps 目标帧时间 16.667ms，只差 1.04ms → 每 15 帧睡过头一整跳。高精度计时器**不需链额外库**，也不用 `timeBeginPeriod`（那个会改全系统定时器精度）。`Wait(7ms)` 实测 7.05~7.56ms |
 
-**实现进度（一步一停，2026-09-28 起）**：commit 1（`Time` + `FrameStats` + `platform::Wait`）已完成，用例 16 → **24**；
-commit 2~5（`RowDiff` / `Present` 改造 / `Application` + 新 main / 文档收口）**未开始**，等逐步审核。
+**实现进度（一步一停，2026-09-28 起）**：commit 1（`Time` + `FrameStats` + `platform::Wait`）与
+commit 2（`RowDiff` + `FrameBuffer::SerializeRow`）已完成，用例 16 → **33**，实测脏行帧比全量帧省 **10.5 倍**字节；
+commit 3~5（`Present` 改造 / `Application` + 新 main / 文档收口）**未开始**，等逐步审核。
 
 决策表**之外**还有三处与 C.3/C.4 草案不同，已直接改进原文：`FrameContext` 去掉 `Time&`、`IGame` 从 `unique_ptr` 改成引用、
 顶栏由 `Application` 在 `game.OnRender` **之后**画。

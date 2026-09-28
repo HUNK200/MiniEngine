@@ -153,6 +153,23 @@ Cell FrameBuffer::At(int x, int y) const
     return m_cells[Index(x, y)];
 }
 
+void FrameBuffer::AppendRowTo(std::string& out, int y, Color& curFg, Color& curBg) const
+{
+    const Cell* row = m_cells.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(m_w);
+    for (int x = 0; x < m_w; ++x) {
+        const Cell& cell = row[x];
+        if (cell.fg != curFg) {
+            AppendFg(out, cell.fg);
+            curFg = cell.fg;
+        }
+        if (cell.bg != curBg) {
+            AppendBg(out, cell.bg);
+            curBg = cell.bg;
+        }
+        out.push_back(cell.ch);
+    }
+}
+
 std::string_view FrameBuffer::Serialize() const
 {
     m_scratch.clear();
@@ -165,19 +182,7 @@ std::string_view FrameBuffer::Serialize() const
     Color curBg = Color::Default;
 
     for (int y = 0; y < m_h; ++y) {
-        const Cell* row = m_cells.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(m_w);
-        for (int x = 0; x < m_w; ++x) {
-            const Cell& cell = row[x];
-            if (cell.fg != curFg) {
-                AppendFg(m_scratch, cell.fg);
-                curFg = cell.fg;
-            }
-            if (cell.bg != curBg) {
-                AppendBg(m_scratch, cell.bg);
-                curBg = cell.bg;
-            }
-            m_scratch.push_back(cell.ch);
-        }
+        AppendRowTo(m_scratch, y, curFg, curBg);
 
         // 行尾用 "\r\n" 回第 1 列（我们顺序写，不逐行发 ESC[{y};1H）。
         // 最后一行不写：写满最后一格再换行会让整屏上滚一行，画面永久错位
@@ -185,6 +190,24 @@ std::string_view FrameBuffer::Serialize() const
             m_scratch += "\r\n";
         }
     }
+
+    return m_scratch;
+}
+
+std::string_view FrameBuffer::SerializeRow(int y) const
+{
+    m_scratch.clear();
+
+    if (y < 0 || y >= m_h) {
+        return m_scratch;   // 越界给空，不给 UB
+    }
+
+    // 从**默认色**起步（不是从上一行的行尾色）：调用方会先发 ESC[39;49m，
+    // 所以这一段的色码必须与"终端此刻是默认色"这个前提对齐。
+    // 也正因为如此，这一行的字节只取决于这一行的内容。
+    Color curFg = Color::Default;
+    Color curBg = Color::Default;
+    AppendRowTo(m_scratch, y, curFg, curBg);
 
     return m_scratch;
 }

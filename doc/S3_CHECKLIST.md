@@ -14,7 +14,7 @@
 - **S0 / S1 / S2 均已完成并通过验收**。S2 收口数据：构建 0 warning、`ctest` 1/1、`mini_tests` **16 passed**、真机交互 9/9 通过。
 - 本阶段的接口决策已拍板（第 8 节共 8 条，其中第 8 条是写步骤 1 时实测发现后补的）。
 - **S3 的实现节奏：一步一停** —— 每完成一个 commit 就报一次（做了什么 / 效果 / 作用），**等审核确认后再动下一步**。
-- 进度：**commit 1 已完成**（`17f3059` + 计时器补完），用例 16 → **24**。**下一步是 commit 2（`render::RowDiff`），未开始。**
+- 进度：**commit 1、2 已完成**，用例 16 → **33**。**下一步是 commit 3（`Console::Present` 改造），未开始。**
 
 > S3 的预估规模：净新增约 **500 行**（`Time`+`FrameStats` ~150、`platform::Wait` ~110、`RowDiff` ~110、`Application` ~150）加两组测试 ~230 行。
 > PLAN 原文估 ~250 行，多出来的是**脏行 diff**、**两组离线测试**、**高精度计时器**这三笔（见第 8 节决策 1 与 8）。
@@ -36,16 +36,16 @@
 | **S3-1** | `core/Time.h` + `src/core/Time.cpp`：`Time` + `FrameStats` + `ClampDelta` | commit 1 | ✅ |
 | **S3-1b** | `platform/Wait.h` + `src/platform/WaitWindows.cpp`：高精度可等待计时器（**决策 8**，写步骤 1 时实测发现必需） | commit 1 | ✅ |
 | **S3-2** | `tests/test_time.cpp`：**8 个**用例（原计划 7 个 + `PlatformWaitBeatsSleepGranularity`） | commit 1 | ✅ |
-| **S3-3** | `render/RowDiff.h/.cpp` + `FrameBuffer::SerializeRow()` | commit 2 | ⏳ **下一步** |
-| **S3-4** | `tests/test_row_diff.cpp`：8 个用例（含"两条序列化路径一致"的守卫） | commit 2 | — |
-| **S3-5** | `Console::Present` 返回 `bool`；`ConsoleWindows` 内部接入 `RowDiff` 与写失败检测 | commit 3 | — |
+| **S3-3** | `render/RowDiff.h/.cpp` + `FrameBuffer::SerializeRow()` | commit 2 | ✅ |
+| **S3-4** | `tests/test_row_diff.cpp`：**9 个**用例（原计划 8 个 + `DirtyFrameIsFarSmallerThanFullFrame`） | commit 2 | ✅ |
+| **S3-5** | `Console::Present` 返回 `bool`；`ConsoleWindows` 内部接入 `RowDiff` 与写失败检测 | commit 3 | ⏳ **下一步** |
 | **S3-6** | `core/Application.h/.cpp`：`AppConfig` + `FrameContext` + `IGame` + `Application` | commit 4 | — |
 | **S3-7** | `main.cpp` 重写成 `DemoGame : IGame` + `Application`（S2 的 HUD 与 `@` 搬进类里） | commit 4 | — |
 | **S3-8** | resize 接入（检测 + `FrameBuffer::Resize` + 一次 `ESC[2J` + 全量重画） | commit 4 | — |
 | **S3-9** | 正向验收 7 条 + 反向验证 4 条实跑并**还原现场** | commit 4 | — |
 | **S3-10** | 文档同步（第 12 节差异 + PLAN 落地记录 + S2_CHECKLIST 8.5 标已修） | commit 5 | — |
 
-- [x] S3-1 → [x] S3-1b → [x] S3-2 → [ ] S3-3 → [ ] S3-4 → [ ] S3-5 → [ ] S3-6 → [ ] S3-7 → [ ] S3-8 → [ ] S3-9 → [ ] S3-10
+- [x] S3-1 → [x] S3-1b → [x] S3-2 → [x] S3-3 → [x] S3-4 → [ ] S3-5 → [ ] S3-6 → [ ] S3-7 → [ ] S3-8 → [ ] S3-9 → [ ] S3-10
 
 ### 实现偏差（逐步追加，与 S2 同格式）
 
@@ -55,6 +55,9 @@
 | D2 | 自旋窗口 `spin = duration_cast<milliseconds>(...)` | 用纳秒存，只在最后比较时转换 | 毫秒 cast 会把 `targetFps > 125` 时的 `target/4` 截断成 0（`3.33ms/4 = 0.83ms → 0ms`），白丢精度 |
 | D3 | `tests/test_time.cpp` 7 个用例 | 8 个（增 `PlatformWaitBeatsSleepGranularity`） | 决策 8 是新加的代码路径，必须有东西钉住它（否则以后有人"顺手"改回 `sleep_for` 谁也不知道） |
 | D4 | 原计划 4 条接口决策 | **8 条**（新增 5/6/7 为本人定，8 为实测发现后补） | 5/6/7 是方案阶段的取舍；8 是实现阶段才暴露的（属于"结构被复杂度逼出来"，PLAN A.4 第 2 条） |
+| D5 | `SerializeRow(y)` 原计划只说"颜色码规则与 `Serialize()` 一致" | 契约收紧成：**假定行首是默认色，且输出只取决于这一行**；`RowDiff` 在每行脏行定位之后**自己补 `ESC[39;49m`** | 绝对定位之后终端的 SGR 是上次写的残留（可能是任何颜色），而 `SerializeRow` 的色码是按"起点为默认色"生成的 —— 不重置的话这一行第一个格子的颜色就是错的。同时这条契约正是 `RowDiff` 比较的前提 |
+| D6 | `tests/test_row_diff.cpp` 8 个用例 | 9 个（增 `DirtyFrameIsFarSmallerThanFullFrame`） | 原计划只测"输出正确"，没测"输出更少"。加了这条之后，**如果哪天 `SerializeRow` 变得依赖别的内容（每行每帧都变 → 每帧全量），它会立刻变红** —— 这是整个脏行 diff 的总开关 |
+| D7 | `Serialize()` 的逐格循环留在原地 | 抽成私有 `AppendRowTo(out, y, curFg, curBg)`，`Serialize()` 与 `SerializeRow()` 共用 | 坑 #15 的根治办法：不是"两处写得一样"，而是**物理上只有一处**。共用之后"两条路径颜色规则不一致"这类错不可能发生 |
 
 ---
 
@@ -103,7 +106,7 @@
 | --- | --- |
 | `engine/include/mini/platform/Console.h` | `Present` 返回值改 `bool`（false = 终端已死/写失败） |
 | `engine/src/platform/ConsoleWindows.cpp` | 内部持有 `RowDiff`；自己比较画布尺寸（变了 → 一次 `ESC[2J` + `Invalidate`）；`Present` 检查 `std::cout` 状态 |
-| `engine/include/mini/render/FrameBuffer.h` / `.cpp` | 加 `std::string_view SerializeRow(int y) const;`；**`Serialize()` 与它共用同一个内部实现**（见坑 #12） |
+| `engine/include/mini/render/FrameBuffer.h` / `.cpp` | 加 `std::string_view SerializeRow(int y) const;`；**`Serialize()` 与它共用同一个内部实现**（见坑 #16） |
 | `main.cpp` | 重写成 `DemoGame : mini::core::IGame`（S2 的 HUD + `@` 搬进来）+ 一行 `Application{...}.Run(demo)` |
 | `engine/CMakeLists.txt` | 源文件列表加 `core/Time.cpp`、`core/Application.cpp`、`render/RowDiff.cpp`（**手写，禁用 `file(GLOB)`**） |
 | `tests/CMakeLists.txt` | 加 `test_time.cpp`、`test_row_diff.cpp` |
@@ -602,7 +605,7 @@ DrawStatsBar(fb, ctx):
 | --- | --- | --- | --- |
 | 1 | **脏行 diff 在 S3 做，且抽成可单测的 `render::RowDiff`** | `RowDiff.h/.cpp` + `FrameBuffer::SerializeRow` + 8 个离线用例 | 多一对文件 + 约 100 行。换来"省了多少行/字节"**可自动验证**，并且 PLAN 风险 E-3 就此关掉。代价：`RowDiff` 活在一个前提上（同一行两次序列化逐字节相同），所以必须有 10.2 的 `SerializeAndSerializeRowAgree` 守着 |
 | 2 | **`DemoGame` 放 `main.cpp` 里的匿名 namespace** | `main.cpp` 从 240 行降到约 120 行 | 仍然超过 PLAN A.2 写的"`main.cpp` <20 行"，等 S5 建 `game/` 时再彻底瘦身。**不提前建 `game/` 静态库**（PLAN 与顶层 CMakeLists 的注释都定了"S5 才建"） |
-| 3 | **resize 在 S3 做：检测 + `FrameBuffer::Resize` + 一次 `ESC[2J` + 全量重画** | loop 第 ③ 步 | 相机边界 clamp 仍留给 S6（S3 没有相机）。代价：S3 多约 20 行，且"最后一行/最后一列会不会滚屏"必须肉眼实测（坑 #4） |
+| 3 | **resize 在 S3 做：检测 + `FrameBuffer::Resize` + 一次 `ESC[2J` + 全量重画** | loop 第 ③ 步 | 相机边界 clamp 仍留给 S6（S3 没有相机）。代价：S3 多约 20 行，且"最后一行/最后一列会不会滚屏"必须肉眼实测（坑 #19） |
 | 4 | **新建 `doc/S3_CHECKLIST.md`**（本文件） | — | 与 S0/S2 同格式。S3 跨 5 个 commit 且要改 S2 的两个接口，比 S1 更值得单独存档 |
 | 5 | `FrameContext` **不含 `Time&`**（本人定，非上述四问） | 只给值 + `const Input&` | 防止游戏调 `EndFrame`/`LimitFPS` 打乱时序。**PLAN C.3/C.4 的 `m_time` 参数作废**（差异 #1） |
 | 6 | **顶栏由 `Application` 画**，不是游戏画 | `DrawStatsBar` 在 `OnRender` 之后 | 它是引擎的调试能力（PLAN A.4 第 4 条："能看见内部状态必须一开始就有"），不该让每个游戏自己实现；排在后画则游戏盖不掉它 |
@@ -648,26 +651,27 @@ platform::Wait(7ms) → 实测 7.05~7.56ms（10 次采样）
 
 | # | 现象 | 原因与对策 |
 | --- | --- | --- |
-| 9 | 画面偶尔上滚一行 | 最后一行写了 `\r\n`。全量帧的 `\r\n` 必须是 `rows-1` 个 |
-| 10 | 行变短后右边留垃圾（`Released` → `-` 留 `eased`） | 脏行末尾没补 `ESC[0K` |
-| 11 | 某一行**每帧都重发**（不崩、只是白干） | 同一行两次序列化结果不逐字节相同 → 前提破了。最可能的来源是 `SerializeRow` 与 `Serialize` 各写了一份颜色逻辑。**必须共用同一个内部实现** |
-| 12 | 全屏闪烁 | 每帧发 `ESC[2J`。只有**尺寸变化后第一次**允许清屏（PLAN E-3 的原始教训） |
-| 13 | 脏行定位错位一行 | 终端行列是 1-based，`FrameBuffer` 是 0-based。`ESC[{y+1};1H` |
-| 14 | 脏行模式下光标跑到屏幕中间，退出后提示符位置怪 | 收尾由 `~ConsoleWindows` 的恢复序列负责（S2 已有），但**脏行模式下不再每帧回 `ESC[H`**，所以恢复序列里要确保 `ESC[?25h` + `ESC[?1049l` 足够（S2 实测够）。新组合要重测 |
-| 15 | 最后一行写满 80 列会不会滚屏 | S1 实测"最后一行不写 `\r\n`"是安全的；但脏行模式改成了 `ESC[{row};1H` 绝对定位，**这个组合必须重新肉眼实测**。这是 S3 唯一需要肉眼确认的渲染行为 |
+| 13 | 画面偶尔上滚一行 | 最后一行写了 `\r\n`。全量帧的 `\r\n` 必须是 `rows-1` 个 |
+| 14 | 行变短后右边留垃圾（`Released` → `-` 留 `eased`） | 脏行末尾没补 `ESC[0K` |
+| 15 | 某一行**每帧都重发**（不崩、只是白干） | 同一行两次序列化结果不逐字节相同 → 前提破了。最可能的来源是 `SerializeRow` 与 `Serialize` 各写了一份颜色逻辑。**必须共用同一个内部实现**（D7 就是这么做的） |
+| 16 | 全屏闪烁 | 每帧发 `ESC[2J`。只有**尺寸变化后第一次**允许清屏（PLAN E-3 的原始教训） |
+| 17 | 脏行定位错位一行 | 终端行列是 1-based，`FrameBuffer` 是 0-based。`ESC[{y+1};1H` |
+| 18 | 脏行模式下光标跑到屏幕中间，退出后提示符位置怪 | 收尾由 `~ConsoleWindows` 的恢复序列负责（S2 已有），但**脏行模式下不再每帧回 `ESC[H`**，所以恢复序列里要确保 `ESC[?25h` + `ESC[?1049l` 足够（S2 实测够）。新组合要重测 |
+| 19 | 最后一行写满 80 列会不会滚屏 | S1 实测"最后一行不写 `\r\n`"是安全的；但脏行模式改成了 `ESC[{row};1H` 绝对定位，**这个组合必须重新肉眼实测**。这是 S3 唯一需要肉眼确认的渲染行为 |
+| 20 | **脏行第一个格子的颜色不对**（比如该是红色却是上一行的颜色） | 绝对定位到第 y 行之后，终端的 SGR 还是**上一次写的残留**，而 `SerializeRow()` 的色码是按"行首为默认色"生成的。对策：脏行在 `ESC[{y};1H` **之后必须补 `ESC[39;49m`**（`RowDiff` 里那行 `kResetSgr`）。删掉它不会崩，只会偶发一个格子颜色错——很难查 |
 
 ### 9.3 循环、终端与工程
 
 | # | 现象 | 原因与对策 |
 | --- | --- | --- |
-| 16 | 顶栏 FPS 被游戏内容盖掉 | 顶栏排在 `game.OnRender` 之前画。必须**之后** |
-| 17 | 重建后 `LNK1168: 无法打开 MiniEngine.exe 进行写入` | S2 的孤儿进程（关窗口没退干净）。S3 的 `Present` 返回 false 就是修它。**诊断要点：能改名≠没被占用**，判占用要试着写 |
-| 18 | resize 到 1 列时崩 | `FrameBuffer::Resize(0, n)` 会抛 `invalid_argument`。`width < 2 \|\| height < 2` 时**跳过这次 resize**，别拿异常当控制流 |
-| 19 | resize 那一帧 dt 尖峰 | 重建 `vector` + 全量重画必然慢。有 clamp 兜住，同时 `MaxFrameMs()` **会**记下它 —— 这是对的，别当 bug 去消 |
-| 20 | `std::cout` 一旦置 `failbit` 就不再写 | 想复用同一个 `cout` 必须先 `clear()`。S3 不需要（直接退出），注释写清 |
-| 21 | 游戏这一帧拿到旧尺寸 | resize 检测放在 `OnUpdate` 之后。必须在之前 |
-| 22 | 新增 `.cpp` 忘了进 CMake | 禁用 `file(GLOB)`，手写源文件列表（S0 坑 #8）。`Time.cpp` / `Application.cpp` / `RowDiff.cpp` 三个都要加 |
-| 23 | `Application` 析构顺序出错 | 成员声明顺序必须 Console → Input → FrameBuffer；析构自动逆序（FrameBuffer 先没、Console 最后恢复终端）。**别用 `unique_ptr` 之外的手工 new/delete** |
+| 21 | 顶栏 FPS 被游戏内容盖掉 | 顶栏排在 `game.OnRender` 之前画。必须**之后** |
+| 22 | 重建后 `LNK1168: 无法打开 MiniEngine.exe 进行写入` | S2 的孤儿进程（关窗口没退干净）。S3 的 `Present` 返回 false 就是修它。**诊断要点：能改名≠没被占用**，判占用要试着写 |
+| 23 | resize 到 1 列时崩 | `FrameBuffer::Resize(0, n)` 会抛 `invalid_argument`。`width < 2 \|\| height < 2` 时**跳过这次 resize**，别拿异常当控制流 |
+| 24 | resize 那一帧 dt 尖峰 | 重建 `vector` + 全量重画必然慢。有 clamp 兜住，同时 `MaxFrameMs()` **会**记下它 —— 这是对的，别当 bug 去消 |
+| 25 | `std::cout` 一旦置 `failbit` 就不再写 | 想复用同一个 `cout` 必须先 `clear()`。S3 不需要（直接退出），注释写清 |
+| 26 | 游戏这一帧拿到旧尺寸 | resize 检测放在 `OnUpdate` 之后。必须在之前 |
+| 27 | 新增 `.cpp` 忘了进 CMake | 禁用 `file(GLOB)`，手写源文件列表（S0 坑 #8）。`Time.cpp` / `WaitWindows.cpp` / `RowDiff.cpp` / `Application.cpp` 四个都要加 |
+| 28 | `Application` 析构顺序出错 | 成员声明顺序必须 Console → Input → FrameBuffer；析构自动逆序（FrameBuffer 先没、Console 最后恢复终端）。**别用 `unique_ptr` 之外的手工 new/delete** |
 
 ---
 
@@ -696,18 +700,22 @@ ctest --test-dir build -C Debug --output-on-failure    # 期望 1/1（内部 16 
 | `MaxFrameMsSurvivesWindow` | 尖峰滑出窗口后 `MaxFrameMs()` 仍记得它 |
 | `PlatformWaitBeatsSleepGranularity` | `platform::Wait(7ms)` 耗时落在 **6.5~12ms**：上界卡在 15.6ms 的调度器 tick 之下，钉住决策 8（有人把 `Wait` 改回 `sleep_for` 就会红） |
 
-`tests/test_row_diff.cpp`：
+`tests/test_row_diff.cpp`（**9 个，已实跑**）：
 
 | 用例 | 断言 |
 | --- | --- |
-| `FirstFrameSendsEverything` | 首帧 `rowsSent == rowsTotal`，且以 `ESC[H` 开头 |
-| `IdenticalFrameSendsNothing` | 内容不变 → `bytes == 0`、`rowsSent == 0` |
-| `OnlyChangedRowIsSent` | 改第 3 行 → 只发 1 行，含 `ESC[3;1H`（注意 1-based） |
-| `ShrinkingRowClearsTail` | 行变短 → 该行带 `ESC[0K` |
+| `FirstFrameSendsEverything` | 首帧 `rowsSent == rowsTotal`，且以 `ESC[H` + `ESC[39;49m` 开头 |
+| `IdenticalFrameSendsNothing` | 内容不变 → 输出**空**、`rowsSent == 0` |
+| `OnlyChangedRowIsSent` | 改第 2 行 → 只发 1 行，含 `ESC[3;1H`，且**不含** `ESC[1;1H` / `ESC[4;1H` |
+| `ShrinkingRowClearsTail` | 行变短 → 带 `ESC[0K`，且旧字符不再出现在输出里 |
 | `InvalidateForcesFullRedraw` | `Invalidate()` 后即使内容没变也全发 |
-| `RowCountChangeIsFullRedraw` | `Resize()` 后全发，且不读越界快照 |
-| `LastRowHasNoTrailingCrLf` | 全量帧里 `\r\n` 恰好 `rows-1` 个，且不以 `\r\n` 结尾 |
-| `SerializeAndSerializeRowAgree` | `SerializeRow(y)` 与 `Serialize()` 的颜色码规则一致 ← **坑 #11 的守卫** |
+| `RowCountChangeIsFullRedraw` | 行数 3→5→2 都全量，**不去读越界的旧快照** |
+| `LastRowHasNoTrailingCrLf` | 全量帧里 `\r\n` 恰好 `rows-1` 个，且不以它结尾 |
+| `SerializeAndSerializeRowAgree` | 第 0 行段 == `ESC[39;49m` + `SerializeRow(0)`；改别的行后这一行字节不变；越界给空 ← **前提守卫** |
+| `DirtyFrameIsFarSmallerThanFullFrame` | 80×25 只动 2 行时输出 ≥ 小 10 倍 ← **收益守卫 + 前提总开关** |
+
+**实测字节数（80×25 全空白，本机）**：全量帧 **2059 B** → 只动 2 行 **197 B**，**省 10.5 倍**。
+60fps 下相当于从 120KB/s 降到 11KB/s。
 
 ### 10.2 正向（肉眼，7 条）
 

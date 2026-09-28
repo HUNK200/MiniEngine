@@ -11,6 +11,7 @@
 #                                      会把 60fps 的 16.67ms 目标帧时间睡过头一整跳）
 #       src/core/Time.cpp（Time 里碰 steady_clock / 等待的部分；
 #                          纯逻辑的 ClampDelta / FrameStats 留在 Time.h，可离线单测）
+#       src/render/RowDiff.cpp（脏行 diff：只发变化的行。纯逻辑、可离线单测）
 # 不要提前把 PLAN C.2 草案里的 Application.cpp / Input.cpp 等写进来 ——
 # 那些文件还不存在，写进来等于构建直接挂（PLAN A.4：结构被复杂度逼出来）。
 # ============================================================
@@ -19,6 +20,7 @@ add_library(engine STATIC
     src/core/Version.cpp
     src/core/Time.cpp
     src/render/FrameBuffer.cpp
+    src/render/RowDiff.cpp
     src/platform/ConsoleWindows.cpp
     src/platform/InputWindows.cpp
     src/platform/WaitWindows.cpp

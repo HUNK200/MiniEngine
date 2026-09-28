@@ -52,8 +52,22 @@ public:
     Cell At(int x, int y) const;
 
     // 把整屏拼成一个字符串（不含光标归位，那是 Present 的事）。
-    // 返回值指向内部缓冲：有效期到下一次 Serialize() / Resize() / 析构。
+    // 返回值指向内部缓冲：有效期到下一次 Serialize() / SerializeRow() / Resize() / 析构。
     std::string_view Serialize() const;
+
+    // 单独取第 y 行的字节（**不含行尾、不含行首的 SGR 重置**）。越界返回空。
+    //
+    // 给 render::RowDiff 用（脏行重发时先发 ESC[{y};1H + ESC[39;49m，再发这段）。
+    //
+    // 契约（RowDiff 的脏行比较活在这上面）：
+    //   1. 颜色的处理规则与 Serialize() 完全一致（同一份实现），
+    //      但**假定这一行开头终端是默认色** —— 因为绝对定位之后终端的 SGR
+    //      是上一行留下的，调用方必须先发重置
+    //   2. 这一行的字节**只取决于这一行的内容**，别的行怎么变都不影响它
+    //
+    // ⚠️ 与 Serialize() 共用同一个 m_scratch：拿到的 view 在下一次
+    //    Serialize()/SerializeRow() 调用后就失效了（要先 copy 再取下一行）。
+    std::string_view SerializeRow(int y) const;
 
 private:
     // 线性化索引：index = y * m_w + x（y 是行、x 是列）
@@ -61,6 +75,11 @@ private:
 
     // 重建 m_cells 与 m_scratch 容量（ctor 与 Resize 共用）
     void Reallocate(int w, int h);
+
+    // 把第 y 行追加到 out。curFg/curBg 是**进出参数**：
+    // 进来表示"这一行开头终端已经是什么颜色"，出去更新成行尾颜色。
+    // Serialize() 与 SerializeRow() 共用它 —— 这是"两条路径颜色规则一致"的唯一保证。
+    void AppendRowTo(std::string& out, int y, Color& curFg, Color& curBg) const;
 
     int               m_w = 0;
     int               m_h = 0;
