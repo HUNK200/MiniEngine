@@ -9,32 +9,55 @@
 
 ---
 
-## 当前状态（2026-09-28：**方案已定稿，实现未开始**）
+## 当前状态（2026-09-28：**代码写完，自动验收通过，交互验收待手工**）
 
-- **S0 / S1 均已完成并通过验收**。S1 复跑记录：构建 **0 warning**、`ctest` **1/1**、`mini_tests` **9 passed**、`MiniEngine.exe` 出带边框的画面。
-- 本阶段的三条接口决策已于 **2026-09-28** 拍板（见第 7 节），第 6 节按拍板结果写定。
-- **下一步**：按第 10 节的五个 commit 开始实现。
+- **S2 实现完成**：5 个 commit 全部落地（`2c15f8b` 文档 → `14b60d0` Console → `a3a9b09` Input → `f4ea7a8` 测试 → `feaa06c` 演示）。
+- **自动验收全过**：构建 **0 warning**、`ctest` **1/1**、`mini_tests` **9 → 16 passed**、`> out.txt` 抛异常 + exit 1。
+- **交互验收未做**：9.1 的 8 条现象与 9.2 的第 1、2 条反向验证必须在真实终端里手工跑（原因见 8.4）。
+  **在这些跑完之前，S2 不算验收完成，不要进 S3。**
+- 本阶段的接口决策与实现偏差见第 7 节与进度板下方的"实现偏差"表。
 
-> S2 的净新增规模约 **300 行**，另有 **165 行搬迁**（S1 的 `render/TerminalPresenter.cpp` 归位到 `platform/`）。
-> 比 PLAN 原文估的 ~250 行多，多出来的部分是"可离线单测的状态机"与"抽象基类 + 工厂"这两笔包装成本，理由见 6.2 与 6.5。
+> S2 的实际规模：净新增约 **450 行**（含 HUD 与演示），另有 **165 行搬迁**（S1 的 `render/TerminalPresenter.cpp` 归位到 `platform/`）。
+> 比 PLAN 原文估的 ~250 行多出不少，主要花在"可离线单测的状态机"、"抽象基类 + 工厂"、"三行 HUD + `@` 演示"这三处。
 
 ---
 
 ## 进度板
 
-| # | 任务 | 对应 commit |
-| --- | --- | --- |
-| **S2-1** | `platform::Console` 以 RAII 接管终端模式，`render/TerminalPresenter.*` 删除 | commit 1 |
-| **S2-2** | `platform/KeyCode.h`：`Key` 枚举 + `KeyFromVirtualKey()` + `KeyIndex()` | commit 2 |
-| **S2-3** | `platform/InputState.h`：四态状态机（header-only，可离线单测） | commit 2 |
-| **S2-4** | `platform/Input.h` + `src/platform/InputWindows.cpp`：Win32 事件 → `InputState` | commit 2 |
-| **S2-5** | `tests/test_input_state.cpp`：7 个用例 + 注册进 `tests/CMakeLists.txt` | commit 3 |
-| **S2-6** | `main.cpp` 改为按键三态实时显示 + Q 退出 | commit 4 |
-| **S2-7** | 正向验收（9.1 节）全过 | commit 4 |
-| **S2-8** | 反向验证（9.2 节）四条实跑并**还原现场** | commit 4 |
-| **S2-9** | 文档同步（第 11 节 6 处差异全部改完） | commit 5 |
+| # | 任务 | 对应 commit | 状态 |
+| --- | --- | --- | --- |
+| **S2-1** | `platform::Console` 以 RAII 接管终端模式，`render/TerminalPresenter.*` 删除 | `14b60d0` | ✅ |
+| **S2-2** | `platform/KeyCode.h`：`Key` + `KeyState` + `KeyFromVirtualKey()` + `KeyIndex()` | `a3a9b09` | ✅ |
+| **S2-3** | `platform/InputState.h`：四态状态机（header-only，可离线单测） | `a3a9b09` | ✅ |
+| **S2-4** | `platform/Input.h` + `src/platform/InputWindows.cpp`：Win32 事件 → `InputState` | `a3a9b09` | ✅ |
+| **S2-5** | `tests/test_input_state.cpp`：7 个用例 + 注册进 `tests/CMakeLists.txt` | `f4ea7a8` | ✅（实际 16 passed） |
+| **S2-6** | `main.cpp` 改为按键四态 HUD + `@` 瞬时移动 + Q 退出 | `feaa06c` | ✅ |
+| **S2-7** | 正向验收（9.1 节）8 条现象 | — | ⏳ **待真机手工做** |
+| **S2-8** | 反向验证（9.2 节）四条实跑并**还原现场** | — | 2/4 已跑（第 3、4 条），⏳ 第 1、2 条待手工 |
+| **S2-9** | 文档同步（第 11 节差异 + 本节落地记录） | commit 5 | ✅ |
 
-- [ ] S2-1 → [ ] S2-2 → [ ] S2-3 → [ ] S2-4 → [ ] S2-5 → [ ] S2-6 → [ ] S2-7 → [ ] S2-8 → [ ] S2-9
+- [x] S2-1 → [x] S2-2 → [x] S2-3 → [x] S2-4 → [x] S2-5 → [x] S2-6 → [ ] S2-7 → [ ] S2-8 → [x] S2-9
+
+> **S2 未完成**：还差 9.1 的 8 条交互现象与 9.2 的第 1、2 条反向验证。
+> 这些必须在**真实终端**里手工做（自动环境驱动不了，原因见 8.4）。
+
+### 实现偏差（写代码时偏离本清单的地方，逐条记下来）
+
+| # | 清单原计划 | 实际做法 | 为什么改 |
+| --- | --- | --- | --- |
+| D1 | 内部头 `src/platform/QuitFlag.h` 放 `detail::QuitRequested()` | 公共头 `Console.h` 里的自由函数 `platform::QuitRequested()` | 步骤 1 时 `main` 就要读它（那时 `Input` 还没写），而 `main` include 不到 `engine/src/`。做成公共自由函数反而**少一个文件**，且头里没有 Windows 依赖 |
+| D2 | `KeyState` 定义在 `InputState.h` | 挪到 `KeyCode.h`（和 `Key` 放一起） | `Input.h` 需要 `KeyState`，但抽象接口用不到状态机。放进"按键词汇表"更合身，`Input.h` 也就不用 include `InputState.h` |
+| D3 | `KeyFromVirtualKey(std::uint8_t)` | `KeyFromVirtualKey(std::uint16_t)` | `wVirtualKeyCode` 是 WORD。截成 8 位会把 `0x0100` 这样的码**悄悄折到 `0x00`**，等于凭空多出一个键 |
+| D4 | 未映射 VK 在 `Poll()` 里 `if (key == Key::Unknown) break;` | 收口到 `InputState::OnKeyDown`（`KeyIndex` 返回哨兵即拒写） | 单一收口 + **可离线单测**（`KeyCode.InvalidKeyIndexIsIgnored`）。写在 `Poll()` 里就测不到了 |
+| D5 | 演示只显示按键状态 | 三行 HUD（15 个键）+ `@` 每次按下走一格 | PLAN S2 的目标写的是"`@` 能响应按键移动（先用瞬时移动验证输入通路）"，只显示 HUD 不满足这条 |
+| D6 | `~ConsoleWindows` 只还原终端 | 额外 `SetConsoleCtrlHandler(CtrlHandler, FALSE)` 卸掉 handler | 终端都还回去了，再让 handler 往正常屏幕写转义序列没有意义 |
+
+### 一处认知修正（比原计划更值钱）
+
+写测试时以为 `m_pulse` 只救"一帧内 down+up 的极速点击"。跑反向验证（删掉那个分支）才发现**正常按下也走这一支**：
+`prev=false, now=true` 时 `was && now` 不成立，于是落到 `if (m_pulse)` 才返回 `Pressed`。
+换句话说 **`m_pulse` 是 `Pressed` 的必要条件，不是边角补丁** —— 删掉它 `Pressed` 整个消失，红的用例比预期多一个。
+这条已经写进 6.3 的判定表和 PLAN 的 S2 坑表。
 
 ---
 
@@ -63,14 +86,16 @@
 
 | 文件 | 职责 | 不要放什么 |
 | --- | --- | --- |
-| `engine/include/mini/platform/KeyCode.h` | `enum class Key` + VK 映射 + 下标换算。header-only、零依赖 | `<windows.h>`（只能用裸数字 + 注释） |
+| `engine/include/mini/platform/KeyCode.h` | `enum class Key` + `enum class KeyState` + VK 映射 + 下标换算。header-only、零依赖 | `<windows.h>`（只能用裸数字 + 注释） |
 | `engine/include/mini/platform/InputState.h` | 四态状态机。header-only、零依赖、**可离线单测** | 任何 Win32 调用、任何 IO |
 | `engine/include/mini/platform/Input.h` | `class Input` 抽象基类 + `MakeInput()` 工厂 | HANDLE、`<windows.h>` |
-| `engine/include/mini/platform/Console.h` | `class Console` 抽象基类 + `ConsoleSize` + `MakeConsole()` 工厂 | HANDLE、`<windows.h>` |
-| `engine/src/platform/ConsoleWindows.cpp` | 终端模式（in + out）、`Present()`、`Size()`、Ctrl+C handler、`detail::QuitRequested()` 定义 | 任何游戏概念 |
+| `engine/include/mini/platform/Console.h` | `class Console` 抽象基类 + `ConsoleSize` + `MakeConsole()` 工厂 + 自由函数 `QuitRequested()`（见 D1） | HANDLE、`<windows.h>` |
+| `engine/src/platform/ConsoleWindows.cpp` | 终端模式（in + out）、`Present()`、`Size()`、Ctrl+C handler、`platform::QuitRequested()` 的定义 | 任何游戏概念 |
 | `engine/src/platform/InputWindows.cpp` | `ReadConsoleInputW` 事件 → `InputState`；`MakeInput()` | 改终端模式（那是 Console 的事） |
-| `engine/src/platform/QuitFlag.h` | **平台层内部头**：`namespace detail { bool QuitRequested(); }` | 被 `engine/include/` 下的公共头包含 |
-| `tests/test_input_state.cpp` | 7 个离线用例 | 任何需要终端的用例 |
+| `tests/test_input_state.cpp` | 7 个离线用例（suite 是 `InputState` 5 个 + `KeyCode` 2 个） | 任何需要终端的用例 |
+
+> **原来的 `src/platform/QuitFlag.h` 没有建**（实现偏差 D1）：进程级退出标志做成了公共头 `Console.h` 里的自由函数
+> `platform::QuitRequested()`。`main` 在步骤 1 就要读它，而 `main` include 不到 `engine/src/`。
 
 ### 2.2 删除
 
@@ -134,9 +159,10 @@ main ──► platform ──► render ──► stdlib
 2. 把 `render/TerminalPresenter.cpp` 的**全部内容**搬进 `engine/src/platform/ConsoleWindows.cpp`：
    - `BeginTerminal()` / `EndTerminal()` → 构造函数 / 析构函数
    - `Present(const FrameBuffer&)` → 虚函数实现
-   - `render::QuitRequested()` → 拆成 `platform::detail::QuitRequested()`（定义在此，声明在 `src/platform/QuitFlag.h`）
+   - `render::QuitRequested()` → `platform::QuitRequested()`（**实际做法**：公共头 `Console.h` 里的自由函数，定义在此。
+     原计划是内部头 `src/platform/QuitFlag.h`，没建 —— 见实现偏差 D1）
    - 新增 `Size()`（`GetConsoleScreenBufferInfo` 取 **`srWindow` 的宽高**，不是缓冲区尺寸）
-   - 新增**输入侧**模式设置（第 8 节坑 #7 的原因见 8.1）
+   - 新增**输入侧**模式设置（`~ENABLE_QUICK_EDIT_MODE` + `ENABLE_EXTENDED_FLAGS` + `ENABLE_WINDOW_INPUT`）
 3. 删掉 `render/TerminalPresenter.h` / `.cpp`
 4. `main.cpp` 最小改动：`BeginTerminal/EndTerminal` 换成 `MakeConsole()` 的 RAII 作用域，删掉 `catch(...)` 补丁。**演示内容（边框 + `@` + `#`）保持不变**
 5. `engine/CMakeLists.txt` 同步源文件列表
@@ -256,9 +282,16 @@ private:
 }
 ```
 
-**为什么要有 `m_pulse`**：一帧内 down 又 up（用户飞快敲一下，或某一帧特别长）时，只看 `m_downPrev` / `m_downAtEnd` 会让这个按键**被完全吃掉**。表现为"偶尔按 W 不动"——在 S5 移动 `@` 时会变成极难查的隐性 bug。`m_pulse` 专门救这一条。
+**为什么要有 `m_pulse`**：一帧内 down 又 up（用户飞快敲一下，或某一帧特别长）时，只看 `m_downPrev` / `m_downAtEnd` 会让这个按键**被完全吃掉**。表现为"偶尔按 W 不动"——在 S5 移动 `@` 时会变成极难查的隐性 bug。
+
+> **写完代码后的认知修正**：`m_pulse` 的作用比上面说的还大 —— 它不只是救"极速点击"，
+> **正常按下（`prev=false, now=true`）也走 `if (m_pulse)` 这一支**（因为 `was && now` 判不成立）。
+> 所以删掉它 `Pressed` 会**整个消失**，不是只丢边角情况。详见进度板下方"一处认知修正"。
 
 ### 6.3 `KeyState` 语义与判定顺序
+
+> `KeyState` 实际定义在 **`KeyCode.h`**（和 `Key` 放一起），不在本节的 `InputState.h` 里 —— 见实现偏差 D2。
+> 理由：`Input.h` 需要 `KeyState`，但抽象接口用不到状态机。
 
 ```cpp
 enum class KeyState : std::uint8_t { Up, Pressed, Held, Released };
@@ -399,6 +432,24 @@ while (!input->QuitRequested()):
 | 15 | clang-cl 预设报 `-Wunused-private-field` | 决策 3 的直接原因：不要留"写了没人读"的成员。`m_pendingResize` 这种一律不留 |
 | 16 | `NOMINMAX` 缺了导致 `std::max` 编译失败 | S0 已进 `mini_options`（`CMakeLists.txt:31`），**不要**再在每个 `.cpp` 里重复 `#define` |
 
+### 8.4 驱动不了的那部分（写代码时实测）
+
+想给 S2 做"自动交互验收"——喂一个 `q` 进去看程序退不退——试过 winpty，**走不通**：
+
+```bash
+printf 'q' | winpty -- ./build/bin/Debug/MiniEngine.exe     # → stdin is not a tty
+```
+
+`winpty` 自己会拒绝非 tty 的 stdin，所以程序根本没被启动。结论：
+
+- **能自动测的部分**：四态状态机、VK 映射、`KeyIndex` 边界（`mini_tests` 16 个用例）、
+  重定向 stdio 的失败路径（`> out.txt` 抛异常 + exit 1）。
+- **只能手工的部分**：`Present()` 的画面、`ENABLE_QUICK_EDIT_MODE` 的效果（要鼠标点）、
+  `FOCUS_EVENT`（要切窗口）、`Released` 只闪一帧（要肉眼）。
+
+**这正是把四态逻辑从 `InputWindows.cpp` 拆到 `InputState.h` 的全部回报**：输入逻辑里唯一值得自动验证的部分
+现在可测了，剩下必须肉眼看的只有终端本身的行为。
+
 ---
 
 ## 9. 验收
@@ -435,61 +486,76 @@ ctest --test-dir build -C Debug --output-on-failure                  # 期望 1/
 | 3 | 把 `m_pulse` 那条分支删掉 | 第 9.3 节的 `DownAndUpInSameFrameIsNotLost` 变红。证明测试真的在守这条边界 | 加回 |
 | 4 | `MiniEngine.exe > out.txt` | 构造抛 `runtime_error` + 人话提示，**不是**静默无画面、也不是崩溃 | 不用改代码 |
 
-### 9.3 测试计划 `tests/test_input_state.cpp`（全部离线，不需要终端）
+### 9.3 测试 `tests/test_input_state.cpp`（全部离线，不需要终端；已实跑 16 passed）
 
-| 用例 | 断言 |
+| 用例（实际名） | 断言 |
 | --- | --- |
-| `InitialIsUp` | 初始所有键 `Up`，`IsDown` 全 false |
-| `DownThenFrameGivesPressedThenHeld` | down → `Pressed`；`BeginFrame` → `Held`；再 `BeginFrame` → `Held` |
-| `UpGivesReleasedForOneFrame` | up → `Released`；`BeginFrame` → `Up` |
-| `DownAndUpInSameFrameIsNotLost` | down + up 同帧 → `Pressed`；`BeginFrame` → `Up` ← **坑 #9 的守卫** |
-| `FocusLostReleasesEverything` | `Held` 中 `OnFocusLost` → 全 `Up` |
-| `KeyFromVirtualKeyMapsUsedKeys` | `0x57→W`、`0x26→ArrowUp`、`0x1B→Escape`、`0x70→F1`、`0x42→Unknown` |
-| `InvalidKeyIndexIsIgnored` | `OnKeyDown(Key::Unknown)` / `OnKeyDown(Key::Count)` 不改变任何键 |
+| `InputState.InitialIsUp` | 初始所有键 `Up`，`IsDown` 全 false；连续 `BeginFrame` 仍是 `Up` |
+| `InputState.DownThenFrameGivesPressedThenHeld` | down → `Pressed`；`BeginFrame` → `Held`；**自动重复（再次 OnKeyDown）仍是 `Held`** |
+| `InputState.UpGivesReleasedForOneFrame` | up → `Released`；`BeginFrame` → `Up` |
+| `InputState.DownAndUpInSameFrameIsNotLost` | down + up 同帧 → `Pressed`；`BeginFrame` → `Up`；down→up→down 也算按下 ← **坑 #9 的守卫** |
+| `InputState.FocusLostReleasesEverything` | `Held` 中 `OnFocusLost` → 全 `Up`，且下一帧不会"冒回来" |
+| `KeyCode.KeyFromVirtualKeyMapsUsedKeys` | `0x57→W`、`0x26→ArrowUp`、`0x1B→Escape`、`0x70→F1`、`0x42→Unknown`、`0x10→Unknown`（Shift）、`0x0100`/`0xFFFF→Unknown`（高位码不被截断） |
+| `KeyCode.InvalidKeyIndexIsIgnored` | `KeyIndex(Unknown)` / `KeyIndex(Count)` 都等于哨兵 `kKeyCount`；所有合法键下标 `< kKeyCount` 且互不相同；灌完无效键后 `W` 仍是 `Up` |
 
 `tests/CMakeLists.txt` 加一行 `test_input_state.cpp`（手写，无 GLOB）。
+**实跑结果：9 → 16 passed**，其中 `InputState` 5 个、`KeyCode` 2 个。
 
 ---
 
 ## 10. commit 切分（每个都能构建）
 
-| # | 信息 | 内容 | 跑完应该看到 |
+| # | 信息 | 内容 | 实际结果 |
 | --- | --- | --- | --- |
-| 1 | `feat: platform::Console 以 RAII 接管终端模式，TerminalPresenter 退休` | 新建 `Console.h` / `ConsoleWindows.cpp` / `QuitFlag.h`；删 `render/TerminalPresenter.*`；**main 必须同时改调用点，否则编译不过**；`engine/CMakeLists.txt` 同步 | 0 warning、`ctest` 1/1、`mini_tests` 9 passed、画面与 S1 **完全一致** |
-| 2 | `feat: 加入 platform::Input 与四态按键状态机` | `KeyCode.h` / `InputState.h` / `Input.h` / `InputWindows.cpp` | 0 warning、`ctest` 1/1（用例数**没涨**） |
-| 3 | `test: InputState 状态机与 VK 映射单测` | `test_input_state.cpp` + `tests/CMakeLists.txt` | `mini_tests` 9 → **16 passed** |
-| 4 | `feat: main 显示按键三态，Q 退出` | 演示壳。跑完 9.1 / 9.2 验收 | 8 条现象 + 4 条反向验证全过 |
-| 5 | `docs: PLAN S2 落地记录与平台依赖规则更新` | 第 11 节的 6 处 | — |
+| 1 | `feat: platform::Console 以 RAII 接管终端模式，TerminalPresenter 退休`<br>`14b60d0` | 新建 `Console.h` / `ConsoleWindows.cpp`（原计划的 `QuitFlag.h` 没建，见 D1）；删 `render/TerminalPresenter.*`；**main 必须同时改调用点，否则编译不过**；`engine/CMakeLists.txt` 同步 | ✅ 0 warning、`ctest` 1/1、`mini_tests` 9 passed、画面与 S1 一致 |
+| 2 | `feat: 加入 platform::Input 与四态按键状态机`<br>`a3a9b09` | `KeyCode.h` / `InputState.h` / `Input.h` / `InputWindows.cpp` | ✅ 0 warning、`ctest` 1/1（用例数**没涨**） |
+| 3 | `test: InputState 状态机与 VK 映射单测（含极速点击守卫）`<br>`f4ea7a8` | `test_input_state.cpp` + `tests/CMakeLists.txt` | ✅ `mini_tests` 9 → **16 passed** |
+| 4 | `feat: main 改为按键四态 HUD，WASD/方向键瞬时移动 @`<br>`feaa06c` | 三行 HUD + `@` 每按一次走一格 + Q 退出。**9.1 / 9.2 的交互验收未做** | ⏳ **待手工跑 9.1 全部 + 9.2 第 1、2 条** |
+| 5 | `docs: PLAN S2 落地记录与平台依赖规则更新` | 本文件 + PLAN 的 S2 落地记录 | ✅ |
 
 **"每个 commit 都能构建"比切得漂亮重要**——构建不过就合并到下一个。commit 1 是大头，别试图再拆细（拆到"删旧文件但 main 还用"就必然有一个编译不过的中间态）。
 
+> 另有一个**不在原计划里的第 0 个 commit** `2c15f8b docs: S2 方案落地为 S2_CHECKLIST，同步 PLAN 的 A.3/C.3/S2/E-12`：
+> 那是本清单本身落地时产生的（含 PLAN 的 6 处措辞修正），比实现早一步进仓库。
+
 ---
 
-## 11. 与 PLAN 原文的差异（必须同步，否则下一阶段的自己会被误导）
+## 11. 与 PLAN 原文的差异（**6 条全部已改完**，`2c15f8b`）
 
-| # | 位置 | 原文 | 改成 |
-| --- | --- | --- | --- |
-| 1 | PLAN S2 正文"实现"行 | "接口类 `IConsole`" | `platform::Console`（抽象基类 + 工厂） |
-| 2 | PLAN S2 正文"实现"行 | "三态 `Pressed/Held/Released`" | 四态 `Up/Pressed/Held/Released` |
-| 3 | PLAN C.3 | `enum class KeyState { Released, Pressed, Held };` | `{ Up, Pressed, Held, Released }`，并补 `IsDown()` 的定义 |
-| 4 | PLAN C.3 | `virtual bool QuitRequested() const = 0; // Ctrl+C / ESC / 窗口关闭` | 去掉 ESC：只反映"外部强制退出" |
-| 5 | PLAN A.3 | "**这条规则的唯一例外是阶段 1**（还没抽象平台时允许临时写在 `render/Console` 里），阶段 2 必须把它挪走" | 例外已终结，删掉这半句，改成"`<windows.h>` 只允许出现在 `engine/src/platform/`" |
-| 6 | PLAN E-12 | 对策含 `WINDOW_BUFFER_SIZE_EVENT`，阶段标 `S2/S6` | 阶段改 `S3/S6`，对策改成"每帧比较 FrameBuffer 尺寸与 `Console::Size()`；事件在 S2 已被安全丢弃" |
+| # | 位置 | 原文 | 改成 | 状态 |
+| --- | --- | --- | --- | --- |
+| 1 | PLAN S2 正文"实现"行 | "接口类 `IConsole`" | `platform::Console`（抽象基类 + 工厂） | ✅ |
+| 2 | PLAN S2 正文"实现"行 | "三态 `Pressed/Held/Released`" | 四态 `Up/Pressed/Held/Released` | ✅ |
+| 3 | PLAN C.3 | `enum class KeyState { Released, Pressed, Held };` | `{ Up, Pressed, Held, Released }`，并补 `IsDown()` 的定义 | ✅ |
+| 4 | PLAN C.3 | `virtual bool QuitRequested() const = 0; // Ctrl+C / ESC / 窗口关闭` | 去掉 ESC：只反映"外部强制退出" | ✅ |
+| 5 | PLAN A.3 | "**这条规则的唯一例外是阶段 1**（还没抽象平台时允许临时写在 `render/Console` 里），阶段 2 必须把它挪走" | 例外已终结，删掉这半句，改成"`<windows.h>` 只允许出现在 `engine/src/platform/`" | ✅ |
+| 6 | PLAN E-12 | 对策含 `WINDOW_BUFFER_SIZE_EVENT`，阶段标 `S2/S6` | 阶段改 `S3/S6`，对策改成"每帧比较 FrameBuffer 尺寸与 `Console::Size()`；事件在 S2 已被安全丢弃" | ✅ |
 
-**另外两处结构性同步**（不算差异，属例行更新）：
+顺手还改掉了 C.3 里两处会被四态决策带歪的注释：`BeginFrame`（原"把 Pressed 降级为 Held"是三态的说法）、
+`MakeInput`（原"`.cpp` 里 `#ifdef` 分派"——本项目只做 Windows，没有分派文件）。
 
-| 位置 | 改什么 |
-| --- | --- |
-| PLAN A.2 目录树 | `platform/` 下改成实际文件名（`Console.h` `Input.h` `InputState.h` `KeyCode.h`）；`doc/` 下加 `S2_CHECKLIST.md` |
-| PLAN 第 0 节状态行（`MiniEngine_PLAN.md:29`） | `S1` 已完成（实测数据），下一步从 S1 改成 **S2** |
-| PLAN S2 小节末尾 | 补"**S2 落地记录**"表，格式对齐 S1 的记录（决策 / 落成 / 代价） |
-| `AGENTS.md` 第 2 节文档表 | 加一行 `doc/S2_CHECKLIST.md` |
+
+**另外三处结构性同步**（不算差异，属例行更新）：
+
+| 位置 | 改什么 | 状态 |
+| --- | --- | --- |
+| PLAN A.2 目录树 | `platform/` 下改成实际文件名（`Console.h` `Input.h` `InputState.h` `KeyCode.h`）；`doc/` 下加 `S2_CHECKLIST.md` | ✅ `2c15f8b` |
+| PLAN 第 0 节状态行（`MiniEngine_PLAN.md:29`） | `S1` 完成 → **S2 实现完成 + 待手工验收** | ✅ |
+| PLAN S2 小节末尾 | 补"**S2 落地记录**"（6 条接口决策 + 实际结构 + 4 条新坑） | ✅ commit 5 |
+| `AGENTS.md` 第 2 节文档表 | 加一行 `doc/S2_CHECKLIST.md` | ✅ `2c15f8b` |
+
+上面 6 条**全部已改完**（`2c15f8b` 一次改掉 1~6 + A.2 + AGENTS.md；状态行与落地记录随后补）。
 
 ---
 
 ## 12. 交付后的自检（收尾用）
 
-- [ ] `git status` 里没有 `build/`、没有 `CMakeUserPresets.json`
-- [ ] 新增源文件全部是 UTF-8 **无 BOM**、行尾 **LF**
-- [ ] `mini_tests.exe Nope`（suite 名不存在）仍然报错 + 退出码非 0（S0 的门闩没被 S2 破坏）
-- [ ] 两个 `ms-clang-debug` / `ms-asan` 预设**仍标"未实测"**——它们计划与 S4 的 Math 测试一起验，别在 S2 顺手改状态
+- [x] `git status` 里没有 `build/`、没有 `CMakeUserPresets.json`、没有含绝对路径的文件
+      （`git ls-files | grep -iE "^build/|CMakeUserPresets"` 为空）
+- [x] 新增源文件全部是 UTF-8 **无 BOM**、行尾 **LF**
+      （字节级核对：`od` 数 `0x0d` 全部为 0；`file` 判定为 "UTF-8 text"；`git ls-files --eol` 全部 `i/lf w/lf`）
+      ⚠️ 别用 `grep -c $'\r'` 判 CRLF —— 在 Git Bash 里它会匹配**整行**，给出"每行都有 CR"的假阳性
+- [x] `mini_tests.exe Nope` 仍然报错 + 退出码非 0
+      （实测输出 `no case in suite 'Nope' (16 case(s) registered)`，`$LASTEXITCODE` = 1，S0 的门闩没被 S2 破坏）
+- [x] 两个 `ms-clang-debug` / `ms-asan` 预设**仍标"未实测"**——计划与 S4 的 Math 测试一起验，没在 S2 顺手改状态
+

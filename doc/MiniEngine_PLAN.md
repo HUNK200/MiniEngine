@@ -26,7 +26,7 @@
 | ninja / make | **未安装**（不阻塞，VS 生成器可用） | **未安装** | 多配置（VS）生成器，所以**必须带 `--config`／`-C`** |
 | Git | 2.52.0；仓库 local 身份 `HUNK <wuunj@126.com>` | 2.52.0；**仓库级身份未设**，当前只吃全局 `Wuyangzhi <wu.yangzh@aerok.com.cn>`（补设见 A.2） | **身份按机器各用各的**（见 A.2），不要求两机一致 |
 | Shell / 终端 | Git Bash，`TERM=xterm-256color`，代码页 **936 (GBK)** | **PowerShell（主力）**，Git Bash 也能用；VS Code 内置终端是 UTF-8，传统控制台代码页 **936 (GBK)** | **给用户的命令一律按 PowerShell 写**：退出码用 `$LASTEXITCODE`（不是 `echo $?`）、路径用反斜杠；终端输出必须切 UTF-8，否则 `┌─┐@#*` 全乱码 |
-| 项目当前状态 | **S1 完成**（2026-09-24）：构建 0 warning、`ctest` 1/1、`mini_tests` 9 passed | **S1 复跑同上**（2026-09-28） | **下一步进 S2 Platform + 键盘输入**；施工图与验收见 `doc/S2_CHECKLIST.md`，方案已定稿、无阻塞 |
+| 项目当前状态 | **S2 实现完成**（2026-09-28）：构建 0 warning、`ctest` 1/1、`mini_tests` 16 passed | **S2 自动验收通过**；交互验收（鼠标/切窗口/肉眼）**待真机手工做** | **下一步：跑 S2 手工验收**（`doc/S2_CHECKLIST.md` 9.1 / 9.2），过了再进 S3 |
 
 ### 标准命令（PowerShell + 多配置生成器）
 
@@ -296,12 +296,42 @@ S0 骨架 ──► S1 FrameBuffer 出画面 ──► S2 输入 ──► S3 Ga
 | C++ 知识 | 抽象接口、`std::unique_ptr` + 工厂函数、RAII（构造开终端模式，析构恢复）、`enum class`、位标志 |
 | 引擎知识 | 输入轮询（poll）模型 vs 回调模型、按键边沿与持续状态 |
 | 规模 | 净新增约 300 行，另有 165 行搬迁（S1 的 `TerminalPresenter.cpp` 归位到 `platform/`）；仍然只有 Windows 一条路径。比原估多出的部分是"可离线单测的状态机"与"抽象基类 + 工厂"两笔包装 |
-| 可运行效果 | 屏幕上实时显示 `W: Held  SPACE: Pressed  Q: Released`；按 Q 退出 |
+| 可运行效果 | 三行 HUD 实时显示 15 个键的四态（`W: Held  SPACE: Pressed  Q: Released`，Pressed/Released 各只存在一帧，靠颜色分辨）；W/A/S/D 与方向键让 `@` **每次按下走一格**；按 Q 退出 |
 | 验收 | 长按 W 显示 Held；松开显示 Released 仅一帧；**鼠标在终端里点一下之后输入仍然正常**；切走窗口 2 秒再切回无任何键卡在 Held；`MiniEngine.exe > out.txt` 抛异常 + 人话提示，**不是**静默无画面 |
 | 坑 | ① 必须 `&~ENABLE_QUICK_EDIT_MODE` 并配合 `ENABLE_EXTENDED_FLAGS`，否则点一下控制台就"卡死"；② `WINDOW_BUFFER_SIZE_EVENT` 在 S2 **只安全丢弃**（自适应画面归 S3/S6，见 E-12）；③ 退出路径要恢复终端状态（显示光标、还原代码页），否则一次崩溃就让终端一直不正常；④ **一帧内 down+up 的极速按键**必须用 `m_pulse` 兜住，否则会静默漏键；⑤ 未映射的 VK 必须丢弃，否则多个键一起写 `Unknown` 槽位互相干扰 |
 
 > **S2 详细施工图见 `doc/S2_CHECKLIST.md`** —— 接口签名与四态判定表、16 条坑表、7 个离线测试用例、正向 8 条 + 反向 4 条验收、五个 commit 的切分与勾选进度。
 > 本节只留阶段定义与决策，实现清单不在两处重复，避免改了一处漏另一处。
+
+**S2 落地记录（2026-09-28 公司机，含 6 条与原文不同的决策）**
+
+| # | 决策 | 落成 | 代价 / 备注 |
+| --- | --- | --- | --- |
+| 1 | 平台层用**抽象基类 + 工厂** | `Console` / `Input` 是抽象基类，Windows 实现全在 `.cpp`；`MakeConsole()` / `MakeInput()` 创建 | 换"公共头零 Windows 痕迹"。**PLAN S2 正文原先写的 `IConsole` 作废** |
+| 2 | 按键**四态** | `Up / Pressed / Held / Released`；`Up` = 一直没按，`Released` = 本帧刚抬起 | 三态无法区分这两者，S2 验收要求的"松开仅一帧"就做不到。**C.3 原三态作废** |
+| 3 | 窗口尺寸事件**只消费不处理** | `Poll()` 里 `case WINDOW_BUFFER_SIZE_EVENT:` 直接丢，注释指向 S3 | S3 每帧比较 `Console::Size()` 更简单、不会漏，不需要这个事件（E-12 的触发阶段随之从 S2/S6 改成 S3/S6） |
+| 4 | `QuitRequested()` **不含 ESC** | 只反映 Ctrl+C / 关窗口 | ESC 从 S10 起要用来关菜单，引擎硬编码它退出到时必然要拆。**C.3 原句"Ctrl+C / ESC / 窗口关闭"作废** |
+| 5 | 进程级退出标志放在**公共头** `Console.h` 的自由函数里 | `platform::QuitRequested()`；`Input::QuitRequested()` 转发给它 | 原计划是内部头 `src/platform/QuitFlag.h`，但 `main` 在步骤 1 就需要读它（那时 Input 还没写），做成公共自由函数反而更少一个文件 |
+| 6 | 未映射 VK 的丢弃点放在 `InputState::OnKeyDown` | `KeyIndex()` 对 `Unknown`/`Count` 返回哨兵，写入被拒 | 单一收口，**可离线单测**（`KeyCode.InvalidKeyIndexIsIgnored`）。原计划写在 `Poll()` 里，那样测不到 |
+
+**实际结构**
+
+| 项 | 实际值 |
+| --- | --- |
+| 新文件 | `engine/include/mini/platform/{Console.h, KeyCode.h, InputState.h, Input.h}`、`engine/src/platform/{ConsoleWindows.cpp, InputWindows.cpp}`、`tests/test_input_state.cpp` |
+| 删除 | `engine/include/mini/render/TerminalPresenter.h`、`engine/src/render/TerminalPresenter.cpp`（S1 的临时房客，到期搬走） |
+| 单测 | `ctest` 仍是 **1 个条目**（`mini_tests`），内部用例 9 → **16**（新增 suite：`InputState` 5 个、`KeyCode` 2 个） |
+| 自动验收 | 构建 **0 warning**；`ctest` 1/1；`mini_tests` 16 passed；`MiniEngine.exe > out.txt` 抛 `runtime_error` + exit 1（**没进备用屏**）；反向验证第 3 条（删 `m_pulse` → 测试变红）已实跑并还原现场 |
+| 交互验收 | **待手工执行**：9.1 的 8 条现象（鼠标点击、切窗口、肉眼抓一帧的 `Released`）在自动化环境里驱动不了（见坑表最后一条）。**在真机上跑完之前，S2 不算验收完成** |
+
+**S2 新踩到的坑（S0/S1 坑表之外）**
+
+| 现象 | 原因与对策 |
+| --- | --- |
+| 删掉 `m_pulse` 分支后，**`Pressed` 整个消失**（不只是极速点击丢键） | 一开始以为 `m_pulse` 只救"一帧内 down+up"。实际上正常按下（`prev=false, now=true`）也走 `if (m_pulse)` 这一支，因为 `was && now` 判不成立。所以 `m_pulse` 是 `Pressed` 的**必要条件**，不是边角补丁 —— 反向验证时这个用例比预期多红了一个 |
+| 长按不走飞，正好是判定顺序带来的 | 自动重复会不断把 `m_pulse` 置回 true，但 `Get()` 里 `was && now`（Held）排在 `pulse` 前面，所以按住不放**不会**被打回 `Pressed`。把顺序换掉，按住 W 会让 `@` 一直走 |
+| `KeyFromVirtualKey` 的参数必须是 16 位 | `wVirtualKeyCode` 是 WORD。先截成 `uint8_t` 再查表，会把高位非零的码**悄悄折到别的键**上（`0x0100` → 查到 `0x00`）。改成 `uint16_t` + 范围判断 |
+| `winpty` 驱动不了这个程序做自动验收 | `winpty` 拒绝把管道当 tty（报 `stdin is not a tty`），所以"喂一个 q 进去看它退不退"这条自动化路子走不通。**结论：交互验收只能手工做** —— 这也正是把四态状态机拆成 `InputState` 的价值：能自动测的部分已经全部自动测了 |
 
 ### S3 Game Loop / Time / FPS
 
