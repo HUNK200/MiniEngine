@@ -3,36 +3,40 @@
   "configurePresets": [
     {
       "name": "ms-msvc-debug",
-      "displayName": "MSVC Debug (Visual Studio 17 2022)",
+      "displayName": "MSVC (Visual Studio 17 2022)",
       "generator": "Visual Studio 17 2022",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": { "CMAKE_CONFIGURATION_TYPES": "Debug;Release" }
     },
     {
-      "name": "ms-clang-debug",
-      "displayName": "ClangCL Debug (交叉验证，风险 E-16)",
-      "generator": "Visual Studio 17 2022",
-      "toolset": "ClangCL",
-      "binaryDir": "${sourceDir}/build-clang",
-      "cacheVariables": { "CMAKE_CONFIGURATION_TYPES": "Debug" }
-    },
-    {
       "name": "ms-asan",
-      "displayName": "ClangCL + ASan/UBSan",
-      "inherits": "ms-clang-debug",
+      "displayName": "MSVC + AddressSanitizer",
+      "inherits": "ms-msvc-debug",
       "binaryDir": "${sourceDir}/build-asan",
       "cacheVariables": { "MINI_SANITIZE": "ON" }
     }
   ],
   "buildPresets": [
-    { "name": "debug",       "configurePreset": "ms-msvc-debug",  "configuration": "Debug" },
-    { "name": "release",     "configurePreset": "ms-msvc-debug",  "configuration": "Release" },
-    { "name": "clang-debug", "configurePreset": "ms-clang-debug", "configuration": "Debug" }
+    { "name": "debug",   "configurePreset": "ms-msvc-debug", "configuration": "Debug" },
+    { "name": "release", "configurePreset": "ms-msvc-debug", "configuration": "Release" },
+    { "name": "asan",    "configurePreset": "ms-asan",       "configuration": "Debug" }
   ],
   "testPresets": [
     {
       "name": "debug",
       "configurePreset": "ms-msvc-debug",
+      "configuration": "Debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "release",
+      "configurePreset": "ms-msvc-debug",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "asan",
+      "configurePreset": "ms-asan",
       "configuration": "Debug",
       "output": { "outputOnFailure": true }
     }

@@ -22,7 +22,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 option(MINI_BUILD_TESTS "Build unit tests" ON)
-option(MINI_SANITIZE    "Enable ASan/UBSan (clang/gcc)" OFF)
+option(MINI_SANITIZE    "Enable MSVC AddressSanitizer (/fsanitize=address)" OFF)
 
 # 编译选项做成 INTERFACE 库，避免每个 target 复制粘贴一遍。
 # NOMINMAX / WIN32_LEAN_AND_MEAN 现在还用不上，但等 S2 引入 <windows.h> 时，
@@ -30,20 +30,25 @@ option(MINI_SANITIZE    "Enable ASan/UBSan (clang/gcc)" OFF)
 add_library(mini_options INTERFACE)
 target_compile_definitions(mini_options INTERFACE NOMINMAX WIN32_LEAN_AND_MEAN)
 
-if(MSVC)
-    # /utf-8 是本机代码页 936 下的必需品，不是可选优化（风险 E-1）
-    target_compile_options(mini_options INTERFACE /W4 /permissive- /utf-8 /Zc:__cplusplus)
-else()
-    target_compile_options(mini_options INTERFACE -Wall -Wextra -Wpedantic -Wshadow)
-endif()
+# 只做 MSVC（2026-09-29 决定）：不保留 clang / ClangCL / gcc 的编译分支。
+# 原先这里有个 `else()` 给非 MSVC 编译器加 `-Wall -Wextra -Wpedantic -Wshadow`，
+# 它在本机**永远不会执行**（ClangCL 也会让 CMake 把 MSVC 判为真），已删除。
+# 依据：AGENTS.md 第 4 节 —— 只用 MSVC，不写也不跑别的编译器分支。
+#
+# /utf-8 是本机代码页 936 下的必需品，不是可选优化（风险 E-1）
+target_compile_options(mini_options INTERFACE /W4 /permissive- /utf-8 /Zc:__cplusplus)
 
 if(MINI_SANITIZE)
-    if(MSVC)
-        target_compile_options(mini_options INTERFACE /fsanitize=address)
-    else()
-        target_compile_options(mini_options INTERFACE -fsanitize=address,undefined -fno-omit-frame-pointer)
-        target_link_options(mini_options INTERFACE -fsanitize=address,undefined)
-    endif()
+    # MSVC 的 ASan（VS2019 16.9+ 起支持）。**不需要 clang** —— 2026-09-29 之前
+    # 预设写成继承 ClangCL 是多余的。
+    #
+    # 编译与链接**都要带**这个开关：只写编译选项会在链接期报 __asan_* 未解析。
+    target_compile_options(mini_options INTERFACE /fsanitize=address)
+    target_link_options(mini_options INTERFACE /fsanitize=address)
+
+    # MSVC 的 ASan 与 /RTC1 互斥，而 CMake 的 Debug 配置默认带 /RTC1。
+    # 显式关掉它，让 `--config Debug` 就能跑 ASan（否则得改用 RelWithDebInfo）。
+    target_compile_options(mini_options INTERFACE /RTC-)
 endif()
 
 add_subdirectory(engine)

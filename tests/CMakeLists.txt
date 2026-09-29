@@ -26,5 +26,5 @@ target_include_directories(mini_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(mini_tests PRIVATE mini_options MiniEngine::engine)
 
 # 用 generator expression 拿路径，别写 exe 的相对路径：
-# 多配置生成器下路径含配置名，硬编码会在 Release/ClangCL 下找错文件
+# 多配置生成器下路径含配置名，硬编码会在 Debug/Release 切换时找错文件
 add_test(NAME mini_tests COMMAND $<TARGET_FILE:mini_tests>)
