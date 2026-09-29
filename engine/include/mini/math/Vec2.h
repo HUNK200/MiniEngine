@@ -41,16 +41,19 @@ struct Vec2 {
     constexpr Vec2& operator/=(float s) noexcept { x /= s; y /= s; return *this; }
 
     // 长度的平方。**能用它就别用 Length()** —— 比大小、比范围都不需要开方，
-    // 而开方是这个类型里最贵的操作（S7 的"谁更近"会大量用它）。
+    // 而 std::sqrt 是这个类型里最贵的操作。
+    // （PLAN:457 把"为什么要 LengthSq（避免 sqrt）"列为 S4 要学的引擎知识之一；
+    //   具体哪个阶段会大量用到它，等真写到了再说 —— 别在注释里编调用者，见偏差 D7。）
     [[nodiscard]] constexpr float LengthSq() const noexcept { return x * x + y * y; }
 
     [[nodiscard]] constexpr float Dot(Vec2 o) const noexcept { return x * o.x + y * o.y; }
 
     // 逆时针 90°：(x, y) → (-y, x)。
     //
-    // ⚠️ **这个方向是写死的约定**：S7 的碰撞法线、S12 的墙面朝向都要跟它一致。
-    // 搞反了的现象是"实体被推进墙里"，而且很难一眼看出来 —— 所以测试里有一条专门钉它。
-    // 将来加 Vec3 时，`Cross()` 的方向必须和这里一致（见 doc/S4_CHECKLIST.md 6.6）。
+    // ⚠️ **这个方向是写死的约定**：S7 的碰撞法线方向必须跟它一致
+    // （PLAN:496 的"分轴解算"要用它，PLAN:457 把"法线方向"列为 S4 的引擎知识之一）。
+    // 搞反了的现象是"实体被推进墙里"，很难一眼看出来 —— 所以测试里有一条专门钉它。
+    // 将来加 Vec3 时 `Cross()` 的方向必须和这里一致（见 doc/S4_CHECKLIST.md 6.6）。
     [[nodiscard]] constexpr Vec2 Perp() const noexcept { return Vec2{-y, x}; }
 
     // 逐分量取小 / 取大。
