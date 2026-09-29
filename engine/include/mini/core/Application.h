@@ -45,10 +45,11 @@ struct AppConfig {
 // 一帧的输入快照。**只有值和 const 引用**，没有可变通路。
 //
 // 它是个聚合体（没有构造函数），所以每帧这样就地构造：
-//     const FrameContext ctx{ dt, frameMs, workMs, fps, w, h, *m_input };
+//     const FrameContext ctx{ dt, frameMs, maxMs, workMs, fps, w, h, *m_input };
 struct FrameContext {
     float deltaSeconds = 0.0f;   // 已 clamp 的帧间隔（秒）→ 喂给游戏做积分
     float frameMs      = 0.0f;   // 同一个间隔，毫秒，**未 clamp** → 顶栏用（要看得到卡顿）
+    float maxFrameMs   = 0.0f;   // 自启动以来最差的那一帧（毫秒，同样未 clamp）→ 顶栏 Max
     float workMs       = 0.0f;   // 本帧实际干活耗时（毫秒）
     float fps          = 0.0f;   // 滑动窗口平均
     int   screenWidth  = 0;      // 本帧画布尺寸（resize 那一帧就已经是新值）

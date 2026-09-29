@@ -107,6 +107,7 @@ void Application::Run(IGame& game)
         const FrameContext ctx{
             m_time.Delta(),
             m_time.FrameMs(),
+            m_time.MaxFrameMs(),   // 自启动以来最差的一帧（MaxFrameMs 仅有的生产调用点）
             m_time.WorkMs(),
             m_time.Fps(),
             m_frameBuffer.Width(),
@@ -148,11 +149,20 @@ void Application::DrawStatsBar(const FrameContext& ctx)
 
     // 定宽字段（%5.1f 这种）能让数字跳动时**位置不抖** ——
     // 否则 FPS 从 99.9 掉到 100.0 会让整行往右挪一格，看着像画面在晃
+    //
+    // `Max` 紧挨着 `Frame`：这两个是**同一个口径**（都是未 clamp 的帧间隔），
+    // 放一起才能一眼比"这一帧 vs 史上最差"。`Work` 是另一个量（帧内干活耗时），
+    // 排在后面。
+    //
+    // `Max` 是**自启动以来**的最差值，没有任何 UI 能重置它（Reset() 只有测试在调），
+    // 所以它**只会单调不降** —— 拖过一次窗口之后它会永久记住那次尖峰。
+    // 这是有意的：PLAN 坑 #24 写了"resize 那一帧的尖峰 MaxFrameMs() 会记下它，别当 bug 去消"。
     char text[96];
     std::snprintf(text, sizeof(text),
-                  "FPS %5.1f | Frame %5.1fms | Work %4.1fms | Rows %2d/%2d",
+                  "FPS %5.1f | Frame %5.1fms | Max %5.1fms | Work %4.1fms | Rows %2d/%2d",
                   static_cast<double>(ctx.fps),
                   static_cast<double>(ctx.frameMs),
+                  static_cast<double>(ctx.maxFrameMs),
                   static_cast<double>(ctx.workMs),
                   m_console->LastFrameRowsSent(),
                   ctx.screenHeight);

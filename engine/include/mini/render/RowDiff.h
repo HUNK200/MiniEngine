@@ -52,8 +52,8 @@ public:
 
     struct Stats {
         int         rowsTotal = 0;   // 画布行数
-        int         rowsSent  = 0;   // 本帧真发出去的行数（顶栏 Rows: 2/25 用它）
-        std::size_t bytes     = 0;   // 本帧字节数
+        int         rowsSent  = 0;   // 本帧真发出去的行数（顶栏 `Rows n/n` 左半边那个 n）
+        std::size_t bytes     = 0;   // 本帧字节数（顶栏没显示；测试用它验证"脏行确实更省"）
     };
 
     [[nodiscard]] Stats LastStats() const noexcept { return m_stats; }
