@@ -24,8 +24,10 @@
 - ⚠️ **没有 `mini_tests Math` 这条命令**：runner 的 suite 过滤是**精确匹配**（`MINITEST_SPEC` 第 3 节），
   而本阶段按"被测单元"分了 4 个 suite。想一次跑完 S4 就**不带参数**（跑全部 68 个用例）。
   见落地偏差 **D4** —— 这条命令是文档先写错、实现时才发现的。
-- ⚠️ **已知未验（不要当成已验证）**：`ctest --preset asan` 与 **Release 构建，本轮没跑**。
-  S3 验过这条通路，S4 的产物又全是 header-only —— 风险低，但没跑就是没跑。
+- ✅ **验证矩阵（Debug / Release / asan）三条都跑过了** —— asan 与 Release 是 S4 收口后**补跑**的，
+  见 `TECH_DEBT.md` 的 **A7** 节。教训留在那条债里：**不能因为"本阶段没新增 .cpp"就跳过这两条** ——
+  这次 `Ray.h` 把 `std::optional`/`<limits>` **首次**拉进 engine 公共头（Release 会 `/O2` 内联它），
+  而且**动了测试框架本身**（D3）。
 - **S4 之后**：`math` 会立刻在 S5 的 `World` 里获得真实调用者，那时它才"看得见"。
 
 ### ⚠️ 分工约定（`AGENTS.md` 1.4；本阶段沿用）
@@ -681,12 +683,13 @@ cmake --build build --config Release                    # 期望同样 0 warning
 | `mini_tests.exe`（不带参数 = 全部） | ✅ **68 passed, 0 failed**（S3 时 35） |
 | `ctest --test-dir build -C Debug` | ✅ **1/1** |
 | **反向验证 3 条** | ✅ 都看到红（10.3；实测 63 passed / 5 failed），现场已还原 |
-| `ctest --preset asan` | ⏸️ **本轮未跑** |
-| `cmake --build build --config Release` | ⏸️ **本轮未跑** |
+| `ctest --preset asan` | ✅ **本人实测通过**（2026-09-29；未附具体数字） |
+| `cmake --build build --config Release`（+ Release 下跑测试） | ✅ **本人实测通过**（同上） |
 
-> ⚠️ **最后两行是"未验"，不是"通过"。** S3 验过这两条通路、S4 的产物又全是 header-only
-> （`math/` 下 4 个头文件、**没有新增 .cpp**），所以风险低 ——
-> **但"风险低"和"验过"是两件事**。这个项目在 B1/A1 那两轮已经因为"写了没跑过"吃过教训。
+> 最后两行**最初是"未验"**，是后来补跑的 —— 详见 `TECH_DEBT.md` 的 **A7** 节，
+> 那一节记的不只是"关掉了一条债"，更是**"没有新增 .cpp"这个理由为什么不能用来跳过 Release/asan**：
+> `Ray.h` 是第一个把 `std::optional`/`<limits>` 拉进 engine 公共头的地方（Release 会内联它），
+> 而且这次**动了测试框架本身**（D3）。
 
 **外加两条"没坏"的确认**：
 
@@ -758,7 +761,7 @@ cmake --build build --config Release                    # 期望同样 0 warning
       第二轮停掉自检后运行时红在 `ZeroDirectionDegeneratesToPointTest`）。详见 10.3 与 D8/D9
 - [x] `doc/MiniEngine_PLAN.md` 的 S4 小节标 ✅、A.2 目录树改对、差异表写完
       （另外在**附录 A 命令速查**里补了"只跑一个 suite"的正确写法 —— D4 的教训直接落在这里）
-- [x] `doc/TECH_DEBT.md` 再看一眼有没有新债 → 新增 **A7**（asan/Release 本轮未跑）与
+- [x] `doc/TECH_DEBT.md` 再看一眼有没有新债 → 新增 **A7**（asan/Release 复验，**已补跑并通过**）与
       **C8 / C9**（`Vec3`/`Rect` 只有契约、`EQ`/`NEAR` 的包括号限制），并把 S4 那 11 个
       "只有测试调用"的接口补进 **B5 的 D 类**
 - [x] `git status` 干净
