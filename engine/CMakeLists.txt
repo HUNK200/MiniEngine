@@ -17,6 +17,12 @@
 # 不要提前把**后面阶段**的文件写进来 —— 那些文件还不存在，写进来等于构建直接挂
 # （PLAN A.4：结构被复杂度逼出来）。比如 S3 之后才有的 src/render/Terminal.cpp、
 # src/game/*。S3 已经把 PLAN C.2 草案里的 Application.cpp 落实了，所以它在列表里。
+#
+#   S4  **不新增源文件** —— math/ 是 header-only（纯值类型 + 纯函数 + constexpr），
+#       头文件放在 engine/include/mini/math/ 下，靠下面的 PUBLIC include 目录暴露。
+#       ⚠️ header-only 的头**只有被 include 才会被编译**，所以 S4 的编译验证
+#          完全靠 tests/test_math.cpp 去 include 它们 —— 别以为"在列表里没看到 S4"
+#          就是漏了（这是故意的）。
 # ============================================================
 
 add_library(engine STATIC
