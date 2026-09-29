@@ -39,17 +39,9 @@ void AppendRowPosition(std::string& out, int y)
 
 } // namespace
 
-void RowDiff::Resize(int rows)
-{
-    if (rows < 0) {
-        rows = 0;
-    }
-    if (static_cast<int>(m_prevRows.size()) == rows) {
-        return;   // 行数没变，快照还有效
-    }
-    m_prevRows.assign(static_cast<std::size_t>(rows), std::string{});
-    m_dirtyAll = true;   // 快照作废 → 下一帧全量
-}
+// 原先这里有个 `RowDiff::Resize(int)`，2026-09-28 删掉了（全仓库 0 处调用）。
+// 它的三行逻辑（行数变了 → assign + m_dirtyAll）已经在 Compose() 里就地做了，
+// 留着等于把同一件事写两遍，还得靠调用方记得调。
 
 void RowDiff::Invalidate() noexcept
 {
@@ -60,8 +52,9 @@ std::string_view RowDiff::Compose(const FrameBuffer& fb)
 {
     const int rows = fb.Height();
 
-    // 行数不对（resize 过 / 第一次用）→ 快照全作废，本帧全量。
-    // 调用方不需要记得调 Resize()，这里自己发现。
+    // 行数不对（换过画布尺寸 / 第一次用）→ 快照全作废，本帧全量。
+    // **这是唯一的入口**：RowDiff 不为"告诉它行数"提供任何接口，
+    // 所以不存在"忘了告诉它"这种错法（原先有个 Resize()，2026-09-28 删了）。
     if (static_cast<int>(m_prevRows.size()) != rows) {
         m_prevRows.assign(static_cast<std::size_t>(rows), std::string{});
         m_dirtyAll = true;

@@ -130,7 +130,10 @@ public:
     [[nodiscard]] float WorkMs() const noexcept { return m_workMs; }
     [[nodiscard]] float Fps() const noexcept { return m_stats.Fps(); }
     [[nodiscard]] float MaxFrameMs() const noexcept { return m_stats.MaxFrameMs(); }
-    [[nodiscard]] std::uint64_t FrameCount() const noexcept { return m_frames; }
+    // 这里原先还有一个 `FrameCount()`（返回 m_frames），2026-09-28 删掉了：
+    // 全仓库 0 处调用（连测试都没有）—— 留着会让人以为"第几帧"是被用到的信息。
+    // 注意 **m_frames 成员本身要保留**：EndFrame 用它跳过首帧的统计。
+    // 将来真需要"第几帧"时加回来是一行。
 
     [[nodiscard]] const FrameStats& Stats() const noexcept { return m_stats; }
 
