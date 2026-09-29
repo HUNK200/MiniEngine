@@ -852,7 +852,8 @@ Get-Process -Id $p.Id -ErrorAction SilentlyContinue   # 期望：什么都没有
         `.\build\bin\Debug\mini_tests.exe Nope`，期望看到 `no case in suite 'Nope'` 之类的提示
         且 `$LASTEXITCODE -ne 0`
 - [x] 两个 `ms-clang-debug` / `ms-asan` 预设仍标"未实测"（计划与 S4 的 Math 测试一起验）
-      → `doc/MiniEngine_PLAN.md:249` 与 `doc/S2_CHECKLIST.md:603` 都还标着 ✅
+      → **2026-09-29 收口**：`ms-clang-debug` 已删除（决定只用 MSVC），`ms-asan` 改成 MSVC 版并补了
+      缺失的链接选项与 `/RTC-`。见 `doc/TECH_DEBT.md` A4 / A5
 - [x] 收工前 `tasklist` 里没有残留的 `MiniEngine.exe`
       → 查询无匹配 ✅（含步骤 3 那次"杀 conhost"实验的进程，没有留下孤儿）
 

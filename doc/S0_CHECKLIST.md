@@ -45,7 +45,10 @@
 - [x] **R7** 填 Version，验证静态库真的被链上
 - [x] **R8** 反向验证 + `CMakePresets.json` + 提交（5 个 commit，2026-09-24 已推送 `87e0d73..00ae8ed`）
 
-> 剩下的**只有可选项**：`R2`~`R4`（"故意撞 CMake 报错"的复习路径）已被 `C1`~`C4` 的实战取代，想弄懂"配置期 vs 链接期报错时机"随时回头看；`ms-clang-debug` / `ms-asan` 两个预设还没实测过（计划跟 S4 的 Math 测试一起验）。
+> 剩下的**只有可选项**：`R2`~`R4`（"故意撞 CMake 报错"的复习路径）已被 `C1`~`C4` 的实战取代，想弄懂"配置期 vs 链接期报错时机"随时回头看。
+> `ms-clang-debug` / `ms-asan` 两个预设当时没实测过 —— **2026-09-29 收口**：
+> `ms-clang-debug` 已删除（决定只用 MSVC），`ms-asan` 改成 MSVC 版并补了缺失的链接选项。
+> 详见 `doc/TECH_DEBT.md` A4 / A5。
 
 ---
 
@@ -63,7 +66,7 @@ ctest --test-dir build -C Debug --output-on-failure
 
 - ❌ FrameBuffer / Console / Input。注意 `doc/MiniEngine_PLAN.md` 的 C.2 那份 `engine/CMakeLists.txt` 草案列了 `FrameBuffer.cpp`、`ConsoleWindows.cpp`，**那是阶段 1 结束时的样子，不是 S0**
 - ❌ `game/` 目录（S5 才建，理由见坑 #4）
-- ❌ Sanitizer 预设（跟 S4 的 clang 预设一起做）
+- ❌ Sanitizer 预设（当时打算跟 S4 的 clang 预设一起做；**2026-09-29 起 `ms-asan` 已改成 MSVC 版**，与 clang 无关了）
 - ❌ Logger、Config、任何引擎功能
 
 **时间盒**：首次做完约 30~40 分钟（不含复习阅读）。分成 R1~R8 后，每步 5~20 分钟。

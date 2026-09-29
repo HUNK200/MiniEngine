@@ -393,7 +393,7 @@ while (!input->QuitRequested()):
 | --- | --- | --- | --- |
 | 1 | **平台层用抽象基类 + 工厂** | `class Console` / `class Input` 是抽象基类；Windows 实现全藏在 `.cpp` 里；`MakeConsole()` / `MakeInput()` 创建 | 多一层虚调用 + 一组文件。换来"公共头零 Windows 痕迹"，符合 A.3 硬规矩。**PLAN S2 正文的 `IConsole` 措辞作废**（差异 #1） |
 | 2 | **按键四态 `Up/Pressed/Held/Released`** | 见 6.3。`Up` = 一直没按，`Released` = 本帧刚抬起 | "松开仅一帧"这条验收得以保留。**PLAN C.3 与 S2 正文的"三态"措辞作废**（差异 #2、#3） |
-| 3 | **窗口尺寸事件只消费不处理** | `Poll()` 里 `case WINDOW_BUFFER_SIZE_EVENT:` **直接丢**，旁边留一行注释指向 S3 | 不存 `m_pendingResize`（死代码；且 Clang 的 `-Wall` 含 `-Wunused-private-field`，两个 `ms-clang` 预设以后会报）。S3 建议**每帧比较自己的 FrameBuffer 尺寸与 `Console::Size()`**，压根不需要这个事件（差异 #6 顺便改 PLAN 的 E-12） |
+| 3 | **窗口尺寸事件只消费不处理** | `Poll()` 里 `case WINDOW_BUFFER_SIZE_EVENT:` **直接丢**，旁边留一行注释指向 S3 | 不存 `m_pendingResize`（死代码）。S3 建议**每帧比较自己的 FrameBuffer 尺寸与 `Console::Size()`**，压根不需要这个事件（差异 #6 顺便改 PLAN 的 E-12）。<br>⚠️ **2026-09-29 修正**：原文给的理由是"Clang 的 `-Wall` 含 `-Wunused-private-field`，两个 `ms-clang` 预设以后会报"—— **clang 已弃用，这条理由失效**。但**决策本身不变**，而且理由变更强了：**MSVC 没有等价警告**，所以"写了没人读的成员"以后**没有任何编译器会帮你抓** —— 只能自己不留（见坑 #15） |
 | 4 | **`QuitRequested()` 不含 ESC**（本人定，非上述三问） | 只反映 Ctrl+C / `CTRL_CLOSE_EVENT` / 关窗口 | ESC 从 S10 起要用来关菜单，引擎硬编码它退出到时必然要拆。**PLAN C.3 原句"Ctrl+C / ESC / 窗口关闭"要改**（差异 #4） |
 | 5 | 输入模式由 **Console** 设，Input 只读事件 | `ConsoleWindows` 构造里存/改 in+out 两套模式，析构里恢复 | 边界清楚：**Console = 终端模式，Input = 事件→状态**。避免两个类各自保存一份模式、重复恢复 |
 | 6 | S2 的 `main` 仍用固定 80×25 | `Console::Size()` 接口先落地（供 S3 用），但 S2 不用它建 FrameBuffer | S2 的焦点是输入通路，不顺手改渲染。S1 的演示行为保持不变 |
@@ -432,7 +432,7 @@ while (!input->QuitRequested()):
 | 12 | CMake 配置挂了 | 新增 `.cpp` 必须**手写**进 `engine/CMakeLists.txt`（禁用 `file(GLOB)`，S0 坑 #8）。`InputState.h` 是 header-only，测试侧不需要新库 |
 | 13 | 链接期报 `TerminalPresenter.obj` 找不到 | 删了 `render/TerminalPresenter.cpp` 但忘了改 `engine/CMakeLists.txt` 的源文件列表 |
 | 14 | `Key::Count` 当数组下标 | `KeyIndex()` 对 `Unknown` 和 `Count` 都返回 `Count` 哨兵，`OnKeyDown` 里 `if (idx >= kKeyCount) return;` |
-| 15 | clang-cl 预设报 `-Wunused-private-field` | 决策 3 的直接原因：不要留"写了没人读"的成员。`m_pendingResize` 这种一律不留 |
+| 15 | 留了"写了没人读"的成员 | 决策 3 的直接原因（`m_pendingResize` 这种一律不留）。<br>⚠️ **2026-09-29 修正**：原文说这条靠"clang-cl 的 `-Wunused-private-field`"来兜 —— **clang 已弃用，这道网没了**。MSVC `/W4` **不报未使用的私有成员**，所以现在**只能靠自觉 + 提交前 grep 一次**（和 `TECH_DEBT.md` B2 的做法一样） |
 | 16 | `NOMINMAX` 缺了导致 `std::max` 编译失败 | S0 已进 `mini_options`（`CMakeLists.txt:31`），**不要**再在每个 `.cpp` 里重复 `#define` |
 
 ### 8.4 驱动不了的那部分（写代码时实测）
@@ -615,4 +615,6 @@ ctest --test-dir build -C Debug --output-on-failure                  # 期望 1/
 - [x] `mini_tests.exe Nope` 仍然报错 + 退出码非 0
       （实测输出 `no case in suite 'Nope' (16 case(s) registered)`，`$LASTEXITCODE` = 1，S0 的门闩没被 S2 破坏）
 - [x] 两个 `ms-clang-debug` / `ms-asan` 预设**仍标"未实测"**——计划与 S4 的 Math 测试一起验，没在 S2 顺手改状态
+      → **2026-09-29 收口**：`ms-clang-debug` 已删除（决定只用 MSVC），`ms-asan` 改成 MSVC 版。
+      这条自检项至此关闭，链接指向 `doc/TECH_DEBT.md` A4 / A5
 

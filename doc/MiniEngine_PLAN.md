@@ -20,9 +20,9 @@
 | --- | --- | --- | --- |
 | CMake | **4.4.3** @ `C:\Program Files\CMake\bin`（当天用 `winget install Kitware.CMake` 补装，**装之前家机完全没有 CMake**） | **4.2.1** @ `C:\Program Files\CMake\bin` | **CMake 4.x 已移除 `cmake_minimum_required(VERSION < 3.5)` 的兼容**，最低写 `3.20` |
 | MSVC | VS 2022 Community @ **`E:\Program Files\VisualStudio`**（**不在** C 盘）；装了 14.38.33130 / 14.44.35207 两套 toolset；CMake 生成器实测选中 **19.38.33145.0** | VS 2022 Community，cl 14.44 (19.44) | 主力编译器，默认生成器 `Visual Studio 17 2022`；生成器选哪套 toolset 由 VS 自己定，别在文档里硬编码 |
-| clang | **19.1.5** @ `…\VisualStudio\VC\Tools\Llvm\bin`（**不在** `C:\Program Files\LLVM`） | 17.0.6（原记录，**未复测**，路径以家机规律推断需再确认） | 第二编译器，走 VS 生成器 `-T ClangCL`，不用单独装 Ninja |
+| clang | **19.1.5** @ `…\VisualStudio\VC\Tools\Llvm\bin`（**不在** `C:\Program Files\LLVM`） | 17.0.6（原记录，**未复测**） | ⛔ **不使用**（2026-09-29 决定）：不做 clang 交叉验证，构建脚本里也不留 ClangCL 分支。**它装着，但本项目不碰** |
 | Windows SDK | 10.0.22621.0 | **10.0.26100.0**（配置期自动选中，目标 10.0.26200） | — |
-| g++ / gcc | **未安装** | **未安装** | **只做 Windows**（已确认）：不写也不跑 Linux / macOS 分支，只走 MSVC + ClangCL |
+| g++ / gcc | **未安装** | **未安装** | **只做 Windows**（已确认）：不写也不跑 Linux / macOS 分支。编译器**只有 MSVC 一条路** |
 | ninja / make | **未安装**（不阻塞，VS 生成器可用） | **未安装** | 多配置（VS）生成器，所以**必须带 `--config`／`-C`** |
 | Git | 2.52.0；仓库 local 身份 `HUNK <wuunj@126.com>` | 2.52.0；**仓库级身份未设**，当前只吃全局 `Wuyangzhi <wu.yangzh@aerok.com.cn>`（补设见 A.2） | **身份按机器各用各的**（见 A.2），不要求两机一致 |
 | Shell / 终端 | Git Bash，`TERM=xterm-256color`，代码页 **936 (GBK)** | **PowerShell（主力）**，Git Bash 也能用；VS Code 内置终端是 UTF-8，传统控制台代码页 **936 (GBK)** | **给用户的命令一律按 PowerShell 写**：退出码用 `$LASTEXITCODE`（不是 `echo $?`）、路径用反斜杠；终端输出必须切 UTF-8，否则 `┌─┐@#*` 全乱码 |
@@ -45,7 +45,11 @@ ctest --test-dir build -C Debug --output-on-failure
 .\build\bin\Debug\mini_tests.exe RowDiff   # 只跑某个 suite（S3 起有 suite 过滤）
 ```
 
-可选：`cmake -S . -B build-clang -G "Visual Studio 17 2022" -T ClangCL` 得到 clang 构建，用来交叉验证 MSVC 没抓到的警告。
+可选（**ASan**）：`cmake --preset ms-asan` → `cmake --build build-asan --config Debug` → 用来查内存错误。
+MSVC 原生支持 `/fsanitize=address`，**不需要 clang**（2026-09-29 之前预设写成继承 ClangCL，已改正）。
+
+> ⛔ **不做 clang 交叉验证**（2026-09-29 决定）：原先这里给过一条 `-T ClangCL` 的命令。
+> 现在编译器只有 MSVC 一条路 —— 放弃的是"clang 与 MSVC 告警不一致"那层网，**这是已知且接受的风险**。
 
 > 想让构建快一点再装 Ninja（`winget install Ninja-build.Ninja`），届时 `-G Ninja -DCMAKE_BUILD_TYPE=Debug`，命令回到单配置风格。**这是可选优化，不是前置依赖。**
 
@@ -111,7 +115,7 @@ ctest --test-dir build -C Debug --output-on-failure
 c++_simple_engine/
 ├── AGENTS.md                   # 项目约定（必须留根目录：会话级自动加载）
 ├── CMakeLists.txt              # 顶层：标准/选项/子目录
-├── CMakePresets.json           # 预设 ms-msvc / ms-clang，避免手敲参数
+├── CMakePresets.json           # 预设：ms-msvc-debug（默认）/ ms-asan；生成/构建/测试三组都有
 ├── .gitattributes              # 行尾统一 LF（两机同步用）
 ├── .gitignore
 ├── main.cpp                    # 唯一入口。S3 起含临时 DemoGame（IGame 实现），
@@ -255,7 +259,10 @@ S0 骨架 ──► S1 FrameBuffer 出画面 ──► S2 输入 ──► S3 Ga
 | 测试框架 | 接口按 `doc/MINITEST_SPEC.md` 落地：`MINI_TEST(suite, name)` + `MINI_CHECK` / `MINI_CHECK_EQ` / `MINI_CHECK_NEAR` / `MINI_FAIL`；注册表与 runner 在 `tests/test_main.cpp`，用例在 `tests/test_smoke.cpp` |
 | 验收记录 | 配置通过、构建 **0 warning**、`ctest` 1/1、exe 打印 `MiniEngine 0.1.0-dev`；反向验证（断言故意失败、0 用例）都实跑过 |
 
-> 未做/未验：`ms-clang-debug` 与 `ms-asan` 两个预设尚未实测（计划与 S4 的 Math 测试一起验）。
+> **2026-09-29 收口**：原先这里记着"`ms-clang-debug` 与 `ms-asan` 两个预设尚未实测"。
+> 现在 —— `ms-clang-debug` 已**删除**（决定不用 clang）；`ms-asan` 已改成**继承 MSVC 预设**，
+> 并把 `MINI_SANITIZE` 那条路收成 MSVC 一路（补了缺失的链接选项与 `/RTC-`）。
+> 详见 `doc/TECH_DEBT.md` A4 / A5。
 
 ### S1 FrameBuffer —— 屏幕上出现 `@`
 
@@ -555,7 +562,7 @@ AI 不会自己跑构建或 exe。一个步骤的 commit 由本人在验证通�
 | 项 | 内容 |
 | --- | --- |
 | 目标 | 颜色/光照、简单粒子、A* 寻路（可选）、README、CI、打 tag |
-| 实现 | 256 色渐变做距离雾；命中小方块粒子；A* 让 S8 的"卡墙"问题真正有解；GitHub Actions 矩阵 MSVC+clang |
+| 实现 | 256 色渐变做距离雾；命中小方块粒子；A* 让 S8 的"卡墙"问题真正有解；GitHub Actions（**只跑 MSVC** —— clang 已于 2026-09-29 弃用） |
 | 规模 | 弹性，随时停 |
 | 可运行效果 | 录制一个 GIF 放 README —— 这是这个项目唯一需要"对外"的东西 |
 | 验收 | `git tag v1.0`；在另一台机器上克隆后三条命令能跑起来 |
@@ -584,7 +591,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 option(MINI_BUILD_TESTS "Build unit tests" ON)
-option(MINI_SANITIZE    "Enable ASan/UBSan (clang/gcc)" OFF)
+option(MINI_SANITIZE    "Enable MSVC AddressSanitizer (/fsanitize=address)" OFF)
 
 # 编译选项做成 INTERFACE 库，避免到处复制粘贴
 add_library(mini_options INTERFACE)
@@ -1048,7 +1055,7 @@ while (!shouldQuit) {
 | **v0.3 "玩得起来"** | ① 敌人会追会打<br>② 能射击、能击杀<br>③ HP/Ammo/Kills/Wave + 死亡重开 | S8~S10 | **一个外人可以上手玩 5 分钟的完整游戏**（这是全项目最重要的一次验收） |
 | **v0.4 "看得清"** | ① F1~F4 Debug Overlay<br>② `PROFILE_SCOPE` 各子系统耗时表<br>③ 单元测试覆盖 math/collision/gamestate | S4,S11 | 能说出"渲染占了多少 ms"；`ctest` 全绿 |
 | **v0.5 "像 3D"** | ① DDA 射线投射的走廊画面<br>② 无鱼眼扭曲<br>③ `F5` 在 2D/3D 视角间切换 | S12 | 同一个世界两种视角自由切换，走位在两个视角下一致 |
-| **v1.0 "收得起来"** | ① 精灵 + z-buffer 遮挡正确<br>② README + GIF + CI（MSVC & clang）<br>③ 干净克隆后三条命令能跑 | S13,S14 | 别人按 README 能复现；`git tag v1.0` |
+| **v1.0 "收得起来"** | ① 精灵 + z-buffer 遮挡正确<br>② README + GIF + CI（**只跑 MSVC**）<br>③ 干净克隆后三条命令能跑 | S13,S14 | 别人按 README 能复现；`git tag v1.0` |
 | **v1.x+（不收口，纯玩）** | 颜色/雾、粒子、A*、行为树、Braille 渲染、关卡编辑器、Chrome Trace 导出…… | 弹性 | 想玩就开分支，不做完也不算失败 |
 
 ### 最后一句
@@ -1186,13 +1193,14 @@ ctest --test-dir build -C Debug --output-on-failure
 # ---- Release ----
 cmake --build build --config Release
 .\build\bin\Release\MiniEngine.exe
+ctest --test-dir build -C Release --output-on-failure      # 别忘了 -C
 
-# ---- clang 交叉验证（不需要装 Ninja）----
-cmake -S . -B build-clang -G "Visual Studio 17 2022" -T ClangCL
-cmake --build build-clang --config Debug
+# ---- AddressSanitizer（MSVC 原生，不需要 clang）----
+cmake --preset ms-asan
+cmake --build --preset asan
+ctest --preset asan
 
-# ---- Sanitizer（clang）----
-cmake -S . -B build-asan -DMINI_SANITIZE=ON
+# ⛔ 不再有 clang 交叉验证（2026-09-29 决定：编译器只有 MSVC 一条路）
 ```
 
 ### 附录 A.1 首次推送到 GitHub（私有仓库）
@@ -1252,29 +1260,34 @@ git pull --rebase
 >
 > 关于作者邮箱：**2026-09-23 起按机器各用各的**（家机个人邮箱、公司机公司邮箱）。历史里那 2 个 commit 仍保留公司身份，**不打算重写** —— 重写历史会让两机 rebase 变麻烦，而作者名不同不影响任何功能。
 
-## 附录 B：CMakePresets.json（草案）
+## 附录 B：CMakePresets.json（**2026-09-29 已按实际落地更新**）
 
 ```json
 {
   "version": 6,
   "configurePresets": [
-    { "name": "ms-msvc-debug",   "generator": "Visual Studio 17 2022",
-      "binaryDir": "${sourceDir}/build",       "cacheVariables": { "CMAKE_CONFIGURATION_TYPES": "Debug;Release" } },
-    { "name": "ms-clang-debug",  "generator": "Visual Studio 17 2022", "toolset": "ClangCL",
-      "binaryDir": "${sourceDir}/build-clang", "cacheVariables": { "CMAKE_CONFIGURATION_TYPES": "Debug" } },
-    { "name": "ms-asan",         "inherits": "ms-clang-debug",
-      "binaryDir": "${sourceDir}/build-asan",  "cacheVariables": { "MINI_SANITIZE": "ON" } }
+    { "name": "ms-msvc-debug", "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build",      "cacheVariables": { "CMAKE_CONFIGURATION_TYPES": "Debug;Release" } },
+    { "name": "ms-asan",       "inherits": "ms-msvc-debug",
+      "binaryDir": "${sourceDir}/build-asan", "cacheVariables": { "MINI_SANITIZE": "ON" } }
   ],
   "buildPresets": [
-    { "name": "debug",       "configurePreset": "ms-msvc-debug",  "configuration": "Debug" },
-    { "name": "release",     "configurePreset": "ms-msvc-debug",  "configuration": "Release" },
-    { "name": "clang-debug", "configurePreset": "ms-clang-debug", "configuration": "Debug" }
+    { "name": "debug",   "configurePreset": "ms-msvc-debug", "configuration": "Debug" },
+    { "name": "release", "configurePreset": "ms-msvc-debug", "configuration": "Release" },
+    { "name": "asan",    "configurePreset": "ms-asan",       "configuration": "Debug" }
   ],
   "testPresets": [
-    { "name": "debug", "configurePreset": "ms-msvc-debug", "configuration": "Debug", "output": { "outputOnFailure": true } }
+    { "name": "debug",   "configurePreset": "ms-msvc-debug", "configuration": "Debug",   "output": { "outputOnFailure": true } },
+    { "name": "release", "configurePreset": "ms-msvc-debug", "configuration": "Release", "output": { "outputOnFailure": true } },
+    { "name": "asan",    "configurePreset": "ms-asan",       "configuration": "Debug",   "output": { "outputOnFailure": true } }
   ]
 }
 ```
+
+> 与原草案的差异：**删掉了 `ms-clang-debug`**（`toolset: ClangCL`）与它的 buildPreset；
+> `ms-asan` 改为继承 MSVC 预设（ASan 用 MSVC 原生的 `/fsanitize=address`，不需要 clang）；
+> 补上了 `release` / `asan` 两组 build/testPreset（原草案只有一个 `debug` testPreset，
+> 导致 `ctest --preset` 在 clang/asan 下没法用）。
 
 ## 附录 C：.gitignore
 

@@ -28,22 +28,22 @@
 
 ## 1. 总表
 
-> 状态图例：✅ 已关闭 · 📝 代码/文档已写待验 · ⏳ 待做 · 🔵 有意推迟（C 组） · ➖ 不做
+> 状态图例：✅ 已关闭 · 📝 代码/文档已写待验 · ⏳ 待做 · 🔵 有意推迟（C 组） · ➖ 不做（本人决定）
 
 | # | 事项 | 组 | 成本 | 价值 | 状态 |
 | --- | --- | --- | --- | --- | --- |
 | **B1** | `Time::LimitFPS` 没有自动化守卫（60fps 只被人眼看过） | B | ~15 行 + 1 个用例 | ⭐⭐⭐ 把"看起来稳"变成机器查 | ✅ |
 | **B4** | 文档里"float 累加会漂成 59.94"**没有依据**，反向验证 1 的预期结果也随之写错 | B | 改 4 处文字 | ⭐⭐⭐ 错的知识比没有知识更坏 | ✅ |
-| **A3** | **Release 构建从未做过** | A | 3 分钟 | ⭐⭐⭐ 可能挖出 `/O2` 下的新警告 | ⏳ |
-| **A4b** | `CMakeLists` 的 `-Wall -Wextra -Wshadow` 分支**本机不可达**（ClangCL 走 MSVC 分支 + 没有 ninja） | A/B | 装 ninja 0.5h | ⭐⭐⭐ 那 4 个开关从没生效过 | ⏳ |
+| **A3** | **Release 构建从未做过** | A | 3 分钟 | ⭐⭐⭐ 可能挖出 `/O2` 下的新警告 | ✅ |
+| **A4b** | `CMakeLists` 的 `-Wall -Wextra -Wshadow` 分支**本机不可达** | A/B | 删 5 行 | ⭐⭐⭐ 那 4 个开关不会生效 | ✅ **死分支已删** |
 | **B2** | 两个接口 **0 调用者**：`Time::FrameCount()`、`RowDiff::Resize()` | B | 删 ~15 行 | ⭐⭐ 少一个会误导人的接口 | ✅ |
-| **A4** | `ms-clang-debug` 预设从未实测（clang 17 在机） | A | 5 分钟 | ⭐⭐ 交叉验证 MSVC 漏掉的警告 | ⏳ |
-| **A5** | `ms-asan` 预设从未实测；且**可能链接失败**（缺 `target_link_options`），UBSan 其实没开 | A | 5 分钟 | ⭐⭐ S3 新增了不少下标/缓冲区逻辑 | ⏳ |
+| **A4** | `ms-clang-debug` 预设从未实测 | A | 删 14 行 | ⭐⭐ 交叉验证警告 | ➖ **不做**：本人决定只用 MSVC（预设已删） |
+| **A5** | `ms-asan` 预设从未实测 —— **原继承 clang 预设，MSVC-only 下用不了** | A | 改 3 处配置 | ⭐⭐ S3 新增了不少下标逻辑 | ✅ **已改成 MSVC 版并实测通过** |
 | **B3** | `MaxFrameMs` 等 4 个 API 只有测试调用；且我收口时**静默删掉**了一条引用它的验收项 | B | 1~20 行 | ⭐⭐ 接口与验收要对得上 | ⏳ |
 | **A1** | `mini_tests.exe Nope` 门闩未复验 | A | 10 秒 | ⭐ | ✅ |
 | **A2** | 顶栏量化数据没留记录（FPS 波动范围、典型 `Rows`） | A | 3 分钟 | ⭐ 以后没法对比 | ⏳ |
 | **B5** | 6 个"只有测试调用"的接口没有注释说明 | B | 6 行注释 | ⭐ 防止后人误删 | ⏳ |
-| **A6** | 反向验证 2/4（挪 `BeginFrame`、放大 clamp） | A（可选） | 需改代码 | ⭐ 证明设计必要性 | ➖ 你已说跳过 |
+| **A6** | 反向验证 2/4（挪 `BeginFrame`、放大 clamp）+ 1（破坏方式已改，要重跑） | A（可选） | 需改代码 | ⭐ 证明设计必要性 | ➖ 你已说跳过 |
 | **C1** | `main.cpp` 359 行（PLAN 说 <20 行） | C | → S5 | — | 🔵 |
 | **C2** | `game/` 静态库未建 | C | → S5 | — | 🔵 |
 | **C3** | `Version` 还是 `0.1.0-dev` | C | → S7 后 | — | 🔵 |
@@ -52,8 +52,18 @@
 | **C6** | `ctest` 没有 `LABELS` / `TIMEOUT` | C | 需要时 | — | 🔵 |
 | **C7** | `ConsoleWindows` / `Application` 无法离线单测 | C | 不做 | — | 🔵 |
 
-**进度：4 / 13 条已关**（第 1 轮：B1 + A1；第 2 轮：B4 + B2 —— 2026-09-28/29）。
-用例数 34 → **35**。第 2 轮**没动逻辑**，所以用例数不变。
+**进度（2026-09-29）**：A/B 组共 **12 条** → 已关 **7**（B1 B2 B4 A1 A3 A4b A5）·
+不做 **2**（A4 A6）· 待做 **3**（B3 A2 B5）。C 组 7 条有意推迟。
+7 + 2 + 3 = 12 ✅。用例数 34 → **35**。
+
+> **⛔ 2026-09-29 大决定：clang 全线移除。** 本人决定"默认只用 MSVC"，
+> 于是 `ms-clang-debug` 预设、`clang-debug` buildPreset、`CMakeLists.txt` 里那条
+> 给非 MSVC 编译器的 `else()` 分支**全部删除**；`ms-asan` 改成继承 MSVC 预设。
+> 依据 `AGENTS.md` 第 4 节。**放弃的是 clang 那道告警网 —— 已知且接受的风险**，
+> 而且它让 S2 里两条"靠 clang 兜底"的说法失效（已在那两份清单里改正）。
+
+> ⚠️ **更正**：本节此前写的是"1 / 13""4 / 13"，**分母算错了** —— 总表是 19 行
+> （A/B 组 12 + C 组 7）。已按"只统计现在可动的 A/B 组"重写。
 
 ---
 
@@ -116,8 +126,14 @@
 - **期望**：0 warning / 0 error；`ctest` 1/1；34 passed；exe 画面与 Debug 一致。
   ⚠️ 警告数量与 Debug 不一致时**先别改代码**，把输出贴回来。
 - **注意**：`ctest` 必须带 `-C Release`（多配置生成器，漏了会找不到配置）。
+- **状态（2026-09-29）：✅ 已关闭** —— 本人回报"**A3 没问题**"。
+  （构建 0 warning、`ctest` 1/1、35 passed —— 与 Debug 一致；
+  具体告警输出没有留档，但既然"没问题"就意味着 `/O2` 下没有新增告警。）
+- **本条最有价值的地方**：它证明了之前**不敢断言的事其实一直没验**。
+  从 S0 到 S3 有 33 个 commit，`Release` 这个配置类型一直写着、一次没跑过。
+  **这类债不报错、不告警，只是"某天需要出 Release 版时才发现它能不能跑是个未知数"。**
 
-### A4 `ms-clang-debug` 预设实测
+### A4 `ms-clang-debug` 预设实测 —— ➖ **不做（2026-09-29 本人决定）**
 
 - **现状**：`CMakePresets.json` 里已定义（`binaryDir = build-clang`，`toolset = ClangCL`），
   从未配置过。本机有 LLVM clang 17。
@@ -125,60 +141,91 @@
   S3 新写的代码里有几处值得交叉验：聚合体的引用成员（`FrameContext`）、
   成员初始化列表顺序（`Application` 的 `m_size` → `m_frameBuffer`）、
   `[[nodiscard]]` 的忽略点。
-- **步骤**：
+- **步骤**（保留备查，不再执行）：
   ```powershell
   cmake --preset ms-clang-debug
   cmake --build --preset clang-debug
   ctest --test-dir build-clang -C Debug --output-on-failure
   ```
   ⚠️ **没有 clang 的 testPreset**（`testPresets` 里只有 `debug`），
-  所以 `ctest` 必须像上面那样手写 `--test-dir` + `-C`。
-- **期望**：0 warning / 0 error；`ctest` 1/1；34 passed。
+  所以 `ctest` 必须手写 `--test-dir` + `-C`。
+- **本人决定（2026-09-29）**：**默认只用 MSVC，不做 clang 交叉验证。**
+  这条把 `AGENTS.md` 第 4 节从"MSVC 为主、clang 为辅"收紧成"**只用 MSVC**"（那条已同步更新）。
+- **这个决定放弃了什么**（记清楚，别以后又当成"验过了"）：
+  | 放弃了 | 影响 |
+  | --- | --- |
+  | clang 与 MSVC 报的告警不完全一致 | 只剩 MSVC `/W4` 这一道网。**这是已知的、接受了的风险**，不是疏漏 |
+  | **`-Wunused-private-field` 这道网** | MSVC **没有等价警告**。所以"写了没人读的成员"以后没有编译器帮抓 —— 它让 `S2_CHECKLIST` 里两条"靠 clang 兜底"的说法失效了（已在那份清单里改正） |
+  | **UBSan（`-fsanitize=undefined`）** | **MSVC 根本不支持 UBSan**（只有 `/fsanitize=address`）。原来那条 `else()` 分支里的 `-fsanitize=address,undefined` 是唯一的 UBSan 入口 —— 删掉之后，**有符号整数溢出、非法移位、空指针解引用这类 UB 没有工具能查了**。这是这一轮里**最实质的一处能力损失**，记在这里 |
+- **处置（已执行）**：`CMakePresets.json` 里 `ms-clang-debug` 预设与 `clang-debug` buildPreset
+  **已删除**；`ms-asan` 改为继承 MSVC 预设（见 A5）。
+  **依据是 B2 同一条纪律：「没人用就删」** —— 留着一个永远不会被跑的预设，
+  就是留一条"看起来配好了"的假信息（正是本次盘点发现它们时的情形）。
 
-### A4b ⚠️ **`-Wall -Wextra -Wshadow` 那一支在本机根本不可达**（本次盘点新发现）
+### A4b ➖ **前提已消失，但暴露出一个真问题（2026-09-29 更新）**
 
-- **现状**：`CMakeLists.txt:37-39` 有个 `else()` 分支给非 MSVC 编译器加
-  `-Wall -Wextra -Wpedantic -Wshadow`。但是：
-  1. **ClangCL 会让 CMake 把 `MSVC` 判为真** → A4 走的是 `/W4 /permissive-` 那一支，
-     **不会**应用到 `-Wextra -Wshadow`；
-  2. 想真正走 `else()` 需要 `-G Ninja -DCMAKE_CXX_COMPILER=clang++`，
-     而**本机没有 ninja / make**（`AGENTS.md` 第 4 节）。
-- **结论**：那 4 个更严格的警告开关**从建立以来一次都没生效过**。
-  典型的"写了但从没跑过"的配置 —— 和 B1 那条是同一种病。
-- **选项**：
+- **原状**：`CMakeLists.txt:37-39` 有个 `else()` 分支给非 MSVC 编译器加
+  `-Wall -Wextra -Wpedantic -Wshadow`，但它**在本机永远走不到**：
+  1. **ClangCL 会让 CMake 把 `MSVC` 判为真** → 走 `/W4 /permissive-` 那一支；
+  2. 想走 `else()` 需要 `-G Ninja -DCMAKE_CXX_COMPILER=clang++`，本机没有 ninja / make。
+- **2026-09-29 更新**：既然 A4 都不做了（默认只用 MSVC），**那个 `else()` 分支
+  在本机就是一条永远不执行的死配置** —— 和 B2 删掉的那两个零调用接口是同一类东西。
+- **处置（已执行）：删掉。** 我原先倾向"保留 + 加注释"，但既然 clang 是**全线移除**
+  （不只是"暂不验"），那就没有"将来可能用上"的前提了 —— 留一个走不到的分支等于留一句谎。
+  **`CMakeLists.txt` 里那 4 行已删除**，换成一段说明为什么只做 MSVC。
+  | | |
+  | --- | --- |
+  | 删了 | `if(MSVC) ... else() target_compile_options(... -Wall -Wextra -Wpedantic -Wshadow) endif()` 这段结构 → 只留 MSVC 那行 |
+  | 代价 | 那 4 个警告开关的名字不再出现在构建脚本里。真要回到"用 clang++ 跑一次"时，得重新查一遍该开哪些 —— 但那是**一个还没决定会不会做的动作**，不该为它留结构 |
+- **不再需要装 ninja**（那是"走 `else()` 分支"的前提，现在不做了）。
+  但 PLAN H.5 里"装 Ninja 提速构建"**依然是独立的可选优化** —— 它和 clang 无关，`-G Ninja` 配 MSVC 也能提速。
 
-  | 选项 | 做法 | 代价 / 收益 |
-  | --- | --- | --- |
-  | **① 装 ninja**（推荐） | `winget install Ninja-build.Ninja`，然后<br>`cmake -S . -B build-clang-ninja -G Ninja -DCMAKE_CXX_COMPILER=clang++`<br>`cmake --build build-clang-ninja` | 0.5h（含下载）。**一次装好两个收益**：① 真跑一次 `-Wextra -Wshadow`；② 构建提速（PLAN H.5 扩展池的第一条就是这个） |
-  | ② 暂时接受 | 在 `CMakeLists.txt` 那几行加注释说明"本机不可达，等装了 ninja 再验" | 0 成本，但那 4 个开关继续是摆设 |
+### A5 `ms-asan` 预设实测（MSVC 版）—— 📝 **配置已改好，待构建验证（2026-09-29）**
 
-- **推荐 ①**。装上之后 `-Wextra` 很可能**立刻**报出几条现在没人知道的问题
-  （`-Wshadow` 对 `DrawHudRow` 那种短局部名尤其敏感）。
-
-### A5 `ms-asan` 预设实测
-
-- **现状**：`binaryDir = build-asan`，`inherits = ms-clang-debug`，
+- **原状**：`binaryDir = build-asan`，**`inherits = ms-clang-debug`**（toolset = ClangCL），
   `cacheVariables = { MINI_SANITIZE ON }`。`MINI_SANITIZE` 在
-  `CMakeLists.txt:40-47` **确实被消费了**（不是空设变量）。
-- **为什么算债**：S3 新增的代码里有大量**手写下标**：
+  `CMakeLists.txt` **确实被消费了**（不是空设变量）。
+- **⚠️ 2026-09-29 的关键变化**：既然"默认只用 MSVC"，**这个预设直接作废了** ——
+  它继承 clang 预设，跑它就要 clang-cl。
+- **好消息：ASan 不需要 clang**。MSVC 从 VS2019 16.9 起原生支持 `/fsanitize=address`。
+  **改造已执行（2026-09-29）**，三处都做了：
+
+  | 要做的事 | 实际改成 |
+  | --- | --- |
+  | ① 预设改成继承 MSVC | `ms-asan` 的 `inherits`：`ms-clang-debug` → **`ms-msvc-debug`**；`displayName` 改成 "MSVC + AddressSanitizer" |
+  | ② 补链接选项 | 加了 `target_link_options(mini_options INTERFACE /fsanitize=address)` —— 原先只有编译选项，MSVC 要求两者都带 |
+  | ③ 顺手修 | 加了 `/RTC-`（见下面坑 1）；`CMakeLists.txt` 里 `MINI_SANITIZE` 的存在从"clang/gcc 两路"收成 MSVC 一路 |
+  | ④ 补 preset | 顺手给 `release` / `asan` 补了 **buildPreset 和 testPreset** —— 原先 `testPresets` 里只有 `debug`，导致 `ctest --preset` 根本用不了 |
+
+- **为什么仍然值得做**：S3 新增的代码里有大量**手写下标**：
   `FrameBuffer::Index()`、`RowDiff::Compose()` 的 `m_prevRows[y]`、
   `AppendRowTo()` 的 `m_cells.data() + y * m_w`、`DrawStatsBar()` 的 `text[x]`。
-  这些在 Debug 下靠"我推过没问题"，ASan 能直接证伪。
-- **步骤**（**没有 `asan` 这个 buildPreset**，只有 `debug` / `release` / `clang-debug`）：
+  这些在 Debug 下全靠"我推过没问题"，ASan 能直接证伪。**它是这份清单里唯一能主动
+  撞出内存错误的工具**，而"只用 MSVC"完全不构成放弃它的理由。
+- **两个预告的坑（MSVC 路线上）**：
+  1. **`/RTC1` 与 ASan 不兼容** —— CMake 的 Debug 配置默认带 `/RTC1`，MSVC 的
+     `/fsanitize=address` 与它互斥。**已按对策加上 `/RTC-`**，所以 `--config Debug` 应该能用
+     （如果 `/RTC-` 不够，退路是改用 `RelWithDebInfo`）。
+  2. **ASan 运行时 DLL 可能加载不到**。`clang_rt.asan_dynamic-x86_64.dll` 在
+     `VC\Tools\MSVC\<ver>\bin\Hostx64\x64` 下，`ctest` 直接跑时找不到 →
+     表现是"启动即失败"。对策：拷到 `build/bin/<Config>/` 旁边，或加进 PATH。
+     **这一条还没验，很可能就是下面跑起来第一个撞到的东西。**
+- **状态（2026-09-29）：✅ 已关闭** —— 本人回报"**顺利通过**"。
   ```powershell
   cmake --preset ms-asan
-  cmake --build build-asan --config Debug
-  ctest --test-dir build-asan -C Debug --output-on-failure
+  cmake --build --preset asan
+  ctest --preset asan
   ```
+  三处改造（`inherits` 改 MSVC、补 `target_link_options`、加 `/RTC-`）**一次就通**，
+  连预告的"ASan DLL 加载不到"都没撞上（MSVC 的 ASan 运行时 DLL 应该是由
+  `/fsanitize=address` 的链接选项自动带上的）。
+- **这条债的意义**：它是整份清单里**唯一能主动撞出内存错误**的工具。
+  跑通之后，"S3 那堆手写下标没有越界"这句话**第一次有了机器背书** ——
+  在此之前它只是"我推过没问题"。
+- **⚠️ 但要记清它背书的范围**：ASan 只检查**被跑到的路径**。
+  `ctest` 那 35 个用例没覆盖到的分支，它一样不会看。所以这是
+  "**已覆盖路径无内存错误**"，不是"整个程序无内存错误"。
 - **期望**：0 error。**期望是干净的** —— 有报告就是真 bug，优先修。
-- **两个提前知道的坑**（跑出来别慌，都在预期内）：
-  1. **可能链接失败**（`__asan_*` 未解析）。原因：`CMakeLists.txt:42` 只写了
-     `target_compile_options(... /fsanitize=address)`，**没有配套的 `target_link_options`**
-     （下面那个 `else()` 分支才是编译/链接两个都写）。真报这个错，
-     就在那一行旁边补一句链接选项 —— **这是 A5 要发现的东西之一，不是意外**。
-  2. **UBSan 其实没开**。预设的 `displayName` 写着 "ClangCL + ASan/UBSan"，
-     但 ClangCL 让 `MSVC` 为真 → 走的是只有 `/fsanitize=address` 那一支。
-     要么把预设名改准，要么补上 `/fsanitize=undefined`。
 
 ### A6（可选）反向验证 2 / 4
 
@@ -403,23 +450,29 @@
 | --- | --- | --- | --- | --- |
 | **第 1 轮** | **B1**（LimitFPS 守卫）+ **A1**（门闩） | AI 写 / 你构建；A1 你自己跑 | 20 分钟 | ✅ **2026-09-28 完成**（含反向验证） |
 | **第 2 轮** | **B4**（修那句错话）+ **B2**（删死接口） | AI 改代码 + 改文档 | 20 分钟 | ✅ **2026-09-29 完成**（纯文字 + 删死代码，不改逻辑） |
-| **第 3 轮** | **A3**（Release）+ **A4**（clang）+ **A5**（asan）+ **A4b**（决定装不装 ninja） | **你跑**（AI 只根据输出改代码） | 15 分钟（A4b 若装 ninja 另加 0.5h） |
-| **第 4 轮** | **B3**（顶栏加 `Max`）+ **A2**（抄量化数据） | AI 改 / 你跑并抄数 | 15 分钟 |
-| **第 5 轮** | **B5**（补注释）+ **A6**（可选反向验证） | AI 改 / 你跑 | 15 分钟 |
+| **第 3 轮** | **A3**（Release）+ **A4**（clang）+ **A5**（asan）+ **A4b**（ninja） | **你跑**（AI 只根据输出改代码） | 15 分钟 | ✅ **全部收口（2026-09-29）**：A3 ✅ · A4/A4b **clang 全线移除**（预设与死分支都删了）· **A5 已改成 MSVC 版并跑通** |
+| **第 4 轮** | **B3**（顶栏加 `Max`）+ **A2**（抄量化数据） | AI 改 / 你跑并抄数 | 15 分钟 | |
+| **第 5 轮** | **B5**（补注释）+ **A6**（可选反向验证） | AI 改 / 你跑 | 15 分钟 | |
 
 **关于顺序的三点说明**：
 
-1. **A3/A4/A5 放在第 3 轮**：它们可能挖出真 bug。如果先做 B 组，B 组的新代码
-   又成了没被 asan 查过的新债 —— 先让"查错的工具"跑起来，再往上加东西。
+1. **第 3 轮的意义是"跑起查错的工具"**：它们可能挖出真 bug。如果先做 B 组，
+   B 组的新代码又成了没被 ASan 查过的新债 —— 先让工具跑起来，再往上加东西。
+   **A3 已经完成**，第 3 轮只剩 **A5**（改造成 MSVC 版）。
 2. **B4 排在第 2 轮而不是最后**：修文档不影响任何构建，但它**纠正的是一条假的因果**。
    留着一个"我记得 float 会漂"的错误认知，比少一个用例危险得多。
-3. **A4b 本质上不是"债的清理"，是"把一盏没接电的灯接上"**。
-   如果决定装 ninja，建议放在**这一轮的最前面** —— 装完之后 A4 才有意义
-   （否则 clang 分支跑的还是 `/W4`），而且后续所有构建都变快。
+3. **A4/A4b 因为"默认只用 MSVC"这个决定而自动消失**（前提没了）。
+   但**别把"决定不做"记成"验过了"** —— 放弃的是 clang 那道告警网，这是已知且接受的风险。
 
 **做到哪一轮算够**：第 1~3 轮做完，S3 的债就只剩"有意推迟"的 C 组了。
-第 4~5 轮属于"锦上添花"，什么时候做都行 —— 但**第 3 轮别跳**，
-因为它是唯一能发现"我们还不知道的问题"的一步。
+第 4~5 轮属于"锦上添花"，什么时候做都行 —— 但**第 3 轮的 A5 别跳**，
+因为它是唯一能主动撞出**内存错误**的一步（其余都是"补测试"或"清账"）。
+
+> **第 3 轮的第一个收获（不用改任何东西就拿到了）**：
+> A3 一跑就发现 —— `Release` 配置从 S0 起写了 33 个 commit，**一次都没构建过**。
+> 它没报错、没告警，只是"一直没人验过它能不能跑"。
+> **这类债的共同形态是"配好了所以没人动"**：`ms-asan` 预设、`-Wextra` 分支、`Release` 配置，
+> 三条同源。
 
 > **第 1 轮留下的经验（带到后面几轮）**：
 > **加守卫的活儿，必须连"这条守卫真的会红吗"一起验。**
@@ -454,18 +507,24 @@ B1 之后（35 个用例）：把 `Wait` 换回 `sleep_for`，`LimitFpsAchievesT
 **"全绿"从来不等于"被验证过"**，只等于"被测过的东西都对了"。
 每加一块新逻辑，都要问一句：**它有没有被测到？** 没有的话，是补测试，还是承认它在裸奔。
 
-### 7.3 有两条"从来没跑过"的构建配置（不是缺功能，是缺执行）
+### 7.3 有几条"从来没跑过"的构建配置（不是缺功能，是缺执行）
 
-盘点时翻了 `CMakePresets.json` 与 `CMakeLists.txt` 才发现的，两条同源：
+盘点时翻了 `CMakePresets.json` 与 `CMakeLists.txt` 才发现的，同源：
 
-| 配置 | 写了多久 | 状态 |
-| --- | --- | --- |
-| `Release` 配置类型 | 从 S0 起（`Debug;Release;...`） | **一次没构建过**（`build/bin/` 下只有 `Debug/`） |
-| `-Wall -Wextra -Wpedantic -Wshadow` 的 `else()` 分支 | 从 S0 起 | **一次没生效过**（ClangCL 走 MSVC 分支；没有 ninja 走不到这） |
-| `ms-clang-debug` / `ms-asan` 预设 | 从 S0 起 | **一次没配置过** |
+| 配置 | 写了多久 | 盘点时的状态 | 2026-09-29 |
+| --- | --- | --- | --- |
+| `Release` 配置类型 | 从 S0 起（`Debug;Release;...`） | **一次没构建过**（`build/bin/` 下只有 `Debug/`） | ✅ **已验**（A3） |
+| `ms-clang-debug` 预设 | 从 S0 起 | **一次没配置过** | 🗑 **已删**（A4：clang 全线移除） |
+| `ms-asan` 预设 | 从 S0 起 | **一次没配置过**，且继承 clang 预设 | 📝 **已改成 MSVC 版**，待验（A5） |
+| `-Wall -Wextra -Wpedantic -Wshadow` 的 `else()` 分支 | 从 S0 起 | **一次没生效过** | 🗑 **已删**（A4b） |
 
 **共同点**：它们都"看起来是配好的"，所以没人会去动它。这类债没有报错、没有警告，
 只有"某天发现问题时，才发现那道防线一直是空的"。
+
+**一个反直觉的推论**：**"配了"和"验过"是两件事，而且前者更容易让人以为后者已经发生。**
+`Release` 那个配置在 `CMakePresets.json` 里写得明明白白、`PLAN` 的速查里还给了
+`.\build\bin\Release\MiniEngine.exe` 这条命令 —— 33 个 commit 里没有一个人（包括我）
+去跑过它。**恰恰因为文件里写着，反而没人怀疑。**
 
 **这也是 `doc/TECH_DEBT.md` 这份文件本身存在的理由** —— 一个只存在于"当年想起来写了一下"
 的地方的配置，等于不存在。**能跑一次的配置，才算配置。**
