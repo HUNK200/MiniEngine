@@ -9,16 +9,23 @@
 
 ---
 
-## 当前状态（2026-09-29：**方案已定，未开工**）
+## 当前状态（2026-09-29：**✅ 已完成并验收**）
 
-- **S0 / S1 / S2 / S3 均已完成并验收。** 当前 43 个 commit，用例 **35**，工作区干净。
-- 本阶段的接口决策已拍板（第 8 节共 **4 条**，全部由本人于 2026-09-29 拍定）。
-- **本阶段的特殊之处：S4 是第一个"没有任何画面"的阶段。** 交付物是纯库 + 测试，
+- **S0 / S1 / S2 / S3 / S4 均已完成并验收。** 当前 **51 个 commit**，用例 **35 → 68**，工作区干净。
+- 接口决策拍板：第 8 节 **4 条**（本人 2026-09-29 拍定）+ 实现期追加 **3 条**；另有 **D1~D9 九条落地偏差**
+  （见第 71 行的「落地偏差」表）。⚠️ **那九条里 D4 / D7 / D8 / D9 四条都是"我写的话与事实不符"** ——
+  分别是照抄示例没核对、凭印象编未来调用者、推演错两次、预测的 red-set 太窄。
+- 交付物：`math/` 下 4 个头文件（**517 行**）+ `test_math.cpp`（**663 行**，33 个用例）；
+  `Vec3.h` / `Rect.h` 只留契约、不建文件（差异 2）。
+- **本阶段的特殊之处：S4 是第一个"没有任何画面"的阶段**（决策 3）。交付物是纯库 + 测试，
   所以第 10 节的验收里**没有"跑 exe 看现象"这一项** —— 可观察结果是
-  `mini_tests MathUtils` / `Vec2` / `AABB` / `Ray` **四个 suite 全绿** + 退出码 0。这是决策 3 的直接后果。
+  `mini_tests MathUtils` / `Vec2` / `AABB` / `Ray` **四个 suite 全绿** + 退出码 0，
+  外加**反向验证 3 条实测看到红**（10.3；实测 63 passed / 5 failed）。
 - ⚠️ **没有 `mini_tests Math` 这条命令**：runner 的 suite 过滤是**精确匹配**（`MINITEST_SPEC` 第 3 节），
   而本阶段按"被测单元"分了 4 个 suite。想一次跑完 S4 就**不带参数**（跑全部 68 个用例）。
   见落地偏差 **D4** —— 这条命令是文档先写错、实现时才发现的。
+- ⚠️ **已知未验（不要当成已验证）**：`ctest --preset asan` 与 **Release 构建，本轮没跑**。
+  S3 验过这条通路，S4 的产物又全是 header-only —— 风险低，但没跑就是没跑。
 - **S4 之后**：`math` 会立刻在 S5 的 `World` 里获得真实调用者，那时它才"看得见"。
 
 ### ⚠️ 分工约定（`AGENTS.md` 1.4；本阶段沿用）
@@ -57,15 +64,15 @@
 
 | # | 任务 | 对应 commit | 状态 |
 | --- | --- | --- | --- |
-| **S4-1** | `math/MathUtils.h`：标量工具 + `FloorToInt`/`RoundToInt` | commit 1 | 📝 |
-| **S4-2** | `math/Vec2.h`：值类型 + 运算符 + `Normalized` 保护 | commit 1 | 📝 |
-| **S4-3** | `tests/test_math.cpp`：MathUtils 8 个 + Vec2 9 个用例；`tests/CMakeLists.txt` 加一行 | commit 1 | 📝 |
-| **S4-4** | `math/AABB.h`：含**贴边不算相交**的开区间语义 | commit 2 | 📝 |
-| **S4-5** | `tests/test_math.cpp`：AABB 7 个用例 | commit 2 | 📝 |
-| **S4-6** | `math/Ray.h`：slab 法 + **显式 `d == 0` 分支** | commit 3 | 📝 |
-| **S4-7** | `tests/test_math.cpp`：Ray 9 个用例 | commit 3 | 📝 |
+| **S4-1** | `math/MathUtils.h`：标量工具 + `FloorToInt`/`RoundToInt` | commit 1 | ✅ |
+| **S4-2** | `math/Vec2.h`：值类型 + 运算符 + `Normalized` 保护 | commit 1 | ✅ |
+| **S4-3** | `tests/test_math.cpp`：MathUtils 8 个 + Vec2 9 个用例；`tests/CMakeLists.txt` 加一行 | commit 1 | ✅ |
+| **S4-4** | `math/AABB.h`：含**贴边不算相交**的开区间语义 | commit 2 | ✅ |
+| **S4-5** | `tests/test_math.cpp`：AABB 7 个用例 | commit 2 | ✅ |
+| **S4-6** | `math/Ray.h`：slab 法 + **显式 `d == 0` 分支** | commit 3 | ✅ |
+| **S4-7** | `tests/test_math.cpp`：Ray 9 个用例 | commit 3 | ✅ |
 | **S4-8** | 反向验证 3 条实跑并**还原现场**（见 10.3） | commit 3 | ✅ |
-| **S4-9** | docs 收口：PLAN S4 标 ✅ / A.2 目录树 / 差异表 / 命令速查 | commit 4 | ⬜ |
+| **S4-9** | docs 收口：PLAN S4 标 ✅ / A.2 目录树 / 差异表 / 命令速查 | commit 4 | ✅ |
 
 ### 落地偏差（实现时发现的问题，逐步追加）
 
@@ -665,6 +672,22 @@ ctest --preset asan                                     # 期望同样全绿（A
 cmake --build build --config Release                    # 期望同样 0 warning（S3 已验过这条路）
 ```
 
+**实测结果（2026-09-29，本机本人执行 —— 只记真跑过的）**
+
+| 检查 | 实测 |
+| --- | --- |
+| 构建 warning | ✅ **0** |
+| `mini_tests.exe MathUtils` / `Vec2` / `AABB` / `Ray` | ✅ **8 / 9 / 7 / 9**（合计 33） |
+| `mini_tests.exe`（不带参数 = 全部） | ✅ **68 passed, 0 failed**（S3 时 35） |
+| `ctest --test-dir build -C Debug` | ✅ **1/1** |
+| **反向验证 3 条** | ✅ 都看到红（10.3；实测 63 passed / 5 failed），现场已还原 |
+| `ctest --preset asan` | ⏸️ **本轮未跑** |
+| `cmake --build build --config Release` | ⏸️ **本轮未跑** |
+
+> ⚠️ **最后两行是"未验"，不是"通过"。** S3 验过这两条通路、S4 的产物又全是 header-only
+> （`math/` 下 4 个头文件、**没有新增 .cpp**），所以风险低 ——
+> **但"风险低"和"验过"是两件事**。这个项目在 B1/A1 那两轮已经因为"写了没跑过"吃过教训。
+
 **外加两条"没坏"的确认**：
 
 | 检查 | 期望 |
@@ -723,17 +746,22 @@ cmake --build build --config Release                    # 期望同样 0 warning
       Select-String -Path engine\include\mini\math\*.h -Pattern 'windows\.h|#ifdef'   # 期望无输出
       Select-String -Path engine\include\mini\math\*.h -Pattern 'include <mini/'      # 期望无输出
       ```
-- [ ] 所有公开接口**都有一行注释**回答"为什么存在 / 谁会用它"（决策 6）
-- [ ] 新增接口逐个过一遍：**有生产调用者的**（`AABB` 全部会被 S5 用）/
-      **暂时只有测试调用的**（`FloorToInt` `RoundToInt` `Ray::IntersectsAABB`）——
-      后者必须在注释里写明用途与触发条件（就是 `TECH_DEBT.md` B5 那条纪律）
-- [ ] `static_assert(sizeof(Vec2) == 8)` 在头文件里（坑 #18）
+- [x] 所有公开接口**都有一行注释**回答"为什么存在 / 谁会用它"（决策 6）
+      四个头文件各有一段 `这一层干什么 / 依赖谁 / 被谁用`（已 grep 确认各 1 处）
+- [x] 新增接口逐个过一遍：**有生产调用者的**（`AABB` 全部会被 S5/S7 用）/
+      **暂时只有测试调用的**（`FloorToInt` `RoundToInt` `Ray::IntersectsAABB` 等 11 项）——
+      后者**已在注释里写明用途与触发条件**，并进 `TECH_DEBT.md` B5 的 **D 类**
+- [x] `static_assert(sizeof(Vec2) == 8)` 在头文件里（坑 #18）
+      实测三个都加了：`Vec2` 8、`AABB` 16、`Ray` 16（都是 `static_assert`，编不过就是错）
 - [x] 反向验证 3 条**都跑过且都看到红**，现场已还原
       实测：**63 passed, 5 failed**（68 总数）；破坏 3 分两轮（第一轮**编译期 C2131**，
       第二轮停掉自检后运行时红在 `ZeroDirectionDegeneratesToPointTest`）。详见 10.3 与 D8/D9
-- [ ] `doc/MiniEngine_PLAN.md` 的 S4 小节标 ✅、A.2 目录树改对、差异表写完
-- [ ] `doc/TECH_DEBT.md` 再看一眼有没有新债
-- [ ] `git status` 干净
+- [x] `doc/MiniEngine_PLAN.md` 的 S4 小节标 ✅、A.2 目录树改对、差异表写完
+      （另外在**附录 A 命令速查**里补了"只跑一个 suite"的正确写法 —— D4 的教训直接落在这里）
+- [x] `doc/TECH_DEBT.md` 再看一眼有没有新债 → 新增 **A7**（asan/Release 本轮未跑）与
+      **C8 / C9**（`Vec3`/`Rect` 只有契约、`EQ`/`NEAR` 的包括号限制），并把 S4 那 11 个
+      "只有测试调用"的接口补进 **B5 的 D 类**
+- [x] `git status` 干净
 
 ---
 
@@ -762,7 +790,7 @@ cmake --build build --config Release                    # 期望同样 0 warning
 | 3 | PLAN S4 可运行效果 | "可选 demo 打印'两个盒子相交/不相交'" | **不做 demo**，改为"4 个 suite 全绿、退出码 0" | 决策 3；避免把演示塞进 `main.cpp` 而后在 S5 挪走 |
 | 4 | PLAN S4 C++ 知识 | "`constexpr`、运算符重载……" | 补一句：**"`constexpr` 的边界 —— 哪些标准库函数不是 constexpr（`sqrt`/`floor`/`abs(float)`），以及代价原则"** | 这是本阶段真实学到的东西（第 8 节原则 5） |
 | 5 | PLAN E-8 | "……写一个坐标转换的单元测试"，阶段标 **S4/S6** | S4 那半落地为 `FloorToInt`/`RoundToInt` + 两个用例；world→screen 的全流程仍留 S6 | 决策 4 |
-| 6 | PLAN S4 规模 | "~300 行 + ~200 行测试" | **~280 行 + ~250 行**（33 个用例） | 测试比估计多一点（边界用例列得细） |
+| 6 | PLAN S4 规模 | "~300 行 + ~200 行测试" | **实测：4 个头文件 517 行 + `test_math.cpp` 663 行**（33 个用例） | 两样都超，而且**头文件也超了**（原本以为"少写点"）。原因：注释里"为什么"比"是什么"长得多 —— `Ray.h` 148 行里近一半在解释 `d == 0` 那个坑 |
 | 7 | PLAN A.2 目录树 | `tests/` 下 `test_math.cpp` | **一致，不用改** | — |
 | 8 | `doc/MINITEST_SPEC.md` 第 1 节 | `MINI_CHECK(expr)` 单参数 | 改成 **`MINI_CHECK(...)` 可变参数** + 补一段"为什么" | 这次是**动了框架**而不是绕过它（见偏差 D3），规格必须同步 |
 

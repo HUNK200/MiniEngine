@@ -141,6 +141,8 @@ c++_simple_engine/
 │   │   ├── core/       Application.h  Time.h  Logger.h  Config.h  NonCopyable.h
 │   │   ├── platform/   Console.h  Input.h  InputState.h  KeyCode.h  Wait.h    # 只做 Windows
 │   │   ├── math/       Vec2.h  Vec3.h  Rect.h  AABB.h  Ray.h  MathUtils.h
+│   │   │               # ↑ 树是全项目**目标态**；S4 落地的字母序是 MathUtils.h Vec2.h AABB.h Ray.h
+│   │   │               #   Vec3.h / Rect.h 只有契约还没建（理由见 S4_CHECKLIST 差异 2）
 │   │   ├── render/     Cell.h  Color.h  FrameBuffer.h  RowDiff.h  Renderer2D.h
 │   │   │               Camera.h  Viewport.h  Renderer3D.h  RayCaster.h
 │   │   ├── world/      World.h  Entity.h  Transform.h  Velocity.h  Health.h
@@ -447,18 +449,18 @@ AI 不会自己跑构建或 exe。一个步骤的 commit 由本人在验证通�
 顶栏由 `Application` 在 `game.OnRender` **之后**画。
 
 
-### S4 Math 库 + 单元测试
+### S4 Math 库 + 单元测试（✅ 2026-09-29 完成）
 
 | 项 | 内容 |
 | --- | --- |
-| 目标 | `Vec2/Vec3/Rect/AABB/Ray` 全 `constexpr` 头文件 + 测试覆盖 |
-| 实现 | 运算符重载、`Length/LengthSq/Normalized`、`AABB::Intersects`、`Ray::IntersectsAABB`(slab 法) |
-| C++ 知识 | `constexpr`、运算符重载、`[[nodiscard]]`、值语义、模板（`Vec2` 用 `float` 特化即可，别一上来就模板化 `T`） |
-| 引擎知识 | 为什么要 `LengthSq`（避免 sqrt）、AABB 的 slab 法、法线方向 |
-| 规模 | ~300 行 + ~200 行测试 |
-| 可运行效果 | ctest 全绿；可选 demo 打印"两个盒子相交/不相交" |
-| 验收 | 覆盖：零向量归一化保护、NaN 输入、AABB 边界相接（`<=` vs `<` 要明确）、Ray 起点在盒内 |
-| 坑 | 归一化零向量产生 NaN 并污染整个物理循环（必须返回 `{0,0}`）；浮点相等判断 |
+| 目标 | `Vec2/Vec3/Rect/AABB/Ray` 全 `constexpr` 头文件 + 测试覆盖 → **实测落 4 个文件**（`Vec3`/`Rect` 只留契约，见 S4_CHECKLIST 差异 2） |
+| 实现 | 运算符重载、`Length/LengthSq/Normalized`（零向量 + NaN 保护）、`Clamp/Lerp/DegToRad/Sign/ApproxEquals/FloorToInt/RoundToInt`、`AABB`（`Contains` **闭**区间 / `Intersects` **开**区间 / `FromCorners` 自动排序 / `IsValid`）、`Ray::IntersectsAABB`（slab 法 + **显式 `d == 0` 分支**） |
+| C++ 知识 | `constexpr` **以及它的边界**（哪些标准库函数不是 constexpr：`sqrt`/`floor`/`abs(float)`；判断"值不值得保"见 S4_CHECKLIST 第 8 节原则 5）、运算符重载、`[[nodiscard]]`、值语义、`std::optional` 当返回值 |
+| 引擎知识 | 为什么要 `LengthSq`（避免 sqrt）、AABB 的 slab 法、法线方向、**"查询用闭区间 / 碰撞用开区间"** |
+| 规模 | ~300 行 + ~200 行测试 → **实测：4 个头文件 517 行 + `test_math.cpp` 663 行**（33 个用例，约估值的 2.5 倍） |
+| 可运行效果 | ctest 全绿；可选 demo 打印"两个盒子相交/不相交" → **不做 demo**（决策 3）。改为 4 个 suite 全绿：`MathUtils` 8 / `Vec2` 9 / `AABB` 7 / `Ray` 9；用例总数 35 → **68** |
+| 验收 | ✅ 覆盖齐，且**反向验证 3 条都实测看到红**（`doc/S4_CHECKLIST.md` 10.3）：零向量归一化保护、NaN 输入、AABB 边界相接（`<=` vs `<` 已定为**开区间**）、Ray 起点在盒内 → t=0 |
+| 坑 | ① 归一化零向量产生 NaN 并污染整个物理循环 → 用 `!(len2 > 0.0f)` 挡住（`len2 <= 0` **挡不住 NaN**），反向验证已确认；② 浮点相等判断 → 全项目禁 `==`，一律 `ApproxEquals` / `MINI_CHECK_NEAR`；③ **贴边算不算相交** → 用 `<`（用 `<=` 的话贴墙实体每帧被判碰撞、被推开一格）；④ **`Ray` 的 `d == 0` 必须显式分支** → `1/d` 写法在平行输入上会漏出 `t = +inf`，且常量表达式里**直接 C2131 编不过**；⑤ **`MINI_CHECK(Vec2{1,2}...)` 编译不过** → 函数宏按顶层逗号拆参数、**花括号不保护逗号**，已把 `MINI_CHECK` 改成可变参数（`MINITEST_SPEC` 第 1 节） |
 
 ### S5 World / Entity —— `@` 可以移动
 
@@ -1210,6 +1212,12 @@ cmake -S . -B build
 cmake --build build --config Debug
 .\build\bin\Debug\MiniEngine.exe
 ctest --test-dir build -C Debug --output-on-failure
+
+# ---- 只跑一个测试 suite（**精确匹配**，不是前缀；见 doc/MINITEST_SPEC.md 第 3 节）----
+.\build\bin\Debug\mini_tests.exe --list        # 先看有哪些 suite.name
+.\build\bin\Debug\mini_tests.exe MathUtils     # S4 的四个：MathUtils / Vec2 / AABB / Ray
+.\build\bin\Debug\mini_tests.exe AABB
+# ⚠️ `mini_tests.exe Math` **不存在**（没有叫 Math 的 suite）；不带参数才是跑全部
 
 # ---- Release ----
 cmake --build build --config Release
