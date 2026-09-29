@@ -735,9 +735,6 @@ private:
 } // namespace mini::core
 ```
 
-} // namespace mini::core
-```
-
 ```cpp
 // engine/include/mini/render/FrameBuffer.h  —— 骨架
 namespace mini::render {
