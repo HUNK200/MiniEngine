@@ -1275,6 +1275,9 @@ git ls-files --eol
 > ```
 > 另外，别把仓库放在 OneDrive / 坚果云等网盘同步目录里——网盘同步 `.git/` 会损坏仓库。
 
+> 🌐 **还有个"第 5 步"，但只在 push / clone 超时时才需要**：新机器的代理端口**大概率不一样**。
+> 症状→根因对照表、一条命令的修法、怎么找端口 → 见 **附录 F：网络 / 代理排障（GitHub 超时）**。
+
 ### 附录 A.3 两机交接的日常动作
 
 ```bash
@@ -1358,3 +1361,89 @@ docs: record coordinate convention in plan
 3. 有哪个"好玩的结果"能一眼看见？（**保持动力**）
 
 三个都是"是"，就 commit 并收工。
+
+---
+
+## 附录 F：网络 / 代理排障（GitHub 超时）
+
+> **2026-09-29 实测记录。** 这节跟引擎无关，但它**下次换机器几乎必然还要撞一次**
+> （本项目就是家 / 公司两台机器交替开发），所以记在最容易被翻到的地方。
+
+### F.1 症状 → 根因对照
+
+| 症状 | 根因 | 去哪修 |
+| --- | --- | --- |
+| `git push` / `clone` **卡住，然后是超时** | git **没走本机代理**，直连 `github.com` 被挡 | **F.2** 一条命令 |
+| 卡很久才报错，不是"立刻拒绝" | `http.connecttimeout 120`（本机 global 就是这个值）| **F.3** |
+| 换了机器 / 换了代理软件，又开始超时 | 端口变了（见 F.4 的表）| **F.4** 先找端口 |
+
+### F.2 修：一条命令（**只让 GitHub 走代理**）
+
+```powershell
+git config --global http.https://github.com.proxy http://127.0.0.1:7897
+```
+
+**为什么用这个长写法，而不是裸的 `http.proxy`**：
+`http.<url>.proxy` 是**按 URL 前缀生效**的 —— 只有 `github.com` 走代理，国内站点保持直连。
+写成裸的 `http.proxy` 会把**所有**仓库、所有域名都强制塞进代理
+（以后加 Gitee、连公司内网 git 时就会被它坑）。
+
+### F.3 顺手把"假死"改回"快速失败"
+
+本机 global 里原本有这三条，**本意是"防超时"，实际效果是把"连不上"伪装成"假死"**：
+
+| 配置 | 原值 | 实际后果 |
+| --- | --- | --- |
+| `http.connecttimeout` | 120 | 光"建连接"就肯等 **120 秒** |
+| `http.lowspeedlimit` | 0 | **慢速守卫被禁用**（0 = 关）→ 卡住时永远不会主动放弃 |
+| `http.lowspeedtime` | 600 | 配合上一条，完全失效 |
+
+```powershell
+git config --global http.connecttimeout 15      # 连不上就 15 秒报错，别对着屏幕猜
+```
+
+（`lowspeed*` 两条可以留着，也可以 `git config --global --unset http.lowspeedlimit` 删掉。）
+
+### F.4 先找端口：本机代理到底在哪
+
+```powershell
+netstat -ano | Select-String "LISTENING" | Select-String ":7897|:7890|:10809|:1080"
+# 拿最后一列的 PID 看是谁：
+tasklist /FI "PID eq <PID>"
+```
+
+本次实测就是这么找到的：**PID 31032 = `verge-mihomo.exe`** → Clash Verge 的内核 → 端口 **7897**。
+
+| 代理软件 | 常见端口 |
+| --- | --- |
+| **Clash Verge / mihomo**（本机就是它）| **7897**（混合端口，HTTP/SOCKS 都吃）|
+| Clash for Windows | 7890（混合）/ 7891 |
+| v2rayN | 10809（HTTP）/ 10808（SOCKS）|
+| 通用 SOCKS5 | 1080 → 写法是 `socks5://127.0.0.1:1080` |
+
+### F.5 验证 & 备用梯子
+
+```powershell
+git ls-remote origin main        # 只读；能列出 ref 说明网络+认证都通
+git push -v                      # 卡的时候看卡在哪个阶段
+```
+
+按概率排的备用招：
+
+1. `git config --global http.version HTTP/1.1` —— HTTP/2 在**跨境劣化链路**上容易挂；
+2. **SSH over 443**（22 端口常被封、443 常通）：`~/.ssh/config` 写
+   `Host github.com` / `HostName ssh.github.com` / `Port 443` / `User git`，
+   再把 remote 换成 `git@github.com:HUNK200/MiniEngine.git`（前提：GitHub 上已配 SSH key）；
+3. **换网络**（手机热点）—— 跨境链路抖动很常见，**有时候就是等一会儿**。
+
+### F.6 两条纪律
+
+1. **这些都是 `--global` 配置**：跟着**这台机器**，不属于仓库 → **换机器要重配**。
+   反过来，在 `git config --global --list` 里看到 `<url>.proxy` 时要知道它是干嘛的。
+2. **push 之后拿 hash 验证，别靠感觉**：
+   ```powershell
+   git rev-parse --short HEAD
+   git rev-parse --short origin/main     # 两个相等才算真的上去了
+   ```
+   remote-tracking ref **只在成功同步之后才更新**，所以它本身是可信的判据 ——
+   比"终端里没报错"可靠。（2026-09-29 实测：`885c861` == `885c861`，10 个 commit 全部落地。）
