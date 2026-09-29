@@ -51,9 +51,13 @@ public:
     std::string_view Compose(const FrameBuffer& fb);
 
     struct Stats {
+        // ⚠️ `rowsTotal` **生产 0 读**（顶栏只显示 `rowsSent`）——
+        //    单测用它当**分母**验证"全量帧要发多少行"（见 `DirtyFrameIsFarSmallerThanFullFrame`）。
         int         rowsTotal = 0;   // 画布行数
         int         rowsSent  = 0;   // 本帧真发出去的行数（顶栏 `Rows n/n` 左半边那个 n）
-        std::size_t bytes     = 0;   // 本帧字节数（顶栏没显示；测试用它验证"脏行确实更省"）
+        // ⚠️ `bytes` **生产 0 读** —— 单测用它验证"脏行确实比全量省"（那条 ≥10 倍的守卫）。
+        //    顶栏**故意没显示**：字节数不如"发了多少行 / 共多少行"直观。
+        std::size_t bytes     = 0;   // 本帧字节数
     };
 
     [[nodiscard]] Stats LastStats() const noexcept { return m_stats; }

@@ -60,6 +60,10 @@ public:
         }
     }
 
+    // 清空全部统计（含 `m_maxMs`）。
+    // ⚠️ **生产代码没有任何地方调它** —— 这正是顶栏那个 `Max` 显示的是
+    //    "**自启动以来**的最大帧耗时"、而不是"最近一段"的原因。
+    //    （想改成"每 N 秒归零"，在 Application 里调它一次即可，一行。）
     void Reset() noexcept
     {
         m_samples.fill(0.0f);
@@ -78,12 +82,18 @@ public:
         return avg > 0.0f ? 1.0f / avg : 0.0f;
     }
 
+    // ⚠️ **生产 0 调用**（单测 2 处）：顶栏走的是 `Fps()` / `MaxFrameMs()`，没用它。
+    //    它存在的理由是"**平均帧耗时**"是给人看的性能数字 ——
+    //    将来做基准测试 / 写日志时第一个会想到的是它，而不是自己拿 60 个 dt 求和。
     [[nodiscard]] float AvgFrameMs() const noexcept { return AverageSeconds() * 1000.0f; }
 
     // 历史最大帧耗时。**滑出窗口也不清零**——它的用途是"长时间跑完之后问一句最坏有多坏"，
     // 所以只被 Reset() 清掉。
     [[nodiscard]] float MaxFrameMs() const noexcept { return m_maxMs; }
 
+    // 已填样本数（`<= kWindow`）。⚠️ **生产 0 调用**（单测 4 处）：
+    //    单测用它区分"窗口**没满**"与"窗口**满了**"这两种截然不同的行为 ——
+    //    Push 的前 60 帧和之后的每一帧走的不是同一条路径。
     [[nodiscard]] std::size_t SampleCount() const noexcept { return m_count; }
 
 private:
@@ -134,8 +144,11 @@ public:
     // 全仓库 0 处调用（连测试都没有）—— 留着会让人以为"第几帧"是被用到的信息。
     // 注意 **m_frames 成员本身要保留**：EndFrame 用它跳过首帧的统计。
     // 将来真需要"第几帧"时加回来是一行。
-
-    [[nodiscard]] const FrameStats& Stats() const noexcept { return m_stats; }
+    //
+    // 这里原先还有一个 `Stats()`（返回 `const FrameStats&`），2026-09-29 删掉了：
+    // 同样 **全仓库 0 处调用** —— 单测要测窗口算法时是**直接构造一个 `FrameStats`** 的
+    // （见 `tests/test_time.cpp`），没人需要"从 `Time` 里把 `FrameStats` 掏出来"这条通路。
+    // 将来真需要（比如把整组统计交给 S11 的 Profiler）时加回来是一行。
 
 private:
     using Clock = std::chrono::steady_clock;
