@@ -2,9 +2,11 @@
 
 #include <mini/math/AABB.h>
 #include <mini/math/MathUtils.h>
+#include <mini/math/Ray.h>
 #include <mini/math/Vec2.h>
 
 #include <limits>
+#include <optional>
 
 // ------------------------------------------------------------
 // math 层的单元测试（S4）。
@@ -46,6 +48,7 @@ using mini::math::DegToRad;
 using mini::math::FloorToInt;
 using mini::math::kPi;
 using mini::math::Lerp;
+using mini::math::Ray;
 using mini::math::RoundToInt;
 using mini::math::Sign;
 using mini::math::Vec2;
@@ -459,5 +462,196 @@ MINI_TEST(AABB, DegeneratePointBoxSemantics)
     // 同一次判断里两个答案不同 —— 不是矛盾，是两处语义各服务不同用途
     //（**查询用 Contains，碰撞用 Intersects**），见 AABB.h 文件头那张表与 Intersects 的注释。
     MINI_CHECK(point.Contains(Vec2{1.0f, 1.0f}) != point.Intersects(point));
+}
+
+// ============================================================
+// 第 4 组：Ray（9 个）
+//
+// 这一组重点不是"算得对"，而是**几个边界语义有没有被钉住**：
+//   · 返回的 t 是 `dir` 的倍数，**不是**欧氏距离
+//   · 起点在盒内 / 在边界上 → t = 0
+//   · 擦角（tNear == tFar）→ **算命中**
+//   · `d == 0` 的显式分支（反向验证 3 的目标，见 29 的两半）
+// ============================================================
+
+// 测试帮手：安全地从 optional 里取 t。
+// 先断言"确实有值"，避免测试自己踩空 optional 的 UB；
+// 取不到时返回一个显眼的哨兵，让紧随其后的 MINI_CHECK_NEAR 也一起红。
+[[nodiscard]] float HitT(const std::optional<float>& hit) noexcept
+{
+    MINI_CHECK(hit.has_value());
+    return hit.value_or(-9999.0f);
+}
+
+MINI_TEST(Ray, HitsFromFront)
+{
+    // 盒子 x∈[2,4] y∈[-1,1]；从原点沿 +x 出发 → 在 x=2 处进入 → t = 2
+    // （这条同时覆盖了"y 轴 d == 0 且在内 → 该轴不限制 t"）
+    const Ray ray{Vec2{0.0f, 0.0f}, Vec2{1.0f, 0.0f}};
+    const AABB box = AABB::FromCorners(Vec2{2.0f, -1.0f}, Vec2{4.0f, 1.0f});
+
+    const float t = HitT(ray.IntersectsAABB(box));
+    MINI_CHECK_NEAR(t, 2.0f, kEps);
+
+    // 命中点 = origin + dir * t（dir 是单位向量，所以 t 在数值上等于距离）
+    const Vec2 hit = ray.origin + ray.dir * t;
+    MINI_CHECK_NEAR(hit.x, 2.0f, kEps);
+    MINI_CHECK_NEAR(hit.y, 0.0f, kEps);
+}
+
+MINI_TEST(Ray, MissesWhenBehind)
+{
+    // 同一个盒子，但射线朝反方向 → 盒子整个在背后 → nullopt
+    const Ray ray{Vec2{0.0f, 0.0f}, Vec2{-1.0f, 0.0f}};
+    const AABB box = AABB::FromCorners(Vec2{2.0f, -1.0f}, Vec2{4.0f, 1.0f});
+
+    MINI_CHECK(!ray.IntersectsAABB(box).has_value());
+
+    // 边界情况：起点在盒子**前方**、朝**远离**盒子的方向 —— 也是背后
+    MINI_CHECK(!Ray{Vec2{10.0f, 0.0f}, Vec2{1.0f, 0.0f}}.IntersectsAABB(box).has_value());
+}
+
+MINI_TEST(Ray, OriginInsideReturnsZero)
+{
+    // 起点已经在盒内 → 第一次"进入"就是现在 → t = 0（PLAN S4 验收明文要求）
+    const AABB box = AABB::FromCorners(Vec2{2.0f, -1.0f}, Vec2{4.0f, 1.0f});
+
+    MINI_CHECK_NEAR(HitT(Ray{Vec2{3.0f, 0.0f}, Vec2{1.0f, 0.0f}}.IntersectsAABB(box)), 0.0f, kEps);
+
+    // 朝任何一个方向出发都一样是 0（四个方向都试，免得只有 +x 那条路是对的）
+    MINI_CHECK_NEAR(HitT(Ray{Vec2{3.0f, 0.0f}, Vec2{-1.0f, 0.0f}}.IntersectsAABB(box)), 0.0f, kEps);
+    MINI_CHECK_NEAR(HitT(Ray{Vec2{3.0f, 0.0f}, Vec2{0.0f, 1.0f}}.IntersectsAABB(box)), 0.0f, kEps);
+    MINI_CHECK_NEAR(HitT(Ray{Vec2{3.0f, 0.0f}, Vec2{0.0f, -1.0f}}.IntersectsAABB(box)), 0.0f, kEps);
+}
+
+MINI_TEST(Ray, OriginOnBoundaryReturnsZero)
+{
+    // 起点**恰在盒子的面上**：`o > box.max` / `o < box.min` 都是严格判断，所以边界算"在内"
+    const AABB box = AABB::FromCorners(Vec2{2.0f, -1.0f}, Vec2{4.0f, 1.0f});
+
+    // 在左面上、朝外（-x）出发：t = 0（"这一刻就贴着它"）
+    MINI_CHECK_NEAR(HitT(Ray{Vec2{2.0f, 0.0f}, Vec2{-1.0f, 0.0f}}.IntersectsAABB(box)), 0.0f, kEps);
+
+    // 在右面上、朝外（+x）出发：同样是 t = 0
+    MINI_CHECK_NEAR(HitT(Ray{Vec2{4.0f, 0.0f}, Vec2{1.0f, 0.0f}}.IntersectsAABB(box)), 0.0f, kEps);
+
+    // 在左面上、朝**里**出发：进入参数仍然从 0 起算
+    MINI_CHECK_NEAR(HitT(Ray{Vec2{2.0f, 0.0f}, Vec2{1.0f, 0.0f}}.IntersectsAABB(box)), 0.0f, kEps);
+}
+
+MINI_TEST(Ray, ParallelOutsideReturnsNullopt)
+{
+    // ⚠️ **这条是反向验证 3 的目标**。它的两半难度差很多，别只看第一半：
+    const AABB box = AABB::FromCorners(Vec2{2.0f, -1.0f}, Vec2{4.0f, 1.0f});
+
+    // ① 平行且在**上侧**（o.y > max.y → o.y = 5）→ nullopt
+    //    ⚠️ 这一半**抓不住** `1/d` 写法：IEEE 恰好也给 nullopt
+    //       （tFar 被推成 -inf，被"盒子在背后"那条规则兜住）。
+    //       只写这一半的话，这个用例就是**摆设** —— 文档 10.3 早就警告过这件事。
+    MINI_CHECK(!Ray{Vec2{0.0f, 5.0f}, Vec2{1.0f, 0.0f}}.IntersectsAABB(box).has_value());
+
+    // ② 平行且在**下侧**（o.y < min.y → o.y = -5）→ nullopt
+    //    ✅ **这一半才是真正的守卫**：`1/d` 写法会把两个 t 都算成 +inf，
+    //       于是 tNear = +inf，最后返回 **t = +inf**（"在无穷远处打中了"）——
+    //       既不 nullopt 也不崩。删掉 `d == 0` 分支时，红的就是这一条。
+    MINI_CHECK(!Ray{Vec2{0.0f, -5.0f}, Vec2{1.0f, 0.0f}}.IntersectsAABB(box).has_value());
+
+    // 左右两侧同理（射线平行于 y 轴）
+    MINI_CHECK(!Ray{Vec2{5.0f, 0.0f}, Vec2{0.0f, 1.0f}}.IntersectsAABB(box).has_value());
+    MINI_CHECK(!Ray{Vec2{-5.0f, 0.0f}, Vec2{0.0f, 1.0f}}.IntersectsAABB(box).has_value());
+}
+
+MINI_TEST(Ray, ParallelInsideHits)
+{
+    // 盒子 x∈[2,4] y∈[-1,1]
+    const AABB box = AABB::FromCorners(Vec2{2.0f, -1.0f}, Vec2{4.0f, 1.0f});
+
+    // —— 平行且在 slab **内部**：那条轴不限制 t，由另一条轴决定 ——
+    // 起点 x = -5（盒外），方向 {10, 0}（**故意不归一化**）：
+    //   x 轴：t1 = (2-(-5))/10 = 0.7、t2 = (4+5)/10 = 0.9 → tNear = 0.7
+    //   y 轴：d == 0 且 0 ∈ [-1,1] → 不限制
+    // ⚠️ 0.7 是 **dir 的倍数**，不是距离（真实距离是 0.7 × 10 = 7）
+    const Ray alongX{Vec2{-5.0f, 0.0f}, Vec2{10.0f, 0.0f}};
+    MINI_CHECK_NEAR(HitT(alongX.IntersectsAABB(box)), 0.7f, kEps);
+
+    // 命中点确实在盒子的左面上
+    const float t = HitT(alongX.IntersectsAABB(box));
+    const Vec2 hit = alongX.origin + alongX.dir * t;
+    MINI_CHECK_NEAR(hit.x, 2.0f, kEps);
+
+    // —— 平行且**恰在 slab 边界上**：边界算"在内"，贴着上表面滑过去的射线**算打中** ——
+    //    ⚠️ "擦边 + 平行"正是会算出 `0 * inf = NaN` 的输入。
+    //    在这条上：MSVC 的 std::min 会把 NaN 悄悄丢掉、结果恰好和显式分支一致，
+    //    所以它**不保证**会红；真正会红的是 29 的 ②。
+    const Ray onTop{Vec2{0.0f, 1.0f}, Vec2{1.0f, 0.0f}};   // o.y 恰等于 box.max.y
+    MINI_CHECK_NEAR(HitT(onTop.IntersectsAABB(box)), 2.0f, kEps);
+}
+
+MINI_TEST(Ray, ZeroDirectionDegeneratesToPointTest)
+{
+    // `dir == {0,0}` 是**调用方违约**（文件头 ② 写明必须非零），但代码不崩：
+    // 两条轴都走"平行"分支 → 都不限制 t → 最后返回 max(-inf, 0) = 0。
+    // 于是它**退化成一次"点在不在盒内"的测试**。
+    const AABB box = AABB::FromCorners(Vec2{2.0f, -1.0f}, Vec2{4.0f, 1.0f});
+
+    // 起点在盒内 → 0（和"点在盒内"的直觉一致）
+    MINI_CHECK_NEAR(HitT(Ray{Vec2{3.0f, 0.0f}, Vec2{0.0f, 0.0f}}.IntersectsAABB(box)), 0.0f, kEps);
+
+    // 起点在盒外 → nullopt（平行且在外）
+    MINI_CHECK(!Ray{Vec2{5.0f, 0.0f}, Vec2{0.0f, 0.0f}}.IntersectsAABB(box).has_value());
+    MINI_CHECK(!Ray{Vec2{0.0f, -5.0f}, Vec2{0.0f, 0.0f}}.IntersectsAABB(box).has_value());
+}
+
+MINI_TEST(Ray, DiagonalHitDistanceMatchesManualValue)
+{
+    // 盒子 x∈[2,4] y∈[1,4]；起点原点、方向 {1,1} → 手算：
+    //   x 轴：t1 = 2、t2 = 4
+    //   y 轴：t1 = 1、t2 = 4
+    //   tNear = max(2, 1) = 2、tFar = min(4, 4) = 4 → 命中 t = 2
+    //   命中点 = {0,0} + {1,1}*2 = {2,2} → 正好在**左面**上（不是角）
+    const Ray ray{Vec2{0.0f, 0.0f}, Vec2{1.0f, 1.0f}};
+    const AABB box = AABB::FromCorners(Vec2{2.0f, 1.0f}, Vec2{4.0f, 4.0f});
+
+    const float t = HitT(ray.IntersectsAABB(box));
+    MINI_CHECK_NEAR(t, 2.0f, kEps);
+
+    const Vec2 hit = ray.origin + ray.dir * t;
+    MINI_CHECK_NEAR(hit.x, 2.0f, kEps);   // 在左面上
+    MINI_CHECK_NEAR(hit.y, 2.0f, kEps);
+
+    // ⚠️ 顺手钉住"t 不是欧氏距离"：欧氏距离 = |dir| * t = sqrt(2) * 2 ≈ 2.828，
+    //    和 t = 2 差了 41% —— 别在别处把它们当同一个数用。
+    MINI_CHECK_NEAR(ray.dir.Length() * t, 2.8284271f, 1e-4f);
+}
+
+MINI_TEST(Ray, GrazesCorner)
+{
+    // 盒子 x∈[2,4] y∈[2,4]；起点 {0,2}、方向 {1,1} → 手算：
+    //   x 轴：t1 = (2-0)/1 = 2、t2 = 4
+    //   y 轴：t1 = (2-2)/1 = 0、t2 = (4-2)/1 = 2
+    //   tNear = max(2, 0) = 2、tFar = min(4, 2) = 2 → **tNear == tFar == 2**
+    //   命中点 = {0,2} + {1,1}*2 = {2,4} = 盒子的角（min.x, max.y）
+    // 这正是"擦角"：射线只在那**一个点**上碰到盒子，前后都立刻离开。
+    const Ray ray{Vec2{0.0f, 2.0f}, Vec2{1.0f, 1.0f}};
+    const AABB box = AABB::FromCorners(Vec2{2.0f, 2.0f}, Vec2{4.0f, 4.0f});
+
+    // ⚠️ **算命中**（分离判定用 `tNear > tFar`，严格大于）—— 坑 #14
+    const float t = HitT(ray.IntersectsAABB(box));
+    MINI_CHECK_NEAR(t, 2.0f, kEps);
+
+    const Vec2 hit = ray.origin + ray.dir * t;
+    MINI_CHECK_NEAR(hit.x, 2.0f, kEps);
+    MINI_CHECK_NEAR(hit.y, 4.0f, kEps);
+
+    // 擦角是**单点**接触：t 往前/往后挪一点点就已经出盒了
+    MINI_CHECK(!box.Contains(ray.origin + ray.dir * (t - 0.001f)));
+    MINI_CHECK(!box.Contains(ray.origin + ray.dir * (t + 0.001f)));
+
+    // 对照：真切进一个面的射线，往前走一点**还在**盒内 ——
+    // 说明上面那两条不是"随便写都成立"的空话。
+    const Ray throughFace{Vec2{0.0f, 0.0f}, Vec2{1.0f, 1.0f}};
+    const AABB faceBox = AABB::FromCorners(Vec2{2.0f, 1.0f}, Vec2{4.0f, 4.0f});
+    const float tFace = HitT(throughFace.IntersectsAABB(faceBox));
+    MINI_CHECK(faceBox.Contains(throughFace.origin + throughFace.dir * (tFace + 0.001f)));
 }
 
