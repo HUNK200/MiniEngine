@@ -541,19 +541,19 @@ MINI_TEST(Ray, OriginOnBoundaryReturnsZero)
 
 MINI_TEST(Ray, ParallelOutsideReturnsNullopt)
 {
-    // ⚠️ **这条是反向验证 3 的目标**。它的两半难度差很多，别只看第一半：
+    // ⚠️ 这条**不是**反向验证 3 的运行时守卫 —— 实测（2026-09-29）两条都绿。
+    //    真正会红的是 `ZeroDirectionDegeneratesToPointTest`，原因见下面两半的注释。
     const AABB box = AABB::FromCorners(Vec2{2.0f, -1.0f}, Vec2{4.0f, 1.0f});
 
     // ① 平行且在**上侧**（o.y > max.y → o.y = 5）→ nullopt
-    //    ⚠️ 这一半**抓不住** `1/d` 写法：IEEE 恰好也给 nullopt
-    //       （tFar 被推成 -inf，被"盒子在背后"那条规则兜住）。
-    //       只写这一半的话，这个用例就是**摆设** —— 文档 10.3 早就警告过这件事。
+    //    抓不住 `1/d` 写法：两个 t 都算成 -inf → tFar = -inf → 被早退兜住
     MINI_CHECK(!Ray{Vec2{0.0f, 5.0f}, Vec2{1.0f, 0.0f}}.IntersectsAABB(box).has_value());
 
     // ② 平行且在**下侧**（o.y < min.y → o.y = -5）→ nullopt
-    //    ✅ **这一半才是真正的守卫**：`1/d` 写法会把两个 t 都算成 +inf，
-    //       于是 tNear = +inf，最后返回 **t = +inf**（"在无穷远处打中了"）——
-    //       既不 nullopt 也不崩。删掉 `d == 0` 分支时，红的就是这一条。
+    //    也抓不住：两个 t 都算成 +inf → tNear = +inf，但 tFar 被**上面那条轴**钳成有限值（4），
+    //    于是 `tNear <= tFar` 为假 → 早退 → 仍然是 nullopt。
+    //    ⚠️ 我原先在这里写"删掉 `d == 0` 分支时红的就是这一条"，**反向验证实测证明是错的**。
+    //    👉 真正漏出 `t = +inf` 的是"两轴都平行"（`dir == {0,0}`）—— 那条在老远那个用例里。
     MINI_CHECK(!Ray{Vec2{0.0f, -5.0f}, Vec2{1.0f, 0.0f}}.IntersectsAABB(box).has_value());
 
     // 左右两侧同理（射线平行于 y 轴）
@@ -599,6 +599,12 @@ MINI_TEST(Ray, ZeroDirectionDegeneratesToPointTest)
 
     // 起点在盒外 → nullopt（平行且在外）
     MINI_CHECK(!Ray{Vec2{5.0f, 0.0f}, Vec2{0.0f, 0.0f}}.IntersectsAABB(box).has_value());
+
+    // 👇 **这一条是反向验证 3 的运行时守卫**（2026-09-29 实测）：删掉 `d == 0` 分支、
+    //    并停掉 `Ray.h` 的编译期自检之后，红的正是这一行。
+    //    直觉：`1/d` 写法下"两轴都平行"时没有任何一条轴能把 tFar 钳成有限值，
+    //    于是 `tNear = tFar = +inf` → 早退不触发 → 返回 `t = +inf`。
+    //    注意**上一条（起点在 +x 外侧）反而不会红** —— 那一侧算出的是 -inf，会被早退兜住。
     MINI_CHECK(!Ray{Vec2{0.0f, -5.0f}, Vec2{0.0f, 0.0f}}.IntersectsAABB(box).has_value());
 }
 
