@@ -1,5 +1,6 @@
 #include "MiniTest.h"
 
+#include <mini/math/AABB.h>
 #include <mini/math/MathUtils.h>
 #include <mini/math/Vec2.h>
 
@@ -38,6 +39,7 @@
 
 namespace {
 
+using mini::math::AABB;
 using mini::math::ApproxEquals;
 using mini::math::Clamp;
 using mini::math::DegToRad;
@@ -291,3 +293,171 @@ MINI_TEST(Vec2, ApproxEqualsAndConstexpr)
     static_assert((Vec2{1.0f, 2.0f} + Vec2{3.0f, 4.0f}).x == 4.0f, "operator+ 应该能在编译期算出来");
     static_assert(kThreeFour.ApproxEquals(Vec2{3.0f, 4.0f}), "ApproxEquals 应该能在编译期算出来");
 }
+
+// ============================================================
+// 第 3 组：AABB（7 个）
+//
+// 这一组里有两件事**故意反直觉**，各自都有专门用例：
+//   · Contains 是**闭**区间（边界算在内）
+//   · Intersects 是**开**区间（贴边不算相交）—— 反向验证 2 就钉它
+// ============================================================
+
+MINI_TEST(AABB, FromCenterSizeAndAccessors)
+{
+    // size 是**全宽全高**（不是半宽）：中心 {5,5} + 尺寸 {2,4} → min{4,3} max{6,7}
+    const AABB box = AABB::FromCenterSize(Vec2{5.0f, 5.0f}, Vec2{2.0f, 4.0f});
+    MINI_CHECK_NEAR(box.min.x, 4.0f, kEps);
+    MINI_CHECK_NEAR(box.min.y, 3.0f, kEps);
+    MINI_CHECK_NEAR(box.max.x, 6.0f, kEps);
+    MINI_CHECK_NEAR(box.max.y, 7.0f, kEps);
+
+    // Center / Size 与构造互逆（往返一致）
+    MINI_CHECK_NEAR(box.Center().x, 5.0f, kEps);
+    MINI_CHECK_NEAR(box.Center().y, 5.0f, kEps);
+    MINI_CHECK_NEAR(box.Size().x, 2.0f, kEps);
+    MINI_CHECK_NEAR(box.Size().y, 4.0f, kEps);
+
+    MINI_CHECK(box.IsValid());
+}
+
+MINI_TEST(AABB, FromCornersSortsAutomatically)
+{
+    // **反序**传进去（先给"右下"再给"左上"）也必须得到正确的 min/max。
+    // 不排序会造出反盒（min > max），而反盒上所有判定都**静默**失效 ——
+    // 不崩不报错，只是结果没有意义，属于最难查的一类。
+    const AABB box = AABB::FromCorners(Vec2{6.0f, 7.0f}, Vec2{4.0f, 3.0f});
+    MINI_CHECK_NEAR(box.min.x, 4.0f, kEps);
+    MINI_CHECK_NEAR(box.min.y, 3.0f, kEps);
+    MINI_CHECK_NEAR(box.max.x, 6.0f, kEps);
+    MINI_CHECK_NEAR(box.max.y, 7.0f, kEps);
+    MINI_CHECK(box.IsValid());
+
+    // 顺序传进去结果必须**完全一样**（排序是唯一的差别，不该有别的副作用）
+    const AABB same = AABB::FromCorners(Vec2{4.0f, 3.0f}, Vec2{6.0f, 7.0f});
+    MINI_CHECK_NEAR(same.min.x, box.min.x, kEps);
+    MINI_CHECK_NEAR(same.max.y, box.max.y, kEps);
+}
+
+MINI_TEST(AABB, ContainsIncludesEdges)
+{
+    const AABB box = AABB::FromCorners(Vec2{2.0f, 2.0f}, Vec2{5.0f, 6.0f});
+
+    MINI_CHECK(box.Contains(Vec2{3.0f, 4.0f}));    // 内部
+
+    // **四条边**上的点都算在内（闭区间）
+    MINI_CHECK(box.Contains(Vec2{2.0f, 4.0f}));    // 左边
+    MINI_CHECK(box.Contains(Vec2{5.0f, 4.0f}));    // 右边
+    MINI_CHECK(box.Contains(Vec2{3.0f, 2.0f}));    // 上边
+    MINI_CHECK(box.Contains(Vec2{3.0f, 6.0f}));    // 下边
+
+    // 四个角当然也算（"点在盒子里"的直觉）
+    MINI_CHECK(box.Contains(Vec2{2.0f, 2.0f}));
+    MINI_CHECK(box.Contains(Vec2{5.0f, 6.0f}));
+
+    // 出去一点点就不算
+    MINI_CHECK(!box.Contains(Vec2{1.99f, 4.0f}));
+    MINI_CHECK(!box.Contains(Vec2{5.01f, 4.0f}));
+    MINI_CHECK(!box.Contains(Vec2{3.0f, 1.99f}));
+    MINI_CHECK(!box.Contains(Vec2{3.0f, 6.01f}));
+}
+
+MINI_TEST(AABB, TouchingIsNotIntersecting)
+{
+    const AABB a = AABB::FromCorners(Vec2{0.0f, 0.0f}, Vec2{2.0f, 2.0f});
+
+    // ⚠️ 这条是**反向验证 2 的目标**：把 Intersects 的 `<` 改成 `<=`，它就会红。
+    //
+    // 右边那个盒子正好贴着 a 的右边界（2.0）：它们只是**相邻**，不是碰撞。
+    // 用 `<=` 的后果不是"多算一点"这么轻 —— S7 里紧贴墙壁的实体每帧都会被判碰撞、
+    // 被推开一格，表现是"怎么走都贴不住墙"。
+    const AABB touchingRight = AABB::FromCorners(Vec2{2.0f, 0.0f}, Vec2{4.0f, 2.0f});
+    MINI_CHECK(!a.Intersects(touchingRight));
+    MINI_CHECK(!touchingRight.Intersects(a));   // 必须对称
+
+    // 另外三条边也各来一次（免得只钉住了 x 轴）
+    MINI_CHECK(!a.Intersects(AABB::FromCorners(Vec2{-2.0f, 0.0f}, Vec2{0.0f, 2.0f})));
+    MINI_CHECK(!a.Intersects(AABB::FromCorners(Vec2{0.0f, -2.0f}, Vec2{2.0f, 0.0f})));
+    MINI_CHECK(!a.Intersects(AABB::FromCorners(Vec2{0.0f, 2.0f}, Vec2{2.0f, 4.0f})));
+}
+
+MINI_TEST(AABB, OverlapAndContainmentIntersects)
+{
+    const AABB a = AABB::FromCorners(Vec2{0.0f, 0.0f}, Vec2{4.0f, 4.0f});
+
+    // 真重叠（各进去一点）
+    MINI_CHECK(a.Intersects(AABB::FromCorners(Vec2{3.0f, 3.0f}, Vec2{7.0f, 7.0f})));
+
+    // 一边完全包含另一边 —— 双向都要成立
+    const AABB inner = AABB::FromCorners(Vec2{1.0f, 1.0f}, Vec2{2.0f, 2.0f});
+    MINI_CHECK(a.Intersects(inner));
+    MINI_CHECK(inner.Intersects(a));
+
+    // 与自己相交（非退化时成立）—— 开区间下 `min < max` 为真
+    MINI_CHECK(a.Intersects(a));
+
+    // 十字交叉：x 和 y 上都重叠，但谁都不含谁
+    MINI_CHECK(a.Intersects(AABB::FromCorners(Vec2{1.0f, -1.0f}, Vec2{3.0f, 5.0f})));
+}
+
+MINI_TEST(AABB, ValidityAndDegenerate)
+{
+    // 反盒（min > max）：IsValid 报 false。
+    //
+    // ⚠️ 这里**故意不测 Intersects 的结果** —— 反盒上它没有意义：
+    //    公式照样会算出一个 true/false，但那个值不对应任何几何事实。
+    //    反盒应该在**构造阶段**就避免；走 FromCorners() 永远造不出反盒，
+    //    只有直接写 {min, max} 两个成员才可能。
+    const AABB reversed{Vec2{5.0f, 0.0f}, Vec2{1.0f, 10.0f}};
+    MINI_CHECK(!reversed.IsValid());
+
+    // 只在**一个轴**上反了也算无效（IsValid 是逐分量判的）
+    MINI_CHECK(!AABB{Vec2{0.0f, 5.0f}, Vec2{5.0f, 1.0f}}.IsValid());
+
+    // 合法盒
+    MINI_CHECK(AABB{Vec2{}, Vec2{1.0f, 1.0f}}.IsValid());
+
+    // 退化成一个点（min == max）：**合法**，但**不与自己相交**（开区间下 min < max 为假）
+    const AABB point{Vec2{2.0f, 2.0f}, Vec2{2.0f, 2.0f}};
+    MINI_CHECK(point.IsValid());
+    MINI_CHECK(!point.Intersects(point));
+
+    // 退化成一条线（一个轴相等）也不与自己相交
+    const AABB line{Vec2{0.0f, 3.0f}, Vec2{4.0f, 3.0f}};
+    MINI_CHECK(line.IsValid());
+    MINI_CHECK(!line.Intersects(line));
+}
+
+MINI_TEST(AABB, DegeneratePointBoxSemantics)
+{
+    // 这条把"两处边界语义故意不一致"钉成**可执行的事实**，
+    // 同时钉住**退化盒上 Intersects 的真实行为**。
+    //
+    // ⚠️ 第一版写错过：我原以为"退化点盒不与任何东西相交" —— 只对了**一半**。
+    //    正确说法是"**退化盒上的结果是开区间公式作用于零宽区间的自然产物**"，
+    //    分三种情况，下面逐个断言。教训记在 S4_CHECKLIST 偏差 D6。
+    const AABB point{Vec2{1.0f, 1.0f}, Vec2{1.0f, 1.0f}};
+
+    // ——— Contains 是闭区间：那个点在"盒内" ———
+    MINI_CHECK(point.Contains(Vec2{1.0f, 1.0f}));
+    MINI_CHECK(point.Contains(point.min));
+
+    // ——— Intersects 是开区间；退化时**看对方在哪** ———
+
+    // ① 点盒 vs 它自己 → **false**（`1 < 1` 不成立）
+    MINI_CHECK(!point.Intersects(point));
+
+    // ② 点盒在另一个盒子的**内部** → **true**
+    //    `1 < 2 && 0 < 1` 两条都成立（重叠长度是 0，但公式不看长度）
+    //    ⚠️ 所以**别把退化盒当"闭区间的点"用**：点与盒的查询请用 Contains()。
+    MINI_CHECK(point.Intersects(AABB::FromCorners(Vec2{0.0f, 0.0f}, Vec2{2.0f, 2.0f})));
+
+    // ③ 点盒落在另一个盒子的**边界**上 → false（`2 < 2` 不成立）。
+    //    这一条恰好和"贴边不算相交"同源，是自洽的。
+    const AABB onEdge{Vec2{2.0f, 2.0f}, Vec2{2.0f, 2.0f}};
+    MINI_CHECK(!onEdge.Intersects(AABB::FromCorners(Vec2{0.0f, 0.0f}, Vec2{2.0f, 2.0f})));
+
+    // 同一次判断里两个答案不同 —— 不是矛盾，是两处语义各服务不同用途
+    //（**查询用 Contains，碰撞用 Intersects**），见 AABB.h 文件头那张表与 Intersects 的注释。
+    MINI_CHECK(point.Contains(Vec2{1.0f, 1.0f}) != point.Intersects(point));
+}
+

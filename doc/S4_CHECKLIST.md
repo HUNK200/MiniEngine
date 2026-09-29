@@ -60,8 +60,8 @@
 | **S4-1** | `math/MathUtils.h`：标量工具 + `FloorToInt`/`RoundToInt` | commit 1 | 📝 |
 | **S4-2** | `math/Vec2.h`：值类型 + 运算符 + `Normalized` 保护 | commit 1 | 📝 |
 | **S4-3** | `tests/test_math.cpp`：MathUtils 8 个 + Vec2 9 个用例；`tests/CMakeLists.txt` 加一行 | commit 1 | 📝 |
-| **S4-4** | `math/AABB.h`：含**贴边不算相交**的开区间语义 | commit 2 | ⬜ |
-| **S4-5** | `tests/test_math.cpp`：AABB 7 个用例 | commit 2 | ⬜ |
+| **S4-4** | `math/AABB.h`：含**贴边不算相交**的开区间语义 | commit 2 | 📝 |
+| **S4-5** | `tests/test_math.cpp`：AABB 7 个用例 | commit 2 | 📝 |
 | **S4-6** | `math/Ray.h`：slab 法 + **显式 `d == 0` 分支** | commit 3 | ⬜ |
 | **S4-7** | `tests/test_math.cpp`：Ray 9 个用例 | commit 3 | ⬜ |
 | **S4-8** | 反向验证 3 条实跑并**还原现场**（见 10.3） | commit 3 | ⬜ |
@@ -75,6 +75,8 @@
 | **D2** | 步骤 1 | 6.2 的施工图没规定 `operator==` / `operator<<` 的有无，实现时**两个都不提供** | 写进第 8 节原则 7 —— 这是有意的：`==` 会诱导浮点精确比较，`<<` 目前只有测试想用 |
 | **D3** | 步骤 1 **第一次编译失败**（本人回报） | `test_math.cpp` 有 **7 处** `MINI_CHECK(Vec2{1.0f, 2.0f}...)` 编译不过：`MINI_CHECK` 是**函数宏**，参数里的逗号会被当分隔符，而**花括号不保护逗号**（只有圆括号保护）→ C4002「参数过多」+ 一串看不懂的下游语法错误 | **按要求"按最正确的方式"从根上修 `MiniTest.h`**：`MINI_CHECK` 改成可变参数 `(...)`，那 7 处**不再需要任何括号**（先写的绕过手法已收回）。`MINI_CHECK_EQ`/`MINI_CHECK_NEAR` 必须区分参数、可变参数拆不开 → 仍要求调用方自己包圆括号（只剩 1 处，注释写明"这对括号不能省"）。规格同步到 `MINITEST_SPEC` 第 1 节，并进坑表 #27 |
 | **D4** | 步骤 1（本人回报 `no case in suite 'Math'`） | **本文档多处写了 `mini_tests Math`，但这条命令根本不存在**：runner 的 suite 过滤是 `strcmp` **精确匹配**（`test_main.cpp:84`，`MINITEST_SPEC` 第 3 节也这么规定），而本阶段按被测单元分了 `MathUtils`/`Vec2`/`AABB`/`Ray` 四个 suite | 文档里 8 处命令改成真实 suite 名，`Math` 这条去掉（想一次跑完 S4 就不带参数）。<br>**根因是我照抄了 `MINITEST_SPEC` 的示例** —— 那份规格第 1 节的示例 suite 就叫 `Math`（`MINI_TEST(Math, AddWorks)`），我顺着写了 `mini_tests Math`，却没想到真实 suite 名是 `MathUtils`/`Vec2`。**还是"写了没跑过"**：**照抄一个示例，不如去 grep 一遍真的名字** |
+| **D5** | 步骤 2 | **本文档 10.1 的用例 23 描述有错**：原文写"`min > max` → `IsValid()` false **且 `Intersects` 恒 false**"。写用例时才发现后半句**不成立** —— 反盒上的 `Intersects` 是普通公式算出来的，可能 true 也可能 false，取决于对方盒子在哪（例：`{min={5,0},max={1,10}}` 与 `{0,0}..{10,10}` 相交判 true） | 描述改成"`IsValid()` false；**故意不测**反盒的 `Intersects`"（没意义的东西不写进验收）。用例里加一句注释说明"反盒应该在构造阶段避免，走 `FromCorners()` 永远造不出反盒" |
+| **D6** | 步骤 2（本人回报 `AABB.PointBoxContainsButDoesNotIntersect` **FAIL**） | **我用例的期望写错了，代码是对的。** 我把"两个相同退化盒不相交"外推成了"退化点盒**不与任何东西**相交"，多推了一步。真实行为：点盒在另一个盒**内部**时 `Intersects` 是 **true**（`1 < 2 && 0 < 1` 都成立 —— 公式只看不等式，不看重叠长度） | ① 用例改名 `DegeneratePointBoxSemantics`（原名在断言一件假事）并**把三种情况分开钉住**（vs 自己 / 在内部 / 在边界）；② `AABB.h` 的 `Intersects` 注释与文件头各加一段"退化盒 ≠ 闭区间的点"；③ 用例 24 的描述同步。**结论**：`Intersects` 的公式没错，**是我的规格文字错了两处**（D5、D6）—— 两条都是"没推到底就写进文档" |
 
 
 ---
@@ -626,8 +628,8 @@ IntersectsAABB(box):
 | 20 | `AABB.ContainsIncludesEdges` | 四条边上的点、四个角**都算在内**；外面一点不算 |
 | 21 | `AABB.TouchingIsNotIntersecting` | 两盒共用一条边 → **false** ← **反向验证 2 的目标**（坑 #5） |
 | 22 | `AABB.OverlapAndContainmentIntersects` | 部分重叠 → true；一盒完全含另一盒 → true；**盒与自己** → true |
-| 23 | `AABB.ValidityAndDegenerate` | `min > max` → `IsValid()` false 且 `Intersects` 恒 false；退化点盒（`min==max`）→ `IsValid` true 但 `Intersects` false（开区间） |
-| 24 | `AABB.PointBoxContainsButDoesNotIntersect` | 退化点盒对"等于它的那个点"：`Contains` **true**、`Intersects` **false** —— 把坑 #6 的"故意不一致"钉死 |
+| 23 | `AABB.ValidityAndDegenerate` | `min > max` → `IsValid()` **false**（单轴反了也算无效）；<br>⚠️ **故意不测反盒的 `Intersects`** —— 那上面它没有意义（公式照样给 true/false，但不对应任何几何事实）。**退化的点盒/线盒**（`min==max`）→ `IsValid` **true** 但 `Intersects` **false**（开区间）| 
+| 24 | `AABB.DegeneratePointBoxSemantics` | 退化点盒的**三种**行为一次钉完：<br>① vs 它自己 → `Intersects` **false**（`1<1` 不成立）<br>② 在另一个盒**内部** → `Intersects` **true**（`1<2 && 0<1` 成立，虽然重叠长度为 0）<br>③ 在另一个盒**边界**上 → **false**（与"贴边不算相交"同源）<br>再加一条 `Contains` 与 `Intersects` **在同一判断里答案不同**（查询 vs 碰撞） |
 
 **Ray（9）**
 
