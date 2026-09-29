@@ -10,7 +10,8 @@
 ## 当前状态（2026-09-29：**方案已定，未开工**）
 
 - **S0 / S1 / S2 / S3 / S4 均已完成并验收。** 当前 **56 个 commit**，用例 **68**，工作区干净。
-- 本阶段的三条接口决策**已由本人拍板**（第 8 节），另有 **1 条加成项待定**（第 8 节末）。
+- 本阶段的**九条决策全部拍板**（第 8 节）—— 前三条是你选的，第 4~7 条是我按项目纪律定的，
+  **第 8/9 条（本阶段做测试 + 假 `Input` 替身）是你在原方案之外追加的**（细节见 8.1）。
 - **本阶段的性质：S4 是"没有画面的阶段"，S5 正好相反 —— 它是三个"看得见"的变化叠在一起**：
   1. **`@` 从"按一次跳一格"变成"按住连续移动"**（有速度、受 `dt` 影响）
   2. **`math` 那层第一次拿到真实调用者**：`Normalized`（斜向归一化）、`FloorToInt`（世界→tile）、
@@ -47,10 +48,11 @@
 | **S5-5** | `tests/test_world.cpp`：`World` 10 个用例（含 **dt 无关性**） | commit 2 | ⬜ |
 | **S5-6** | **建 `game/`**：`CMakeLists.txt` ×2 + `Game.h/.cpp`（搬 `DemoGame` 并改造） | commit 3 | ⬜ |
 | **S5-7** | `main.cpp` 缩到 ~35 行（只做 argv + 造对象 + Run） | commit 3 | ⬜ |
-| **S5-8** | 反向验证 4 条实跑并**还原现场**（见 10.3） | commit 3 | ⬜ |
-| **S5-9** | docs 收口：PLAN 标 ✅ / A.2 树 / 差异表 / `TECH_DEBT` 关 C1·C2·C4 + 两处修正 | commit 4 | ⬜ |
+| **S5-8** | **假 `Input` + `tests/test_game.cpp`（3 个用例）+ `tests/` 链接 `game`**（决策 9） | commit 3 | ⬜ |
+| **S5-9** | 反向验证 4 条实跑并**还原现场**（见 10.3；第 4 条靠 S5-8 的用例） | commit 3 | ⬜ |
+| **S5-10** | docs 收口：PLAN 标 ✅ / A.2 树 / 差异表 / `TECH_DEBT` 关 C1·C2·C4 + 两处修正 | commit 4 | ⬜ |
 
-**待定（第 8 节末）**：`tests/` 加一个假 `Input`，把 `Game` 层也变成可离线测（+2~3 个用例）。
+> **本阶段共 10 个任务、4 个 commit、22 个新用例**（68 → 90）。
 
 ### 落地偏差（实现时发现的问题，逐步追加）
 
@@ -104,7 +106,7 @@
 | 文件 | 改动 |
 | --- | --- |
 | `CMakeLists.txt`（顶层） | 打开 `add_subdirectory(game)`；`MiniEngine` 改成链接 `MiniEngine::game` |
-| `tests/CMakeLists.txt` | 加 `test_world.cpp`；（若做加成项）链接 `MiniEngine::game` |
+| `tests/CMakeLists.txt` | 加 `test_world.cpp`、`test_game.cpp`；并 `target_link_libraries(... MiniEngine::game)`（决策 9） |
 | `main.cpp` | **359 → ~35 行**（只留 argv 解析 + 造对象 + `Run`） |
 | `engine/CMakeLists.txt` | 源文件列表加 `src/world/TileMap.cpp`、`src/world/World.cpp`（**头文件不用加**，见坑 #12） |
 
@@ -113,12 +115,15 @@
 | 文件 | 内容 |
 | --- | --- |
 | `tests/test_world.cpp` | 3 个 suite、**20 个用例**（`TileMap` 8 / `EntityId` 2 / `World` 10） |
+| `tests/test_game.cpp` | 假 `Input`（~15 行）+ `Game` suite、**3 个用例**（决策 9） |
 | `doc/S5_CHECKLIST.md` | 本文件 |
 
-## 3. 依赖规则（本阶段**新增 2 条边**）
+## 3. 依赖规则（本阶段**新增 3 条边**）
 
 ```text
 main.cpp  →  game  →  engine  →  标准库
+               ↑        ↑
+            tests ──────┘        ← tests 同时链 game 与 engine（无环）
                         ↑
              engine/mini/world/   ← 新层，与 core / render 平级
 ```
@@ -126,8 +131,8 @@ main.cpp  →  game  →  engine  →  标准库
 | 新边 | 说明 |
 | --- | --- |
 | `main → game` | `main.cpp` 只 include `game/Game.h`（不再自己 define `DemoGame`） |
-| `game → engine` | `game` 用 `IMini::core::IGame` / `world::World` / `render::FrameBuffer` / `platform::Input` |
-| （加成项）`tests → game` | 只有要测 `Game` 时才需要；无环（`tests → game → engine`） |
+| `game → engine` | `game` 用 `mini::core::IGame` / `world::World` / `render::FrameBuffer` / `platform::Input` |
+| `tests → game` | 为了让 `Game::OnUpdate` / `OnRender` 可离线测（决策 9）。已核对**无环**：`tests → game → engine`，且 `engine` 绝不反向 include `game`（PLAN A.3） |
 
 **`world` 层的自约束（写进头注释，并用 grep 自检）**：
 
@@ -158,8 +163,8 @@ main.cpp  →  game  →  engine  →  标准库
 | --- | --- | --- | --- |
 | **1** | 写 `Entity.h` + `TileMap.h/.cpp` + `tests/test_world.cpp`（前 10 个用例）+ `engine/CMakeLists.txt` 加 1 个源文件 + `tests/CMakeLists.txt` 加 1 个文件 | `mini_tests.exe TileMap` / `EntityId` / 全集 | 10 passed / 68 → **78** |
 | **2** | 写 `World.h/.cpp` + 后 10 个用例 + `engine/CMakeLists.txt` 加 1 个源文件 | `mini_tests.exe World` / 全集 | 10 passed / → **88** |
-| **3** | 建 `game/`（两个 CMakeLists + `Game.h/.cpp`）、`main.cpp` 缩到 ~35 行、顶层 CMakeLists 打开 `add_subdirectory(game)` | `MiniEngine.exe` | **`@` 按住 WASD 连续移动**；HUD 显示 pos/tile/Σdt/fps |
-| **4** | 反向验证 4 条（10.3）+ docs 收口 | 见 10.3 | 每条都看到红、现场还原、全集回到 88 |
+| **3** | 建 `game/`（两个 CMakeLists + `Game.h/.cpp`）、`main.cpp` 缩到 ~35 行、顶层 CMakeLists 打开 `add_subdirectory(game)`、**假 `Input` + `test_game.cpp`（3 个用例）+ `tests/` 链 `game`** | `mini_tests.exe Game` / 全集 / `MiniEngine.exe` | 3 passed / 68 → **90**；**`@` 按住 WASD 连续移动**；HUD 显示 pos/tile/Σdt/fps |
+| **4** | 反向验证 4 条（10.3）+ docs 收口 | 见 10.3 | 每条都看到红、现场还原、全集回到 90 |
 
 > ⚠️ **步骤 3 是本阶段唯一"会改变 exe 行为"的一步** —— 前两步只加库和测试，
 > `MiniEngine.exe` 的现象**必须逐字符不变**（还是 S3 的按键面板）。这条要单独确认。
@@ -540,12 +545,39 @@ FlushRemovals():
 | 5 | `TileMap` 越界语义 | **`At` 越界 → `Wall`**；`Set` 越界静默忽略 | 世界外都是墙 → S7 碰撞直接受益。代价：S6 的相机不能靠 `At()` 判边界 |
 | 6 | 移动放在哪层 | `World::Update(dt)` 只做积分；**输入→速度**由 `game` 做 | `world` 因此不认识 `platform` → 可离线单测（第 3 节） |
 | 7 | 地图内容从哪来 | `game/Game.cpp` 的 `BuildDemoMap()` **确定性**写死 | 引擎不认识"关卡长什么样"；不做文件格式、不做随机生成 |
+| **8** | **本阶段做不做**测试（PLAN 的 S5 小节完全没提测试） | **做**：`world` 层 20 个用例 + `Game` 层 3 个用例 | `world` 纯逻辑（20 个）；`Game` 那 3 个见决策 9。代价：S5 的交付物比 PLAN 原文多两个测试文件 |
+| **9** | **给 `tests/` 加一个假 `Input`**（测试替身），让 `Game` 层也能离线测 | **做**（本人在原方案之外追加；细节见下面 8.1） | 把"斜向不比直向快""帧序""`@` 画在正确的格"三条从**人眼验收**变成**机器验收**。代价：`tests` 多一条到 `game` 的链接边（无环）+ ~15 行替身 + 3 个用例 |
 
-**待定（加成项）**：`tests/` 里加一个 **~15 行的假 `Input`**（`Input` 是抽象类，塞假按键即可）
-→ `Game::OnUpdate` 也能离线测，**"斜向不比直向快"从"眼睛看"变成"机器查"**。
-- 好处：符合 `TECH_DEBT` C7 的精神（能离线测的就离线测）
-- 代价：`tests` 多一条到 `game` 的链接边（无环）
-- **状态：等本人点头**。不做也能跑，只是坑 #3 那条只能靠运行观察。
+### 8.1 决策 9 的细节（假 `Input` 加成项）
+
+**是什么**：`tests/test_game.cpp` 里一个 ~15 行的 `FakeInput : public mini::platform::Input` ——
+`Input` 是**抽象基类**（S2 决策 1），所以测试可以自己派生一个，按键状态想怎么塞就怎么塞，
+**不需要真终端**。真实现 `InputWindows` 要 `ReadConsoleInputW`，而 `Game` 只认 `const Input&` 这个抽象
+—— 这就是当初"抽象基类 + 工厂"的第二个收益（第一个是"能有两个实现"，第二个是"**能被替身**"）。
+
+**能钉住的三件事**：
+
+| # | 用例 | 现在（不加替身时）怎么验 |
+| --- | --- | --- |
+| 1 | **斜向不比直向快**：按住 W+D 跑 1 秒 → 位移长度 ≈ 12 格（不是 17） | 人眼盯屏幕 —— 而人对 1.4 倍速度差不敏感 |
+| 2 | **帧序**：按住 D 调一次 `OnUpdate` → **同一帧**位置就变了（不是晚一帧） | **零护栏**，且这是最容易写反的地方 |
+| 3 | **画面落点**：玩家在 `(5.5, 3.5)` → `OnRender` 后 `fb.At(5,4).ch == '@'` | 人眼数格子 —— 这正是 `PLAN` E-8"画面整体偏移半格"的坑 |
+
+> 第 3 条是**写这份文档时才想到的**：`OnRender` 只依赖 `FrameBuffer`（纯内存对象，S1 起就可离线测），
+> 于是"肉眼看见 `@` 在屏幕上"也能变成机器可查 —— 这是 S4 那个手法的**二维版**：
+> S4 用"字节等价"证明脏行 diff 不改画面，S5 用"像素落点"证明世界→屏幕坐标没差半格。
+
+**代价（全部量化）**：替身 ~15 行 · 用例 3 个（20 → 22，全集 68 → **90**）· 新文件 1 个 ·
+`tests/CMakeLists.txt` 多一行 `target_link_libraries` · 依赖图多一条 `tests → game`（无环）。
+
+**⚠️ 必须写进注释的边界**（否则后人会误判覆盖面）：
+
+> **假 `Input` 不能证明"真终端的输入是对的"。** 它只证明"**给定按键状态，`Game` 算得对**"。
+> 真终端那条链（`ReadConsoleInputW` → `InputState`）是 `InputWindows` 的事，
+> S2 已经用 `test_input_state.cpp` 的 7 个用例 + 手工验收覆盖了。
+
+**不做会怎样**（留档，因为这是"选择追加"要有代价意识）：20 个用例照跑，`dt` 无关性/越界/延迟删除
+都有护栏；但上面三条只能靠眼睛，且**反向验证第 4 条没有对应用例 → 只能记"未验"**。
 
 ## 9. 坑表
 
@@ -567,16 +599,17 @@ FlushRemovals():
 | 14 | 顶层 `MiniEngine` 忘了改成链接 `game` | 会得到"main.cpp 找不到 `game/Game.h`"；三处 CMake 要一起改（顶层 / engine / game） |
 | 15 | **`std::span` 当"容器"用** | 它**不拥有**数据，也不延长生命周期；只在"立刻遍历一次"的场景用 |
 | 16 | `Entity` 里有 `bool`，`sizeof` 不直观 | 加 `static_assert(sizeof(Entity) == ...)` 把布局钉住（照 S4 先例） |
+| 17 | **把假 `Input` 的覆盖面想大了** | 它只证明"给定按键状态 `Game` 算得对"，**不证明真终端输入是对的** → 边界必须写进 `test_game.cpp` 的文件头注释（见 8.1 末） |
 
 ## 10. 验收
 
 > **本阶段有"跑 exe 看现象"**（与 S4 相反）—— 但**主判据仍然是离线可证的**：
 > dt 无关性做成单测，运行时的 HUD 只是**自证**。
 
-### 10.1 用例清单（20 个，3 个 suite：`TileMap` / `EntityId` / `World`）
+### 10.1 用例清单（**22 个，4 个 suite**：`TileMap` / `EntityId` / `World` / `Game`）
 
-> 全部写在新文件 `tests/test_world.cpp`。
-> ⚠️ 估算在实现时从 17 涨到 20（决策 2 的删除机制 +3），**实际数以落地为准**。
+> 前 20 个写在新文件 `tests/test_world.cpp`；最后 3 个（`Game`）写在新文件 `tests/test_game.cpp`（决策 9）。
+> ⚠️ 估算在实现时从 17 → 20（决策 2 的删除机制 +3）→ 22（决策 9 +2~3），**实际数以落地为准**。
 
 **`TileMap`（8）**
 
@@ -613,6 +646,14 @@ FlushRemovals():
 | 19 | `World.FlushRemovalsKeepsSetOrderUnspecified` | 删中间一个后：**剩下的集合正确**（顺序不保证、不钉） |
 | 20 | `World.FlushRemovalsIsIdempotent` | 清空后再 `Flush` 无事、再 `Mark` 同一个 id 不会重复删 |
 
+**`Game`（3）** —— 在 `tests/test_game.cpp`，靠假 `Input`（决策 9 / 第 8.1 节）
+
+| # | 用例 | 钉住什么 |
+| --- | --- | --- |
+| 21 | `Game.DiagonalMoveIsNotFaster` | 按住 W+D 跑 1 秒 → 位移长度 ≈ 12 格（不是 17）← **反向验证 4 的目标** |
+| 22 | `Game.VelocityTakesEffectSameFrame` | 按住 D 调一次 `OnUpdate` → **本帧**位置就变了（帧序约束） |
+| 23 | `Game.PlayerIsDrawnAtRoundedPosition` | 玩家 `(5.5,3.5)` → `fb.At(5,4).ch == '@'`（世界→屏幕 `round` + 顶栏第 0 行的偏移）|
+
 ### 10.2 正向验收
 
 ```powershell
@@ -620,7 +661,8 @@ cmake --build build --config Debug                      # 期望 0 warning
 .\build\bin\Debug\mini_tests.exe TileMap                # 期望  8 passed
 .\build\bin\Debug\mini_tests.exe EntityId               # 期望  2 passed
 .\build\bin\Debug\mini_tests.exe World                  # 期望 10 passed
-.\build\bin\Debug\mini_tests.exe                        # 期望 68 → 88 passed
+.\build\bin\Debug\mini_tests.exe Game                   # 期望  3 passed
+.\build\bin\Debug\mini_tests.exe                        # 期望 68 → 90 passed
 ctest --test-dir build -C Debug --output-on-failure     # 期望 1/1
 ctest --preset asan                                     # 期望同样全绿（S3 打通、S4 复验过这条路）
 cmake --build build --config Release                    # 期望同样 0 warning
@@ -649,7 +691,7 @@ cmake --build build --config Release                    # 期望同样 0 warning
 | 检查 | 期望 |
 | --- | --- |
 | 步骤 1/2 之后的 `MiniEngine.exe` | 与 S3 **逐字符一致**（那两步只加库和测试） |
-| `mini_tests.exe Nope` | 仍返回非 0，且括号里的注册数变成 88（门闩 A1 有效） |
+| `mini_tests.exe Nope` | 仍返回非 0，且括号里的注册数变成 **90**（门闩 A1 有效） |
 
 ### 10.3 反向验证（4 条，**每条都必须看到红**）
 
@@ -662,9 +704,9 @@ cmake --build build --config Release                    # 期望同样 0 warning
 | 1 | `World::Update` 里把 `pos += perSecond * dt` 的 **`* dt` 删掉**（变成 `pos += perSecond`） | `MovementIsDtIndependent` + `MovementScalesWithSpeed` 变红 | 证明两条用例真的在测"乘了 dt"，而不是"位置变了" |
 | 2 | `TileMap::ToIndex` 把 `FloorToInt` 换成 **`(int)` 截断** | **只有 `ToIndexOnNegativeFloor` 变红**，`ToIndexTruncatesTowardTile` **不变红** | 若两条都红或都不红 → 说明它们**测的是同一件事**，没钉住"负数"这个区别 |
 | 3 | `World::MarkForRemoval` 改成**立即删除**（内部直接 swap-erase） | `MarkedEntitySurvivesUntilFlush` 变红 | 证明"遍历中禁止删除"这条规矩**被测到了**（不是注释说说） |
-| 4 | `Game::OnUpdate` 里去掉 **`Normalized()`** | 斜向速度用例变红 | 证明"斜向不比直向快"被钉住。⚠️ **这条依赖第 8 节的加成项**：不做假 `Input` 的话它没有对应用例 → 那就只能靠运行观察，**届时记为"未验"而不是"通过"** |
+| 4 | `Game::OnUpdate` 里去掉 **`Normalized()`** | `Game.DiagonalMoveIsNotFaster` 变红 | 证明"斜向不比直向快"被钉住（这是决策 9 加替身换来的：**不做替身就没有对应用例**，只能记"未验"） |
 
-**预测（实现后填实测）**：3 条或 4 条会红；每条**必须**至少有一条用例标红。
+**预测（实现后填实测）**：**4 条都会红**，且每条**必须**至少有一条用例标红、**不能有预料之外的红**。
 **如果某条没红** —— 说明那个守卫是摆设，要按 `PLAN` 10.3 的老规矩**重写成真正能抓住的输入**
 （S4 就撞过这事：`ParallelOutsideReturnsNullopt` 的两半里只有一半真会红，见 `S4_CHECKLIST` 10.3）。
 
@@ -680,7 +722,8 @@ cmake --build build --config Release                    # 期望同样 0 warning
 - [ ] 所有公开接口**都有一行注释**回答"为什么存在 / 谁会用它"（决策 6 那条纪律）
 - [ ] `static_assert(sizeof(Entity) == ...)` 在头文件里
 - [ ] `tests/` 里没有把 `game` 的私有实现细节写进断言（只测公开接口）
-- [ ] 反向验证 4 条**都跑过**，每条都有用例标红（或明确记为"未验"），现场已还原
+- [ ] **`test_game.cpp` 的文件头写明那条边界**（坑 #17：假 `Input` 不证明真终端输入对）
+- [ ] 反向验证 4 条**都跑过**，每条都有用例标红，现场已还原
 - [ ] `doc/MiniEngine_PLAN.md` 的 S5 小节标 ✅、A.2 目录树改对、差异表写完
 - [ ] `doc/TECH_DEBT.md`：关 **C1 / C2 / C4**；改 **B5 的 D 类**（`FloorToInt`/`RoundToInt`/`Normalized` 有生产调用者了；补上漏掉的 `Vec2` 查询方法）
 - [ ] `Input.h` 里 `IsDown` 的注释改准（原写"S9 的持续射击会用到" → 其实 **S5 的 WASD 就用上了**）
@@ -693,7 +736,7 @@ cmake --build build --config Release                    # 期望同样 0 warning
 | --- | --- | --- | --- |
 | 1 | `feat: 加入 world/Entity.h 与 TileMap（10 个单测）` | `Entity.h`、`TileMap.h/.cpp`、`test_world.cpp` 前 10 个用例、2 处 CMakeLists | 78 passed；exe 行为**不变** |
 | 2 | `feat: 加入 world/World（实体容器 + dt 积分 + 延迟删除，10 个单测）` | `World.h/.cpp`、后 10 个用例、`engine/CMakeLists.txt` | 88 passed；exe 行为**不变** |
-| 3 | `feat: 建 game/ 静态库，main.cpp 缩到 35 行，@ 用速度移动` | `game/` 三件套、顶层 CMakeLists、`main.cpp` | `@` 连续移动、HUD 世界坐标 |
+| 3 | `feat: 建 game/ 静态库，main.cpp 缩到 35 行，@ 用速度移动（+3 个 Game 单测）` | `game/` 三件套、顶层 CMakeLists、`main.cpp`、假 `Input` + `test_game.cpp`、`tests/CMakeLists.txt` | 90 passed；`@` 连续移动、HUD 世界坐标 |
 | 4 | `docs: S5 收口（PLAN 标 ✅ / TECH_DEBT 关 C1·C2·C4 / 两处注释改准）` | 三份文档 + `AGENTS.md` | `git status` 干净 |
 
 ## 12. 与 PLAN 原文的差异（**必须同步**）
@@ -707,6 +750,7 @@ cmake --build build --config Release                    # 期望同样 0 warning
 | 5 | 未提 `game/` 静态库 | **本阶段就建** | PLAN:122 与顶层 CMakeLists:56-58 的注释都写死了"S5 才建"；`TECH_DEBT` C2 的触发条件也是 S5 |
 | 6 | 未提 HUD 内容 | 换成**世界坐标面板**（去掉 15 键四态面板） | 决策 3；这是 C4 能关闭的前提 |
 | 7 | S6 相机"边界夹取" | S5 的 `TileMap::At` 越界返回 `Wall`，**但相机不能靠它判边界** | 决策 5；写在这里免得 S6 时踩 |
+| 8 | PLAN 的 S5 小节**完全没提测试**（S4 至少写了"单测 6 个"） | 加 **23 个用例**：`world` 20 + `Game` 3（假 `Input`） | 决策 8 / 9；与 S4 立下的"能离线测的就离线测"一脉相承，也让 S5 的核心现象从人眼验收变成机器验收 |
 
 ## 13. 本阶段的"学习点"备忘（给自己看的）
 
@@ -722,3 +766,6 @@ cmake --build build --config Release                    # 期望同样 0 warning
    **离线就能证**（切成任意粒度都成立）—— 比"盯着屏幕看 10 秒"可靠得多。
 6. **在 `main.cpp` 里养一个 250 行的 `DemoGame`，代价终于显形了**：S3 时它是"临时 demo"（`PLAN:410` 的记录），
    S5 一建 `game/` 就发现"搬走"这件事本身需要动三处 CMake。**"临时"的东西也有利息。**
+7. **抽象基类的第二个收益是"能被替身"**：S2 选"抽象基类 + 工厂"时，理由是"将来会有第二个实现"。
+   到 S5 才看清它真正值钱的地方 —— **测试可以派生一个假实现，于是依赖它的整条链都能离线跑**
+   （`Game` 的核心三条现象全靠这个）。**"为了可测而依赖抽象"比"为了扩展"更常兑现。**
