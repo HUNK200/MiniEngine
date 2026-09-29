@@ -85,15 +85,28 @@ struct Registrar {
 //   而 MSVC /W4 会对 `if (常量)` 报 C4127，把用例代码搞脏。先存进变量再判即可避开，
 //   且失败分支仍然只在失败时才构造消息（没有"每次断言都拼一遍字符串"的开销）。
 //   `(void)miniOk;` 是给"表达式本身有副作用但取值为常量"的情形留的后路，避免 C4189。
+//
+// ⚠️ **为什么 MINI_CHECK 用可变参数 `...` 而不是 `(expr)`**（2026-09-29 改）：
+//   函数宏的参数按**顶层逗号**切分，而"哪一层算顶层"只数**圆括号**——
+//   **花括号不保护逗号**。所以 `MINI_CHECK(Vec2{1.0f, 2.0f}.LengthSq() > 0.0f)`
+//   会被拆成两个参数，报 C4002「参数过多」，再引发一串看不懂的下游语法错误。
+//   因为 `MINI_CHECK` 只需要**一个**表达式，用 `...` 原样接收就彻底没有这个问题。
+//
+// ⚠️ 但 `MINI_CHECK_EQ(lhs, rhs)` / `MINI_CHECK_NEAR(lhs, rhs, eps)` **必须区分参数**，
+//   可变参数拆不开 → 它们的参数里若含顶层逗号，**调用方要自己多包一层圆括号**：
+//       MINI_CHECK_EQ((AABB{1.0f, 2.0f, 3.0f, 4.0f}.min.x), 1.0f)   ← 这对括号是必需的
+//       MINI_CHECK_NEAR((Vec2{3.0f, 4.0f}.Perp().Length()), 5.0f, 1e-5f)
+//   而本来就落在函数调用圆括号里的花括号**不需要**处理：
+//       MINI_CHECK(v.ApproxEquals(Vec2{1.0f, 2.0f}))   ← 逗号已在第 2 层，安全
 // ------------------------------------------------------------
 
-#define MINI_CHECK(expr)                                                            \
-    do {                                                                            \
-        const bool miniOk = static_cast<bool>(expr);                                \
-        (void)miniOk;                                                               \
-        if (!miniOk) {                                                              \
-            ::minitest::ReportFailure(__FILE__, __LINE__, "MINI_CHECK(" #expr ")"); \
-        }                                                                           \
+#define MINI_CHECK(...)                                                                 \
+    do {                                                                                \
+        const bool miniOk = static_cast<bool>(__VA_ARGS__);                             \
+        (void)miniOk;                                                                   \
+        if (!miniOk) {                                                                  \
+            ::minitest::ReportFailure(__FILE__, __LINE__, "MINI_CHECK(" #__VA_ARGS__ ")"); \
+        }                                                                               \
     } while (false)
 
 #define MINI_CHECK_EQ(lhs, rhs)                                                     \
