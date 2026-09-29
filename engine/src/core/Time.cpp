@@ -65,7 +65,15 @@ void Time::LimitFPS(int maxFps) noexcept
     }
 
     // 目标帧时间用**整数纳秒**算：1e9/60 = 16666666ns。
-    // 用 float(1.0f/60) 累加会漂（60fps 稳定跑成 59.94）。
+    //
+    // 理由要说准（2026-09-28 修正，原先写的"float 累加会漂"是**错的**）：
+    //   ✅ 真正的收益是**避免毫秒截断** —— 写成 milliseconds(1000/60) 只得到 16ms
+    //      （比 16.667ms 短 4%），顶栏会稳定显示 ~62 而不是 60，一眼就能看出来。
+    //   ❌ "float(1.0f/60) 累加会漂成 59.94" 站不住：
+    //      ① 每帧都以**当帧的 m_begin** 重新算 elapsed，误差没有跨帧累积的通路；
+    //      ② 1.0f/60 的浮点误差约 1ns/帧，而顶栏的分辨率是 0.1ms —— 差 1000 倍；
+    //      ③ 59.94 是 NTSC 的 1000/1001 系数，跟浮点累加没关系。
+    //   所以整数版不是"防漂移"，是"帧时间精确 + 可复现"。详见 TECH_DEBT.md B4。
     const auto target = std::chrono::nanoseconds(1'000'000'000LL / maxFps);
 
     const auto elapsed = Clock::now() - m_begin;

@@ -239,7 +239,9 @@ cmake --build build --config Debug
 1. `Console.h`：`virtual bool Present(const render::FrameBuffer& fb) = 0;`
 2. `ConsoleWindows.cpp`：
    - 成员加 `render::RowDiff m_rowDiff;` 与 `int m_lastWidth/m_lastHeight`
-   - 尺寸变了 → `WriteRaw("\x1b[2J")` + `m_rowDiff.Resize(h)` + `m_rowDiff.Invalidate()`
+   - 尺寸变了 → `WriteRaw("\x1b[2J")` + `m_rowDiff.Invalidate()`
+     （**不需要再调 `Resize(h)`**：`Compose()` 自己会发现行数变了并丢掉旧快照。
+     原计划里有个 `RowDiff::Resize`，实现时删掉了 —— 全仓库 0 处调用，见 `TECH_DEBT.md` B2）
    - `Present` 里 `Compose` → 一次 `write` → `flush` → 检查 `std::cout` 状态
 3. `main.cpp` 里那处调用点改成 `if (!console->Present(fb)) { ... }`（S2 的 main 此时还在，最小的兼容改动）
 
@@ -320,7 +322,7 @@ public:
     [[nodiscard]] float WorkMs() const noexcept;       // 本帧干活耗时（毫秒）
     [[nodiscard]] float Fps() const noexcept;
     [[nodiscard]] float MaxFrameMs() const noexcept;
-    [[nodiscard]] std::uint64_t FrameCount() const noexcept;
+    // （`FrameCount()` 在实现时被删掉了：全仓库 0 处调用，见 TECH_DEBT.md B2）
 private:
     std::chrono::steady_clock::time_point m_begin{};      // 本帧起点
     std::chrono::steady_clock::time_point m_prevBegin{};  // 上一帧起点
@@ -468,8 +470,11 @@ stdout/stdin 不是控制台时构造函数会抛（S2 已有的行为），**�
 `ConsoleWindows` 内部额外做三件事：
 
 1. 持有 `render::RowDiff`，`Present` 里 `Compose` + **一次** `write` + `flush`
-2. 记录上一帧的 `fb.Width()/Height()`；变了才 `ESC[2J` + `RowDiff::Resize` + `Invalidate`
+2. 记录上一帧的 `fb.Width()/Height()`；变了才 `ESC[2J` + `Invalidate`
+   （**不用再调 `RowDiff::Resize`**：`Compose()` 自己发现行数变了 —— 那个方法实现时删了，0 调用）
 3. 写完检查 `std::cout` 状态 → 返回 `!std::cout.fail()`
+   （**实现时又加了一层**：每帧先 `GetConsoleMode` 判终端存活 —— 因为脏行下"没写就没失败信号"，
+   见坑 #29 与 `TECH_DEBT.md` D8）
 
 **不新增 `InvalidateFrame()` 之类的公开方法**：Console 从 `FrameBuffer` 的尺寸自己看得出来，谁改尺寸谁负责，接口不扩。
 
@@ -552,7 +557,8 @@ Run(IGame& game):
 LimitFPS(maxFps):
     if (maxFps <= 0) return
     // 用整数纳秒算目标帧时间：1e9/60 = 16666666ns。
-    // 别用 float(1.0f/60) 累加 —— 误差会让 60fps 稳定漂成 59.94
+    // 比毫秒精确：milliseconds(1000/60) 只有 16ms（短 4%），顶栏会稳定显示 ~62
+    // （2026-09-28 修正：这里原先写的是"float 累加会漂成 59.94"，那是错的，见 TECH_DEBT B4）
     target  = nanoseconds(1'000'000'000 / maxFps)
     elapsed = now() - m_begin
     if (elapsed >= target): return                  // 已经超时，不睡
@@ -674,7 +680,7 @@ platform::Wait(7ms) → 实测 7.05~7.56ms（10 次采样）
 | 1 | **第一帧 `dt = 0`** | `BeginFrame` 首次没有"上一帧起点"。游戏里**不许**拿 dt 做除数；`pos += v*dt` 这种积分式天然安全 |
 | 2 | 拖窗口/断点后实体瞬移 | 几百毫秒的大 dt。`ClampDelta` 夹到 0.05。**但顶栏 `Frame:` 要用未夹的值**，否则你永远看不到那次卡顿 |
 | 3 | FPS 恒等于目标值、从不波动 | `BeginFrame` 放到了 `LimitFPS` 之后 → dt 只度量干活耗时。这是"看起来完美"的假绿，反向验证 2 专门钉它 |
-| 4 | 60fps 稳定跑成 59.9 / 59.94 | 用 `float(1.0f/60)` 累加误差。用 `nanoseconds(1e9/maxFps)` 整数算 |
+| 4 | 60fps 稳定跑成 **~62**（不是 60.0） | 目标帧时间用了**毫秒**：`milliseconds(1000/60)` 只得到 16ms，比 16.667ms 短 4%。用 `nanoseconds(1e9/maxFps)`。<br>⚠️ **2026-09-28 修正**：这里原先写的是"用 `float(1.0f/60)` 累加误差会漂成 59.94"—— **那个说法是错的**（每帧重新锚定 `m_begin`，误差不累积；误差量级 1ns/帧 vs 顶栏 0.1ms；59.94 是 NTSC 系数）。详见 `TECH_DEBT.md` B4 |
 | 5 | 高帧率下 CPU 跑满 | 自旋窗口写死 2ms。改成 `min(2ms, target/4)`。**注意用纳秒存**：`targetFps > 125` 时 `target/4 < 8ms`，一 `duration_cast` 到毫秒就截断成 0（等于完全不细磨） |
 | 6 | `Fps()` 被单帧尖峰拉飞 | 用了 `平均(1/dtᵢ)`。要用 `1 / 平均(dtᵢ)` |
 | 7 | 顶栏数字反应迟钝 | 窗口是**帧数**不是秒数。60 帧在 10fps 下是 6 秒。调 `kWindow` 而不是改算法 |
@@ -815,7 +821,7 @@ Get-Process -Id $p.Id -ErrorAction SilentlyContinue   # 期望：什么都没有
 
 | # | 怎么破坏 | 必须看到 | 状态（2026-09-28） |
 | --- | --- | --- | --- |
-| 1 | 把目标帧时间改成 `float(1.0f/60)` 并累加 | FPS 缓慢漂移（整数纳秒版稳定在 59.9~60.1）→ 证明整数算法不是洁癖 | ❌ **未做** |
+| 1 | 把 `target` 改成 `std::chrono::milliseconds(1000 / maxFps)` | 顶栏**稳定停在 ~62**（16ms 的倒数 = 62.5，再减去等待开销），**不是漂移**；正确版是 60.0 → 证明整数纳秒防的是**毫秒截断**，不是"浮点累加漂移"。<br>⚠️ **2026-09-28 修正**：这一条的预期结果原先写成"改成 `float(1.0f/60)` 累加 → FPS 缓慢漂移"，**那个因果是错的**（见 `TECH_DEBT.md` B4）；破坏方式也换成了能真正看出差别的那种 | ⏸ 预期已修正，**未实跑** |
 | 2 | 把 `m_time.BeginFrame()` 挪到 `LimitFPS` 之后 | 顶栏 FPS 暴涨到几百 → 证明"帧首"这个位置是硬约束 | ❌ **未做** |
 | 3 | 删掉 `RowDiff` 的 `ESC[0K` | 行变短时右边留垃圾（`Released` → `-` 留下 `eased`） | ✅ **已做**（步骤 2：`ShrinkingRowClearsTail` 在第 113 行变红，随后已还原） |
 | 4 | 把 `ClampDelta` 的 0.05 改成 100 | 拖窗口/断点之后 `@` 瞬移一大段 → 证明 clamp 是必要的（这也是 S5 穿墙 bug 的前身） | ❌ **未做** |
