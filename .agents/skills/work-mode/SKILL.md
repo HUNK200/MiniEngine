@@ -1,6 +1,6 @@
 ---
 name: work-mode
-description: 把 MiniEngine 游戏引擎项目的阶段切碎成 5~10 分钟、随时可中断、且能立刻验证的单个微任务。用于上班/上课间隙的碎片时间：说「上班模式」「摸一下鱼」「给我个 10 分钟的活」「碎片任务」「来个小活」或输入 /w5 /w10 时，先看 git log 与排期表判断当前阶段，再只给出一个任务——包含打开哪个文件哪一行改成什么、增量构建命令、一条可执行的完成标志、被打断怎么办；并硬性拒绝「实现某个系统」「学习某个原理」「跨文件重构」「给几个选项让用户挑」这类伪任务。也用于「做完了」时轮换下一种任务类型、「太简单/太难」时同赛道升降档、「只有 3 分钟」时降到最小、「今天不方便编译」时切纯推演模式。触发词：上班模式, 摸鱼, 摸一下鱼, 碎片任务, 碎片时间, 上班间隙, 空档, 给我个活, 10分钟的活, 5分钟的活, 来个小活, 小任务, 微任务, 再来一个, 做完了, 太简单, 太难, 降级, /w5, /w10, /work, work mode, micro task, 5-minute task. Use when the user wants exactly one small interruptible coding task for a work break.
+description: 把 MiniEngine 游戏引擎项目的阶段切碎成 5~10 分钟、随时可中断、且能立刻验证的单个微任务。用于上班/上课间隙的碎片时间：说「上班模式」「摸一下鱼」「给我个 10 分钟的活」「碎片任务」「来个小活」或输入 /w5 /w10 时，先看 git log 与阶段列表判断当前阶段，再只给出一个任务——包含打开哪个文件哪一行改成什么、增量构建命令、一条可执行的完成标志、被打断怎么办；并硬性拒绝「实现某个系统」「学习某个原理」「跨文件重构」「给几个选项让用户挑」这类伪任务。也用于「做完了」时轮换下一种任务类型、「太简单/太难」时同赛道升降档、「只有 3 分钟」时降到最小、「今天不方便编译」时切纯推演模式。触发词：上班模式, 摸鱼, 摸一下鱼, 碎片任务, 碎片时间, 上班间隙, 空档, 给我个活, 10分钟的活, 5分钟的活, 来个小活, 小任务, 微任务, 再来一个, 做完了, 太简单, 太难, 降级, /w5, /w10, /work, work mode, micro task, 5-minute task. Use when the user wants exactly one small interruptible coding task for a work break.
 ---
 
 # 上班模式（入口转发）
@@ -10,7 +10,7 @@ description: 把 MiniEngine 游戏引擎项目的阶段切碎成 5~10 分钟、�
 - 相对本文件的路径：`../../../doc/WORK_MODE.md`
 - 绝对路径：`d:/Project/fish/c++_simple_engine/doc/WORK_MODE.md`
 
-同目录下的配套文件：`MiniEngine_PLAN.md`（阶段定义、H.1 排期表、E 风险表）、`S0_CHECKLIST.md`。
+同目录下的配套文件：`MiniEngine_PLAN.md`（阶段定义、H 节长期路线、E 风险表）、`S0_CHECKLIST.md`。
 
 ## 执行方式
 

@@ -4,7 +4,7 @@
 > 定位：**C++ + Game Engine Playground**，不是一个必须完成的工程。
 > 原则：可运行优先 / 不过度设计 / 每阶段有"好玩的结果"。
 >
-> **时间有限？直接跳到 H 节**（7 天冲刺计划：每天做什么、掉队怎么砍、富余时间去哪）。
+> **想先看路线？直接跳到 H 节**（长期路线：可停在三条里程碑的哪一站、有空再挑的扩展池）。
 >
 > ⚠️ **项目约定**：AI 默认只产出**方案**、不写实现代码，具体实现由我自己敲（判定标准与例外见 `AGENTS.md`）。
 
@@ -118,9 +118,10 @@ c++_simple_engine/
 ├── CMakePresets.json           # 预设：ms-msvc-debug（默认）/ ms-asan；生成/构建/测试三组都有
 ├── .gitattributes              # 行尾统一 LF（两机同步用）
 ├── .gitignore
-├── main.cpp                    # 唯一入口。S3 起含临时 DemoGame（IGame 实现），
-│                               #   等 S5 建了 game/ 才会回到 <20 行。
-│                               #   DemoGame 的版面从**第 1 行**开始 —— 第 0 行留给顶栏
+├── main.cpp                    # 唯一入口。S3 起含临时 DemoGame（IGame 实现）→ **S5 已把游戏侧
+│                               #   全部搬去 `game/`**：现在 47 行（40 行非空），只做 argv + 造对象 + Run
+│                               #   （A.2 原估算"<20 行"没达成，多出来的全是"为什么这么排"的注释）
+│                               #   游戏的版面从**第 1 行**开始 —— 第 0 行留给引擎顶栏
 ├── README.md                   # 阶段 14 再写，别提前写
 │
 ├── doc/                        # 全部文档（2026-09-23 起集中于此）
@@ -129,6 +130,9 @@ c++_simple_engine/
 │   ├── S0_CHECKLIST.md         # S0 清单 + CMake 补丁清单 + 勾选进度
 │   ├── S2_CHECKLIST.md         # S2 施工图：接口决策 + 坑表 + 测试计划 + 正/反向验收
 │   ├── S3_CHECKLIST.md         # S3 施工图：Application/Time/RowDiff + 验收
+│   ├── S4_CHECKLIST.md         # S4 施工图：math/ 四个头 + 33 个用例 + 与 PLAN 的 9 条偏差
+│   ├── S5_CHECKLIST.md         # S5 施工图：world/ + game/ + 13 条落地偏差 + 4 条反向验证实测
+│   ├── TECH_DEBT.md            # 技术债：A/B/C/D 四组，**每阶段收口时更新**
 │   ├── MINITEST_SPEC.md        # 测试框架 MiniTest 的规格
 │   ├── CTEST_NOTES.md          # CTest 入门与 GoogleTest 分工
 │   └── WORK_MODE.md            # 上班模式开关正文
@@ -147,18 +151,21 @@ c++_simple_engine/
 │   │   │               Camera.h  Viewport.h  Renderer3D.h  RayCaster.h
 │   │   ├── world/      World.h  Entity.h  Transform.h  Velocity.h  Health.h
 │   │   │               TileMap.h  Scene.h
+│   │   │               # ↑ 同样是目标态；**S5 落地了 Entity.h / TileMap.h / World.h 三个**
+│   │   │               #   （Transform / Velocity 并进 Entity.h —— S5 决策 4；Health/Scene 未建）
 │   │   ├── physics/    Collision.h  PhysicsSystem.h
 │   │   ├── ai/         StateMachine.h  EnemyController.h
 │   │   └── debug/      DebugOverlay.h  Profiler.h
 │   └── src/                    # 与 include 镜像的 .cpp；S2 起 platform/ 下放 Windows 实现
 │                               #   （唯一允许出现 <windows.h> 的地方，公共头一个都不能有）
 │
-├── game/
-│   ├── CMakeLists.txt          # add_library(game STATIC ...)
+├── game/                       # **S5 新建**：游戏侧静态库（main → game → engine，engine 绝不反向）
+│   ├── CMakeLists.txt          # add_library(game STATIC ...)；PUBLIC 链 engine、PRIVATE 链 mini_options
 │   ├── include/game/
 │   │   ├── Game.h  GameState.h  Player.h  Enemy.h
 │   │   ├── Weapon.h  Projectile.h  Pickup.h  WaveManager.h  Hud.h
-│   └── src/
+│   │   │               # ↑ 目标态；**S5 落地的只有 Game.h**（其余等 S8 之后）
+│   └── src/                    # S5：Game.cpp
 │
 └── tests/
     ├── CMakeLists.txt
@@ -169,8 +176,10 @@ c++_simple_engine/
     ├── test_input_state.cpp    # S2（7 个，四态状态机 + VK 映射）
     ├── test_time.cpp           # S3（clamp / FPS 算法 / platform::Wait 精度）8 个
     ├── test_row_diff.cpp       # S3（脏行格式 + 收益守卫 + 字节等价性）10 个
-    ├── test_math.cpp
-    ├── test_collision.cpp
+    ├── test_math.cpp           # S4（MathUtils 7 / Vec2 9 / AABB 7 / Ray 9 = 32 个）
+    ├── test_world.cpp          # **S5**（TileMap 8 / EntityId 2 / World 10 = 20 个）
+    ├── test_game.cpp           # **S5**（Game 3 个，靠假 Input 替身离线跑 —— 决策 9）
+    ├── test_collision.cpp      # S7 之后
     ├── test_tilemap.cpp
     └── test_gamestate.cpp
 ```
@@ -206,13 +215,17 @@ main.cpp  →  game  →  engine  →  标准库
 | Screen | 字符格 (int) | 屏幕左上角 (0,0) | FrameBuffer 索引 |
 
 ```text
-screen = round((world - camera.pos) * 1.0)      // 1 格 = 1 字符
-world  = camera.pos + screen
-map_tile = floor(world)                          // 注意是 floor，不是 (int) 截断（负数会错）
+screen_cell = floor(world - camera.pos)          // 1 格 = 1 字符：取"这个点所在的那一格"
+world       = camera.pos + screen_cell + 0.5     // 反算回去拿到的是那格的中心（不是精确逆运算）
+map_tile    = floor(world)                       // 与 screen_cell 是同一个概念 → 用同一个函数
 ```
 
-两条必须写进注释的规矩：
-- **实体位置用 float，画的时候才 `round`**；直接在 int 上做移动，斜向速度会被吃掉。
+三条必须写进注释的规矩：
+- **实体位置用 float，画的时候才取整**；直接在 int 上做移动，斜向速度会被吃掉。
+- **"落在哪一格"和"画在哪一列"用同一个 `floor`**。混用 `round`/`floor` 的症状就是下面 E-8 的
+  "画面整体偏移半格 / 走位比视觉慢一格"。
+  ⚠️ 2026-09-30 修正：本块原写 `screen = round((world - camera.pos) * 1.0)`，
+  它与 `doc/S5_CHECKLIST.md` 用例 23 的期望值（`(5.5, 3.5)` → `At(5, 4)`）**差一整格**，已统一为 floor。
 - **`floor` 而不是 `(int)`** 转 tile 索引；负数坐标下截断会指向错误的格。
 
 ---
@@ -462,18 +475,20 @@ AI 不会自己跑构建或 exe。一个步骤的 commit 由本人在验证通�
 | 验收 | ✅ 覆盖齐，且**反向验证 3 条都实测看到红**（`doc/S4_CHECKLIST.md` 10.3）：零向量归一化保护、NaN 输入、AABB 边界相接（`<=` vs `<` 已定为**开区间**）、Ray 起点在盒内 → t=0 |
 | 坑 | ① 归一化零向量产生 NaN 并污染整个物理循环 → 用 `!(len2 > 0.0f)` 挡住（`len2 <= 0` **挡不住 NaN**），反向验证已确认；② 浮点相等判断 → 全项目禁 `==`，一律 `ApproxEquals` / `MINI_CHECK_NEAR`；③ **贴边算不算相交** → 用 `<`（用 `<=` 的话贴墙实体每帧被判碰撞、被推开一格）；④ **`Ray` 的 `d == 0` 必须显式分支** → `1/d` 写法在平行输入上会漏出 `t = +inf`，且常量表达式里**直接 C2131 编不过**；⑤ **`MINI_CHECK(Vec2{1,2}...)` 编译不过** → 函数宏按顶层逗号拆参数、**花括号不保护逗号**，已把 `MINI_CHECK` 改成可变参数（`MINITEST_SPEC` 第 1 节） |
 
-### S5 World / Entity —— `@` 可以移动
+### S5 World / Entity —— `@` 可以移动（✅ 2026-09-30 完成）
 
 | 项 | 内容 |
 | --- | --- |
 | 目标 | `TileMap`(200×200) + 简单 `Entity` 结构体 + `World` 容器 + 移动逻辑 |
-| 实现 | `struct Entity { Transform transform; Velocity velocity; char symbol; EntityId id; bool active; }`；`World` 持有 `std::vector<Entity>` |
-| C++ 知识 | 聚合初始化、`std::optional`、`std::span`、引用 vs 值语义、`erase-remove` vs `swap-erase` |
-| 引擎知识 | 实体标识（id vs 指针 vs 索引）、迭代顺序、更新顺序的重要性 |
-| 规模 | ~300 行 |
-| 可运行效果 | `@` 按 WASD 在地图上移动，速度受 `dt` 影响（改 dt 速度不变） |
-| 验收 | 100 FPS 和 300 FPS 下，`@` 走过同一段距离耗时相同 |
-| 坑 | 在遍历 `vector` 时删除元素导致迭代器失效（S9 会撞上，这里先埋好概念） |
+| 实现 | `struct EntityId`（`uint32` **值句柄**，0 = 无效、永不复用）；`struct Entity { EntityId id; Transform transform; Velocity velocity; char symbol; bool active; }`；`World` 持有 `std::vector<Entity>` + **延迟删除**（`MarkForRemoval` / `FlushRemovals`，swap-erase）；`TileMap` 越界 `At` → `Wall`。**游戏侧第一次独立成 `game/` 静态库**（`game::Game : mini::core::IGame`，`main.cpp` 只留 argv + 造对象 + `Run`）→ 实测 `Entity.h` `TileMap.h/.cpp` `World.h/.cpp` 5 个文件、`game/` 3 个文件 |
+| C++ 知识 | 聚合初始化、`std::span`（**非拥有视图**：任何 `Spawn` 之后立即失效）、引用 vs 值语义、`erase-remove` vs `swap-erase`、默认化的 `friend operator==`、`static_assert` 钉结构体布局 |
+| 引擎知识 | 实体标识（id vs 指针 vs 索引 → **选值句柄**：可存、可比较、不随容器搬迁失效）、迭代顺序、更新顺序的重要性、**"登记删除 ≠ 立即失效"**（`Find` 还找得到、`Update` 照样积分，直到 `FlushRemovals`） |
+| 规模 | ~300 行 → **实测：engine 侧 ~430 行 + game 侧 ~340 行 + 23 条新用例（用例总数 68 → 91）** |
+| 可运行效果 | `@` **按住** WASD 连续移动（速度 × dt，默认 20 格/秒，可用 `MiniEngine.exe 60 30` 覆盖）；HUD 显示 `pos / tile / sum dt / v`；地图 = 外沿墙 + **每 10 格一根的规则柱阵** + 一个不对称地标 |
+| 验收 | 100 FPS 和 300 FPS 下走过同一段距离耗时相同 → 机器形式是 `World.MovementIsDtIndependent`（1×1.0s vs 100×0.01s）与 `Game` 的 3 条用例；**4 条反向验证全部实测看到红**（`doc/S5_CHECKLIST.md` 10.3.1）。⚠️ HUD 那条自证 `pos ≈ v × sum dt` **只在提供真 key-up 的终端里成立**（VS Code/WT 是 ConPTY，见 `TECH_DEBT` C10） |
+| 坑 | ① 遍历 `vector` 时删除元素导致迭代器失效（S9 会撞上，这里先埋好概念）→ **S5 就落地了 `MarkForRemoval`/`FlushRemovals`**，S9 直接复用；② `ToIndex` 必须 `floor`（`(int)` 截断会让负数指到上一格）；③ 斜向必须 `Normalized()`（否则快 √2 倍）；④ **`minitest` 里裸写类型名会找不到**（`Game` 在 `game` 命名空间里，测试文件要 `using game::Game;`）；⑤ 帧序：**写速度必须在 `Update` 之前** |
+| 落地偏差 | 13 条，都记在 `doc/S5_CHECKLIST.md`（布局"没规律"、手感"必须按住"、ConPTY 无 key-up 三条是**跑起来之后**才发现并处置的） |
+
 
 ### S6 Camera / Viewport —— 世界大于屏幕
 
@@ -1087,113 +1102,52 @@ while (!shouldQuit) {
 
 ---
 
-## H. 国庆 7 天冲刺计划（10/1 ~ 10/7，每天 6h+，目标：做着玩）
+## H. 长期路线与扩展池（**无固定排期**）
 
-### H.0 先算清时间账：看着富余，其实是"刚好打平"
+> **2026-09-30 起本项目按「长期任务」推进**：不设按天的排期、不设截止日、不按假期切段。
+> 推进顺序只由 `B` 节的 15 个阶段决定；一次做多少、隔多久做一次，由当时的精力决定。
+> 本节只保留两样长期有用的东西：**里程碑路径**（做到哪算哪）和**扩展池**（有空再挑）。
+> 原先的「7 天冲刺 / 42h 时间账 / Day1~Day7 排期 / 每天固定节奏」**已整节删除** ——
+> 那种表格只在"和假期对齐"时才有意义，长期任务下它只会变成一份没人遵守的假计划。
 
-| 项 | 小时 |
-| --- | --- |
-| 可用 | 7 × 6 = **42h**（按 38h 规划，留"今天没状态"的余量）|
-| 主线 S0~S14 | B 节按每阶段 ≤1.5h 的理想值是 ~22.5h，**实测含调试/踩坑要 32h** |
-| 每天 1h 自由块 × 7 | 7h（"做着玩"这个目标靠它兑现）|
-| 合计需求 | **约 40h ≈ 可用 42h** |
+### H.1 里程碑路径：三条，随时可以停
 
-**结论：没有可以随便挥霍的空间。** 富余时间只有三个指定用途，不许挪走：
+> 这不是排期，而是"**可以停在哪一站**"；每个终点的判定标准在 `G` 节的版本表里。
 
-1. 补掉某天没做完的部分（最可能发生在 Day 5、Day 6）；
-2. Day 7 的收口缓冲；
-3. Day 7 上午的扩展池自由探索。
+| 路径 | 覆盖阶段 | 终点 |
+| --- | --- | --- |
+| **保底** | S0 ~ S10 | **v0.3「玩得起来」：一个能玩的 2D 游戏**（能刷怪 / 能射击 / 能死能重开） |
+| 标准 | + S11、S12 | v0.4「看得清」+ v0.5「像 3D」：Debug Overlay + 伪 3D 走廊 |
+| 完整 | + S13、S14 | v1.0「收得起来」：精灵遮挡 + README/GIF/CI + `git tag v1.0` |
 
-> ⚠️ **富余时间最大的风险，是被第一天拿去买 CMake 和架构的完美主义。**
-> **Day 1 的"骨架 + 抽象层"时间硬上限 60 分钟**，超了就是在过度设计（见 E-14 / E-20）。
-> 记住：这个假期真正富余的不是时间，是"保底路径只要 22h"（见 H.3）——你随时可以少做两天而不算失败。
+**降速 / 卡住时怎么砍（按此顺序，不要反过来）：**
 
-### H.1 七天排期
+1. 先冻结扩展池（H.2）—— 它本来就是"有富余才动"的东西；
+2. 把当前阶段砍小到仍满足 **PLAN 原则 1**（能构建、能运行、能看到结果），砍掉的部分写进
+   `doc/TECH_DEBT.md` 的 C 组并**附上触发条件**；
+3. 最后才考虑砍掉尾部阶段（S13/S14）—— 反正是游乐场项目，砍了不算失败。
 
-| 天 | 日期 | 主线阶段 | 主线 | 自由 | 当天结束时**必须能跑出来**的东西 |
-| --- | --- | --- | --- | --- | --- |
-| Day1 | 10/1 | S0 骨架 · S1 画面 · S2 输入 | 5.0h | 1.0h | 终端里 `@` 出现并被 WASD 推着走；按下/按住/松开三态在屏幕上可见；退出后终端不出坏 |
-| Day2 | 10/2 | S3 GameLoop/Time · S4 Math + 测试 | 4.5h | 1.5h | 顶栏 FPS≈60 稳定、dt 不抖；200×200 地图上移动且速度与 FPS 无关；`ctest` 全绿 |
-| Day3 | 10/3 | S5 Entity · S6 Camera | 4.5h | 1.5h | 相机平滑跟随 `@`；走到地图边缘不露出"世界之外"的空白 |
-| Day4 | 10/4 | S7 碰撞 · S8 AI（**轻量日**）| 4.0h | 2.0h | 撞墙不穿模、贴墙不卡顿；`E` 会追会打、`@` 跑远后回 Patrol；F2/F3 可视化能开 |
-| Day5 | 10/5 | S9 射击 · S10 HUD/Wave | 4.5h | 1.5h | **v0.3：一个能玩的完整游戏**（刷怪 → 射击 → 掉血 → 死亡 → 按 R 重开）|
-| Day6 | 10/6 | S11 Debug/Profiler · S12 Ray Casting | 5.5h | 0.5h | F4 显示各子系统耗时表；第一人称走廊且无鱼眼扭曲；F5 在 2D/3D 视角间切换 |
-| Day7 | 10/7 | S13 Sprite/z-buffer · S14 收口 | 4.0h | 2.0h | 敌人被墙正确遮挡；README + GIF + CI；`git tag v1.0`（**这一天不写新功能**）|
+> **唯一值得守的锚点是 v0.3 的「能玩」。** 在它达成之前**禁止任何重构冲动** ——
+> 想重构就写 `TODO` 丢进扩展池或 `TECH_DEBT`，等 v0.3 之后再评估。
+> 大概率那时会发现根本不需要（这也是 D.1 想说的那件事的另一面）。
 
-合计：主线 32h + 自由 10h = 42h。Day4 故意做轻量日，Day6 最重但放在已经熟练之后。
+### H.2 扩展池（有空才挑，按性价比排序）
 
-### H.2 每天的固定节奏
+> **计划外的新点子一律扔进这里**，不要在主线阶段里插队 —— 想玩扩展池里的东西是合法的
+> （那本来就叫玩），主线该走到哪一站还是走到哪一站。
 
-```text
-[0:00-0:15]  热身：跑一遍昨天的 exe，确认没坏                ← 别省，这是"每天都能玩"的保障
-[0:15-1:45]  主线块 1（90 min）
-[1:45-2:00]  离开椅子                                        ← 7 天 × 6h 最容易在这里烂尾
-[2:00-3:30]  主线块 2（90 min）
-[3:30-4:30]  自由块：1 小时纯玩，不设目标，想到什么做什么      ← "做着玩"靠它兑现
-[4:30-6:00]  主线块 3 / 补昨天的坑 / 当天收口
-[6:00-6:10]  commit + 在 PROJECT_LOG.md 写下"明天第一件事"     ← 3 行以内
-```
-
-**三条硬规则：**
-
-1. **40 分钟规则**：一个问题卡超过 40 分钟没有进展 → 写 `// TODO(hack): 原因` + 用最蠢的办法绕过去，继续推进。
-   假期里"停摆半天"是唯一真正不可恢复的损失。烂代码不是问题（S11 的 Profiler 会帮你找回来），**停摆才是**。
-2. **每天必须以"能跑的 commit"收尾**：功能没做完就加开关关掉或注释掉再提交。目标是"checkout 任意一天的 commit 都能跑起来"。
-3. **计划外的新点子一律扔进 H.5 扩展池**。想玩扩展池里的东西是合法的（那本来就叫玩），但不要在主线里插队。
-
-### H.3 分叉点：三条路径，随时可以停
-
-| 路径 | 天数 | 累计 | 终点 |
+| 想做的事 | 耗时 | 什么时候做 | 备注 |
 | --- | --- | --- | --- |
-| **保底** | Day1~Day5 | ~22h | **v0.3：一个能玩的 2D 游戏** |
-| 标准 | + Day6 | ~28h | v0.5：伪 3D 走廊 + Debug Overlay |
-| 完整 | + Day7 | ~32h | v1.0：精灵遮挡 + README/GIF/CI + tag |
-
-**掉队处理顺序（不要反过来）：**
-
-1. 砍当天的自由块；
-2. 顺延到 Day7 的 2h 缓冲；
-3. 砍掉最后一个阶段（比如 S13 推到假期之后，反正是游乐场项目）。
-
-> **Day 5 结束时的"能玩"是整个假期最重要的心理锚点。
-> 所以 Day 5 之前禁止任何重构冲动**——想重构就写 TODO，Day5 之后再评估。
-> 大概率你会发现根本不需要（这也是 D.1 想说的那件事的另一面）。
-
-### H.4 假期时间怎么分配更省力
-
-- **整块 2h+（上午、状态最好）** 留给需要连续上下文的事：S3 的限帧调试、S12 的 DDA、S13 的遮挡边界。这些一旦被打断就要重新加载上下文。
-- **碎片 / 状态差（晚上、饭后）** 留给机械活：S0/S1 抄 CMake、S11 的 Overlay 文本排版、补测试、录 GIF、写 README。机械活做得慢但不影响正确性。
-- 建议把 **S12（最难）放 Day6 上午**（全假期精力峰值），把 **Day7 只留给文档/CI/录屏**（状态最差的一天做最不需要创造力的事）。
-- **自由块的内容不要提前规划**——它的全部价值就在于"不需要计划"。
-
-### H.5 扩展池（有富余时间才动，按性价比排序）
-
-| 想做的事 | 耗时 | 建议插哪 | 备注 |
-| --- | --- | --- | --- |
-| 256 色 + 按距离变暗/雾 | 1h | Day2 自由块 | 视觉回报最高的一项 |
-| `▀` / `▄` 半块字符（纵向分辨率翻倍）| 1h | Day3 自由块 | 伪 3D 观感直接跳一档 |
-| 命中/死亡小方块粒子 | 1h | Day5 自由块 | 廉价但很提气 |
-| 地图从 `map.txt` 加载 | 1h | Day4 自由块 | 之后调关卡不用重新编译 |
-| A* 寻路（解决 S8 的卡墙）| 2.5h | Day6 / Day7 | BFS 打底，顺手在 Debug Overlay 里画路径 |
-| 装 Ninja 提速构建 | 0.5h | Day1 | `winget install Ninja-build.Ninja`，一条命令，别折腾 |
-| 给 `mini_tests` 加 `LABELS` 与 `TIMEOUT` 属性 | 1h | Day7 | 让 `ctest -L fast` 与超时保护可用，见 `doc/CTEST_NOTES.md` |
-| Profiler 导出 Chrome Trace JSON | 1.5h | Day7 | `chrome://tracing` 里看火焰图，成就感很强 |
-| Braille 字符渲染（2×4 点阵）| 3h | Day7 | 纯玩，风险高收益也高，做不完就当实验 |
+| 256 色 + 按距离变暗/雾 | 1h | S6 之后的任一空档 | 视觉回报最高的一项 |
+| `▀` / `▄` 半块字符（纵向分辨率翻倍）| 1h | S6 相机前后皆可 | 伪 3D 观感直接跳一档 |
+| 命中/死亡小方块粒子 | 1h | S9 射击之后 | 廉价但很提气 |
+| 地图从 `map.txt` 加载 | 1h | S7 碰撞之后 | 之后调关卡不用重新编译 |
+| A* 寻路（解决 S8 的卡墙）| 2.5h | S8 之后 | BFS 打底，顺手在 Debug Overlay 里画路径 |
+| 装 Ninja 提速构建 | 0.5h | 任一空档（与阶段无关） | `winget install Ninja-build.Ninja`，一条命令，别折腾 |
+| 给 `mini_tests` 加 `LABELS` 与 `TIMEOUT` 属性 | 1h | 用例总数 > 50 之后 | 让 `ctest -L fast` 与超时保护可用，见 `doc/CTEST_NOTES.md` |
+| Profiler 导出 Chrome Trace JSON | 1.5h | S11 之后 | `chrome://tracing` 里看火焰图，成就感很强 |
+| Braille 字符渲染（2×4 点阵）| 3h | 任一空档 | 纯玩，风险高收益也高，做不完就当实验 |
 | 行为树替换 FSM | 2h | **不建议** | D.1 已说明：5 个状态的 FSM 更好维护 |
-
-### H.6 三个"今天状态不对"的替代剧本
-
-| 状态 | 怎么办 |
-| --- | --- |
-| 累，只想坐着敲 | 自由块延长到 3h；主线只做当天最机械的那部分（抄 CMake、排 HUD 文本、写测试）|
-| 精神特别好 | 主线提前，把后一天的一个阶段拉过来做，Day7 的缓冲会变宽 |
-| 完全不想写代码 | 录 GIF、写 README、读 sokol / notcurses 源码、把 `PROJECT_LOG.md` 补完整 —— 这些都算项目进展，不算掉队 |
-
-### H.7 一句话
-
-> 6h × 7 天看着很多，但主线实测 32h + 自由块 7~10h，**基本打平**。
-> 所以这个假期的正确心态是：**每天按时收口，别想着"后面还有六天呢"。**
-> 真正富余的东西不是时间，而是"保底路径只要 22h"——你随时可以少做两天而不算失败。
 
 ---
 
