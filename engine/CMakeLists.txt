@@ -23,6 +23,12 @@
 #       ⚠️ header-only 的头**只有被 include 才会被编译**，所以 S4 的编译验证
 #          完全靠 tests/test_math.cpp 去 include 它们 —— 别以为"在列表里没看到 S4"
 #          就是漏了（这是故意的）。
+#
+#   S5  src/world/TileMap.cpp（格子表：世界坐标 → tile 下标用 floor、越界一律当 Wall。
+#                              纯数据 + 纯逻辑，可离线单测）
+#       src/world/World.cpp（实体容器：Spawn / Find / 索引 / dt 积分 / 延迟删除。
+#                            一份扫描 IndexOf 服务 Find 两版 + FlushRemovals）
+#       后面 S6/S7 会往 world/ 加文件时，同样**在这里手写一行**。
 # ============================================================
 
 add_library(engine STATIC
@@ -34,6 +40,8 @@ add_library(engine STATIC
     src/platform/ConsoleWindows.cpp
     src/platform/InputWindows.cpp
     src/platform/WaitWindows.cpp
+    src/world/TileMap.cpp
+    src/world/World.cpp
 )
 
 target_include_directories(engine PUBLIC include)

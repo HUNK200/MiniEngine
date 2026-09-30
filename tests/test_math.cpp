@@ -16,7 +16,7 @@
 // 没有一丝"跑一会儿看数字像不像"的成分 —— 这是本项目里最好测的一层。
 //
 // 用例分三组（与 doc/S4_CHECKLIST.md 10.1 的清单一一对应）：
-//   MathUtils —— 标量工具（8 个）
+//   MathUtils —— 标量工具（**7 个**：2026-09-30 随 `RoundToInt` 删掉 1 条，原为 8 个）
 //   Vec2      —— 向量（9 个）
 //   AABB/Ray  —— 步骤 2 / 3 再加（各 7 / 9 个）
 //
@@ -49,7 +49,6 @@ using mini::math::FloorToInt;
 using mini::math::kPi;
 using mini::math::Lerp;
 using mini::math::Ray;
-using mini::math::RoundToInt;
 using mini::math::Sign;
 using mini::math::Vec2;
 
@@ -61,7 +60,7 @@ const float kNaN = std::numeric_limits<float>::quiet_NaN();
 } // namespace
 
 // ============================================================
-// 第 1 组：MathUtils（8 个）
+// 第 1 组：MathUtils（7 个 —— 2026-09-30 随 `RoundToInt` 删掉 1 条）
 // ============================================================
 
 MINI_TEST(MathUtils, ClampBasic)
@@ -147,21 +146,10 @@ MINI_TEST(MathUtils, FloorToIntNegative)
     MINI_CHECK_EQ(FloorToInt(-0.0f), 0);
 }
 
-MINI_TEST(MathUtils, RoundToIntHalfAwayFromZero)
-{
-    MINI_CHECK_EQ(RoundToInt(0.0f), 0);
-    MINI_CHECK_EQ(RoundToInt(0.4f), 0);
-    MINI_CHECK_EQ(RoundToInt(0.5f), 1);
-    MINI_CHECK_EQ(RoundToInt(2.4f), 2);
-    MINI_CHECK_EQ(RoundToInt(2.5f), 3);
-
-    // ⚠️ 负半轴：**.5 远离零**（对齐 std::round），不是"向 +inf 舍入"。
-    // 写成 FloorToInt(v + 0.5f) 的实现会让 -0.5 得到 0 —— 这里会红。
-    MINI_CHECK_EQ(RoundToInt(-0.4f), 0);
-    MINI_CHECK_EQ(RoundToInt(-0.5f), -1);
-    MINI_CHECK_EQ(RoundToInt(-2.5f), -3);
-    MINI_CHECK_EQ(RoundToInt(-2.6f), -3);
-}
+// 这里原先有一条 `MathUtils.RoundToIntHalfAwayFromZero`（.5 远离零、负半轴对齐 std::round），
+// **2026-09-30 随 `RoundToInt` 一起删掉了**：S5 把取整统一成 floor 之后它生产调用者归零，
+// 按 TECH_DEBT B2 的纪律"没人用就删"。理由与还原成本写在 `MathUtils.h` 那一段注释里。
+// ⚠️ 这条减少会让全集用例数 91 → 90，别以为是谁漏跑了。
 
 // ============================================================
 // 第 2 组：Vec2（9 个）

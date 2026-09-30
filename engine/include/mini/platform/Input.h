@@ -37,10 +37,11 @@ public:
     [[nodiscard]] virtual KeyState Get(Key k) const = 0;
 
     // 便捷判断"按住"（`Pressed` 与 `Held` 都算）。
-    // ⚠️ **生产 0 调用**（单测 9 处）：game 层读的是 `Get()`（四态）。
-    //    它存在的价值是让"只关心按住"的代码不必自己写两态判断（S9 的持续射击就会用到）。
-    // ⚠️ 别与 `InputState::IsDown` 搞混 —— **那个有生产调用者**（`InputWindows` 转发它），
-    //    这个只是同一件事的虚接口版本，暂时没人通过 `Input&` 来调。
+    // **生产调用者：S5 的 `Game::OnUpdate`** —— WASD / 方向键"按住就走"只关心两态，
+    // 不需要四态。（这处注释原来写着"生产 0 调用 / S9 的持续射击会用到"，
+    //   2026-09-30 随 S5 落地改准 —— S5_CHECKLIST 10.4 早就预告了这处修正。）
+    // ⚠️ 别与 `InputState::IsDown` 搞混：那个是**内部实现**（`InputWindows` 转发它）；
+    //    这个是通过 `Input&` 走的虚接口版本。
     [[nodiscard]] virtual bool     IsDown(Key k) const = 0;
 
     // 只反映"外部强制退出"：Ctrl+C / 关窗口 / 注销。

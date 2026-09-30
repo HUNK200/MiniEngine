@@ -110,16 +110,19 @@ inline constexpr float kPi = 3.14159265358979323846f;
     return (v < 0.0f && static_cast<float>(i) != v) ? i - 1 : i;  // 负数且有余 → 再退一格
 }
 
-// 四舍五入，语义**对齐 std::round**：.5 一律**远离零**（+0.5 → 1、-0.5 → -1）。
+// 这里原先有一个 `RoundToInt`（语义对齐 std::round、.5 远离零），**2026-09-30 删掉了**：
+//   它是 S4 时期为"世界 → 屏幕取整"准备的，但 S5 把取整**统一成 floor**
+//   （`TileMap::ToIndex` = `FloorToInt`；见 S5_CHECKLIST 落地偏差 3 与 PLAN A.5 的 2026-09-30 修正）。
+//   删之前**生产调用者已经归零**（engine / game / main.cpp 一处都没有，只剩它自己那条用例），
+//   按 TECH_DEBT B2 的纪律"没人用就删"。
+//   真需要四舍五入时（比如把世界坐标显示成"第几格中心"），加回来是 4 行 + 1 条用例。
 //
-// 为什么不写 `FloorToInt(v + 0.5f)`：那样在负半轴会变成"向 +inf 舍入"
-// （-0.5 → 0），与标准库不一致。标准库已经有约定时，**跟着它走**比自己发明一套安全。
-//
-// 为什么不用 std::round：原因和 std::floor 一样（C++20 不是 constexpr）。
-[[nodiscard]] constexpr int RoundToInt(float v) noexcept
-{
-    if (v >= 0.0f) { return FloorToInt(v + 0.5f); }
-    return -FloorToInt(-v + 0.5f);
-}
+// ⚠️ 文件里另外两个成员 `Lerp` / `DegToRad` **也是 0 生产调用**（2026-09-30 查过）——
+//   它们没被删，差别是"怎么变成 0 调用的"：
+//     · `Lerp` / `DegToRad` 是 S4 铺的通用标量工具箱，**后续阶段大概率会用到**
+//       （插值 → 之后的动画/缩放；角度 → S12 的 DDA 射线），属于**有意预留**；
+//     · `RoundToInt` 是**被 S5 的取整统一主动废掉**的，路线图上没有它的位置。
+//   ⏳ 这条判断留了个人口味的口子：如果你认为"凡是 0 调用就该删"，那 `Lerp`/`DegToRad`
+//      应该一起处理（那是另一个决定，别顺手改）。
 
 } // namespace mini::math
