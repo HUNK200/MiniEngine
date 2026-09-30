@@ -53,12 +53,14 @@ endif()
 
 add_subdirectory(engine)
 
-# game/ 留到 S5 之后再建：现在没有任何源文件，
-# 空的 add_library(game STATIC) 会直接报 "no SOURCES given to target"。
-# 引擎与游戏分家的时机是"游戏侧第一次有真东西"的时候（PLAN A.4 第 2 条）。
+# game/ 在 S5 建起来了 —— 这里原来写着"留到 S5 之后再建"，S5 到了。
+# 顺序：engine 必须在前面（game 要链 MiniEngine::engine）。
+add_subdirectory(game)
 
 add_executable(MiniEngine main.cpp)
-target_link_libraries(MiniEngine PRIVATE mini_options MiniEngine::engine)
+# 显式写 engine：main 现在只 include <game/Game.h>，引擎头其实由 game PUBLIC 传递过来，
+# 但把直接依赖写出来，读的人不用去 game 的 CMake 里查"为什么这里能编译"。
+target_link_libraries(MiniEngine PRIVATE mini_options MiniEngine::engine MiniEngine::game)
 
 if(MINI_BUILD_TESTS)
     enable_testing()
