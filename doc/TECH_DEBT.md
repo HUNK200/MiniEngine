@@ -51,7 +51,7 @@
 | **C4** | `DemoGame` 自缓存 `const Input*`（S3 决策 D13） | C | 触发即改 | — | ✅ **S5 已关**：新 HUD 不读输入 → 缓存消失（`Game.h` 连 `Input.h` 都不用 include） |
 | **C5** | 没有 CI | C | → S14 | — | 🔵 |
 | **C6** | `ctest` 没有 `LABELS` / `TIMEOUT` | C | 需要时 | — | 🔵 |
-| **C7** | `ConsoleWindows` / `Application` 无法离线单测 | C | 不做 | — | 🔵 |
+| **C7** | `ConsoleWindows` / `Application` 无法离线单测 —— **2026-10-02 收窄**：`Application` 里那段 resize 接受条件**已抽出并有用例**（`IsUsableCanvasSide/IsUsableCanvasSize` + `Core.CanvasSizeAcceptanceIsBoundarySafe`）；**只剩 `ConsoleWindows` 的真终端 IO** | C | 触发即做 | — | 🔵 **收窄后仍推迟**（剩的那半边要真终端，见 4.1 的尾部） |
 | **C8** | `math/Vec3.h` / `Rect.h` **只有契约没有实现**（S4 差异 2） | C | 触发即建 | — | 🔵 |
 | **C9** | `MINI_CHECK_EQ` / `_NEAR` 参数含顶层逗号时要**人工包括号**（函数宏拆不开变参） | C | 触发即改 | — | 🔵 |
 | **C10** | **ConPTY 不提供真 key-up** → `Held` 永不出现 → S5 的"按住 = 速度 × dt"在 VS Code 终端里退化成"每次按键只算一帧" | C | 2 行（首选）/ ~30 行（回退） | ⭐⭐ 影响日常终端的可玩性 | 🔵 **本人 2026-09-30 决定先跳过**（细节见 4.2） |
@@ -65,9 +65,8 @@
 **进度（2026-10-02；S6 收口后）**：A/B 组**仍为空** —— S6 没有产生新的 A/B 条目，
 过程经验（4 条落地偏差）都记在 `doc/S6_CHECKLIST.md` 的偏差表里。C 组新增 **C11**
 （`ScreenToWorld` 只留契约、不实现）。用例数 90 → **104**（S6 加了 14 条 `Camera` 用例）。
-⚠️ **C7 的触发条件已被 S6 满足**（相机每帧读 `ctx` 的尺寸，而那个尺寸来自
-`Application::Run` 第 ③ 步的 resize 协商）→ **待本人裁定**：是否顺手抽出
-`IsUsableCanvasSize(w, h)` + 1 条用例（约 10 行，见 4.1）。
+⚠️ **C7 的触发条件已被 S6 满足，且 2026-10-02 当场办完**（抽出画布尺寸的两个谓词 + 1 条边界用例，
+用例数 104 → **105**）→ **C7 收窄为"只剩 `ConsoleWindows` 的真终端 IO"**，见 4.1。
 
 > **⛔ 2026-09-29 大决定：clang 全线移除。** 本人决定"默认只用 MSVC"，
 > 于是 `ms-clang-debug` 预设、`clang-debug` buildPreset、`CMakeLists.txt` 里那条
@@ -537,14 +536,25 @@
 抽函数是纯为测试而拆。**触发条件**：如果 S6 的相机边界也依赖这个尺寸协商，
 那时把"尺寸协商"整体抽出来再一并测。
 
-> ⚠️ **2026-10-02：触发条件已满足，待本人裁定。** S6 的相机**每帧**从 `ctx` 拿视口尺寸
-> （`CameraLimits{ctx.screenWidth, ctx.screenHeight - kHudRow, …}`），而 `ctx` 的尺寸正是
-> `Application::Run` 第 ③ 步那段 resize 协商的产物 —— 也就是说**相机边界确实依赖它**。
-> 但要落成测试还得把那段条件抽成 `IsUsableCanvasSize(w, h)`（约 10 行 + 1 条用例）。
-> S6 期间**没做**（本阶段范围里没有它）；现在的兜底是：协商本身的失败模式仍由"拖到极窄不崩"
-> 覆盖，而**相机那一侧**已有 `Camera.ZeroViewportIsSafe` / `ResizeThenFollowUsesNewViewport`
-> 两条用例（`doc/S6_CHECKLIST.md` 10.1）。
-> **请裁定**：① 现在抽（~10 行 + 1 用例）；② 推迟到 S10（那里还要动 canvas 尺寸）；③ 关掉。
+> ⚠️ **2026-10-02：触发条件已满足 → 本人裁定"现在抽"，✅ 已办。** S6 的相机**每帧**从 `ctx`
+> 拿视口尺寸（`CameraLimits{ctx.screenWidth, ctx.screenHeight - kHudRow, …}`），而 `ctx` 的尺寸
+> 正是 `Application::Run` 第 ③ 步那段 resize 协商的产物 —— 也就是说**相机边界确实依赖它**。
+>
+> **落地的形态（比原估的"抽一个函数"更细一点，因为挖出了两个语义）**：
+> · `Application.cpp` 里那个"最小可用尺寸"常量 `2` 是**两处共用**的，但两处行为**不同**：
+>   启动的 `ResolveCanvasSize` 是**逐轴替换**（(100,1) → **(100,25)**，宽不动）；
+>   resize 的 `Run` 第 ③ 步是**两轴一起判断**（不够大就跳过这一帧）。
+> · 所以抽的是**一个常量 + 两个谓词**（放 `engine/include/mini/core/Application.h`，`constexpr`）：
+>   `kMinUsableCanvasSide = 2`、`IsUsableCanvasSide(side)`、`IsUsableCanvasSize(w, h)`；
+>   两条路径各用各的谓词 → **行为逐字不变**（合成一个整体判断就会悄悄改掉启动那条，见头注释）。
+> · 用例：`tests/test_smoke.cpp` 的 `Core.CanvasSizeAcceptanceIsBoundarySafe`
+>   —— 钉 `(2,2)` 这个**边界值**（`>=` vs `>`）、两个方向都要查、负数/零、以及单轴谓词。
+>   用例总数 104 → **105**。
+>
+> **⚠️ C7 至此只是"收窄"，不是关闭**：剩下的 `ConsoleWindows` 那半边（真终端 IO、
+> `ReadConsoleInputW` 返回的事件序列）**仍然不可离线测** —— 它需要真终端或一层事件源抽象，
+> 成本远大于收益（`TECH_DEBT` C 组"明确推迟"的定义）。触发条件不变：S2 的输入链路真的出
+> 平台相关 bug 时再考虑抽象。
 
 ### 4.2 关于 C10（ConPTY 的 key-up）—— 证据、两条修法、为什么先跳过
 
