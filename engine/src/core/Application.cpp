@@ -33,9 +33,9 @@ constexpr int kStatsRow = 0;
 constexpr int kFallbackWidth  = 80;
 constexpr int kFallbackHeight = 25;
 
-// 1 列 / 1 行没法画（FrameBuffer 也会拒绝 w<=0），所以小于这个就当读不到
-constexpr int kMinUsableWidth  = 2;
-constexpr int kMinUsableHeight = 2;
+// ⚠️ "最小可用尺寸"原来是这里的两个常量（`kMinUsableWidth/Height = 2`），2026-10-02 搬到了
+//    `core/Application.h` 的 `kMinUsableCanvasSide` + 两个谓词 —— 因为下面两处用法**语义不同**
+//    却共用同一个数，而测试需要能碰到它们（TECH_DEBT C7 收窄）。见 Application.h 的说明。
 
 // 画布尺寸：配置里显式给了就用它，否则用终端可视区，再不行退回 80x25。
 //
@@ -48,10 +48,13 @@ platform::ConsoleSize ResolveCanvasSize(const AppConfig& cfg, const platform::Co
     int w = (cfg.width  > 0) ? cfg.width  : term.width;
     int h = (cfg.height > 0) ? cfg.height : term.height;
 
-    if (w < kMinUsableWidth) {
+    // ⚠️ **逐轴替换**：只有"那一轴"不可用时才换成兜底值 —— 不是整体判断。
+    //    例：(100, 1) → (100, 25)（宽保持 100）。写成 `if (!IsUsableCanvasSize(w,h))` 会
+    //    把宽也换成 80，那是行为变更（S6 之后相机吃的就是这个尺寸）。见 Application.h。
+    if (!IsUsableCanvasSide(w)) {
         w = kFallbackWidth;
     }
-    if (h < kMinUsableHeight) {
+    if (!IsUsableCanvasSide(h)) {
         h = kFallbackHeight;
     }
     return platform::ConsoleSize{ w, h };
@@ -97,7 +100,9 @@ void Application::Run(IGame& game)
         // 会连续触发 resize，用异常处理既慢又难查。跳过这一次，下一帧再说。
         const platform::ConsoleSize now = m_console->Size();
         if (now.width != m_size.width || now.height != m_size.height) {
-            if (now.width >= kMinUsableWidth && now.height >= kMinUsableHeight) {
+            // 两轴**一起**判断（与启动路径的逐轴替换不同）：条件成立才接受新尺寸，
+            // 否则跳过这一帧、保留旧尺寸。这段逻辑现在有机器用例守着（Core.CanvasSizeAcceptanceIsBoundarySafe）
+            if (IsUsableCanvasSize(now.width, now.height)) {
                 m_frameBuffer.Resize(now.width, now.height);
                 m_size = now;
             }

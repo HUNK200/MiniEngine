@@ -30,6 +30,31 @@ class Input;   // FrameContext 只存它的引用，不需要完整定义
 
 namespace mini::core {
 
+// ── 画布尺寸的谓词（2026-10-02 加；TECH_DEBT C7 收窄的产物）────────────────────
+//
+// 为什么是自由函数、而且放**公共头**：`Application::Run` 第 ③ 步那个"这一帧的尺寸要不要接受"
+// 分支是**真逻辑** —— 它决定 `FrameContext::screenWidth/Height`，而 S6 起**相机每帧都读它**。
+// 但它以前写在 `.cpp` 的匿名 namespace 里，测试碰不到，只能靠"拖到极窄不崩"肉眼兜。
+// 抽成 `constexpr` 自由函数之后，边界值可以用机器钉住（见 `tests/test_smoke.cpp` 的 `Core` 组）。
+//
+// ⚠️ **两条路径的语义不同，不要把这两个函数合成一个整体判断**：
+//   · 启动时 `ResolveCanvasSize` 是**逐轴**判断：不可用的那一轴**替换**成兜底 80/25
+//     —— 例：(100, 1) → (100, 25)，**宽不动**
+//   · resize 时 `Run` 第 ③ 步是**两轴一起**判断：不够大就**跳过这一帧**（保留旧尺寸）
+// 合成 `if (!IsUsableCanvasSize(w,h)) { w = 80; h = 25; }` 会把上面那个例子变成 (80, 25)，
+// 属于**行为变更**（S6 之后相机吃的就是这个尺寸）。
+inline constexpr int kMinUsableCanvasSide = 2;   // 1 列/1 行画不出东西；FrameBuffer 也拒绝非正尺寸
+
+[[nodiscard]] constexpr bool IsUsableCanvasSide(int side) noexcept
+{
+    return side >= kMinUsableCanvasSide;
+}
+
+[[nodiscard]] constexpr bool IsUsableCanvasSize(int w, int h) noexcept
+{
+    return IsUsableCanvasSide(w) && IsUsableCanvasSide(h);
+}
+
 struct AppConfig {
     // 画布尺寸。**0 = 用终端可视区**（推荐）。终端读不到尺寸时退回 80x25。
     int width  = 0;
