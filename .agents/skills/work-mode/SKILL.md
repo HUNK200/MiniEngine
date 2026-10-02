@@ -7,16 +7,21 @@ description: 把 MiniEngine 游戏引擎项目的阶段切碎成 5~10 分钟、�
 
 本 skill 的正文**不在这个目录**，而在项目的 `doc/` 下，以避免同一份内容维护两处：
 
-- 相对本文件的路径：`../../../doc/WORK_MODE.md`
-- 绝对路径：`d:/Project/fish/c++_simple_engine/doc/WORK_MODE.md`
+- 相对本文件的路径：`../../../doc/WORK_MODE.md`（**只认这一条**）
 
-同目录下的配套文件：`MiniEngine_PLAN.md`（阶段定义、H 节长期路线、E 风险表）、`S0_CHECKLIST.md`。
+> ⚠️ **不要把绝对路径写进仓库**（2026-10-02 踩过）：这里原来写着旧机器的
+> `d:/Project/fish/c++_simple_engine/doc/WORK_MODE.md`。新机器上仓库换成 `D:\WorkPlace\MiniEngine`
+> 之后，本 skill **整体失效**（读不到正文），而且它违反 `AGENTS.md` 第 5 节"绝不提交含绝对路径的文件"。
+> 真要绝对路径时，用"本文件上溯三级"现算 —— 别把盘符写进来。
+
+配套文档都在仓库根的 `doc/` 下（**不在本目录**）：`MiniEngine_PLAN.md`（阶段定义、H 节长期路线、E 风险表）、`S5_CHECKLIST.md`（最新施工图；`S0_CHECKLIST.md` 是历史留档）。
 
 ## 执行方式
 
-1. **先读取 `d:/Project/fish/c++_simple_engine/doc/WORK_MODE.md`**，按其中的"触发后的固定动作""输出模板""微任务准入标准""禁止的 6 类伪任务""类型轮换表"执行。
-2. 判断当前阶段时读 `d:/Project/fish/c++_simple_engine/doc/MiniEngine_PLAN.md`，并以 `git log --oneline -5` 为准；若 `doc/S0_CHECKLIST.md` 的勾选进度显示当前仍在 S0，以它为准。
-3. 所有相对路径以 `d:/Project/fish/c++_simple_engine/` 为基准解析。
+1. **先读取 `../../../doc/WORK_MODE.md`**（相对本文件解析），按其中的"触发后的固定动作""输出模板""微任务准入标准""禁止的 6 类伪任务""类型轮换表"执行。
+2. 判断当前阶段时读 `../../../doc/MiniEngine_PLAN.md`，并以 `git log --oneline -5` 为准。
+   （原来这里还有一句"S0_CHECKLIST 勾选进度兜底"，项目已到 S5，2026-10-02 删掉 —— 它只会让 skill 去读过期清单。）
+3. 所有相对路径以**仓库根**为基准解析；仓库根 = 本文件上溯三级（`.agents/skills/work-mode/` → 根）。
 4. 本文件**不含任何正文**，不要在只读了本文件的情况下直接开始给任务。
 
 ## 四条最容易违反的铁律（提前提醒）
@@ -34,14 +39,15 @@ Agent Skill 的发现路径是 `.agents/skills/<name>/SKILL.md`，而文档被�
 
 ```bash
 # 方案 A：彻底改成标准位置（正文搬进来，删掉 doc/ 里那份）
-cd /d/Project/fish/c++_simple_engine
+cd <仓库根>        # 例如 D:\WorkPlace\MiniEngine —— 别把盘符写进仓库
 mv doc/WORK_MODE.md .agents/skills/work-mode/SKILL.md
 # 然后删掉本文件的前 4 行之后的所有"执行方式"内容，并把 frontmatter 保留
 
 # 方案 B：改成个人级，所有项目可用
 mkdir -p ~/.agents/skills/work-mode
 cp .agents/skills/work-mode/SKILL.md ~/.agents/skills/work-mode/SKILL.md
-# 注意：方案 B 下正文里的绝对路径仍然指向本项目，跨项目使用需要自行调整
+# 注意：方案 B 下"上溯三级"会落到 ~/.agents 而不是仓库根 —— 复制出去之后要把
+#       `../../../doc/...` 换成显式传入的仓库根，否则读不到正文（2026-10-02 记录）
 ```
 
 ## 安装 / 校验命令

@@ -120,12 +120,13 @@ AI 替我跑了，我就丢掉了第一手的反馈。
 | **Shell（默认）** | **PowerShell** —— 给用户的命令按 PowerShell 写 |
 | 跨平台范围 | **只要 Windows**（不要再提示 Linux 相关方案） |
 | 终端代码页 | 传统控制台 936 (GBK)；VS Code 内置终端是 UTF-8 |
-| 编译器 | **只用 MSVC 2022（cl 19.44）**；**没有 g++ / gcc**。LLVM clang 17 虽然装着，但 2026-09-29 起本项目**不使用它** —— 不做 clang 交叉验证，构建脚本里也不留 ClangCL / gcc 分支 |
-| 构建 | CMake **4.2.1** —— 4.x 不支持 `cmake_minimum_required(VERSION < 3.5)`，最低写 3.20 |
+| 编译器 | **只用 MSVC 2022**；**没有 g++ / gcc**。cl 版本**按机器不同**（家机 19.44；新机 14.43.34808 = cl 19.43），**别写死**。LLVM clang 虽然装着，但 2026-09-29 起本项目**不使用它** —— 不做 clang 交叉验证，构建脚本里也不留 ClangCL / gcc 分支 |
+| 构建 | CMake **4.x，下限 3.20** —— **三台机器三个版本**（家机 4.4.3 / 公司机 4.2.1 / 新机 **4.0.0-rc3**）。4.x 不支持 `cmake_minimum_required(VERSION < 3.5)`，最低写 3.20。**动手前先跑 `cmake --version`**，照别台的报错查会查错方向 |
 | 生成器 | 默认 `Visual Studio 17 2022`，属**多配置**，命令必须带 `--config`、ctest 必须带 `-C` |
-| 没有的工具 | ninja、make、jq、ripgrep |
+| 没有的工具 | ninja、make、ripgrep（**jq 视机器**：家/公司机没有，新机有 jq-1.6） |
 
 ```powershell
+cmake --version                      # 每台机器第一步：核版本（三台机器三个版本）
 cmake -S . -B build
 cmake --build build --config Debug
 ctest --test-dir build -C Debug --output-on-failure

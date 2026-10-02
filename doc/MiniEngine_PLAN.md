@@ -10,23 +10,31 @@
 
 ---
 
-## 0. 环境基线（家机 / 公司机分列）
+## 0. 环境基线（家机 / 公司机 / 新机分列）
 
 > ⚠️ 本节原文只有一套路径，而且被写成了"本机"。**2026-09-23 家机、2026-09-24 公司机各逐条实测一遍，
 > 结果两台机器连工具版本都不一样**（VS 家机装在 E 盘、CMake 一个 4.4.3 一个 4.2.1），
 > 照一份基线敲命令会直接找不到工具。**以后每台机器只信自己这一列，动手前先跑一次 `cmake --version`。**
+>
+> **2026-10-02 第三台机器（下表"新机"列）加入，又是一套版本**：CMake **4.0.0-rc3**、
+> MSVC 只有 **14.43.34808（cl 19.43）**、VS 装在 **C 盘**（Community 17.13.2）。
+> 这台 clone 后按 A.2 设完 local config，直接 `cmake -S . -B build` 即成功；
+> 构建 0 warning、`ctest` 1/1、`mini_tests` **90 passed**。
+> 结论：**"CMake ≥ 3.20 + MSVC"这条最低要求在三套版本上都成立** —— 版本号只记事实，不参与判断。
 
-| 项 | 家机（2026-09-23 实测） | 公司机（2026-09-24 实测） | 对方案的影响 |
-| --- | --- | --- | --- |
-| CMake | **4.4.3** @ `C:\Program Files\CMake\bin`（当天用 `winget install Kitware.CMake` 补装，**装之前家机完全没有 CMake**） | **4.2.1** @ `C:\Program Files\CMake\bin` | **CMake 4.x 已移除 `cmake_minimum_required(VERSION < 3.5)` 的兼容**，最低写 `3.20` |
-| MSVC | VS 2022 Community @ **`E:\Program Files\VisualStudio`**（**不在** C 盘）；装了 14.38.33130 / 14.44.35207 两套 toolset；CMake 生成器实测选中 **19.38.33145.0** | VS 2022 Community，cl 14.44 (19.44) | 主力编译器，默认生成器 `Visual Studio 17 2022`；生成器选哪套 toolset 由 VS 自己定，别在文档里硬编码 |
-| clang | **19.1.5** @ `…\VisualStudio\VC\Tools\Llvm\bin`（**不在** `C:\Program Files\LLVM`） | 17.0.6（原记录，**未复测**） | ⛔ **不使用**（2026-09-29 决定）：不做 clang 交叉验证，构建脚本里也不留 ClangCL 分支。**它装着，但本项目不碰** |
-| Windows SDK | 10.0.22621.0 | **10.0.26100.0**（配置期自动选中，目标 10.0.26200） | — |
-| g++ / gcc | **未安装** | **未安装** | **只做 Windows**（已确认）：不写也不跑 Linux / macOS 分支。编译器**只有 MSVC 一条路** |
-| ninja / make | **未安装**（不阻塞，VS 生成器可用） | **未安装** | 多配置（VS）生成器，所以**必须带 `--config`／`-C`** |
-| Git | 2.52.0；仓库 local 身份 `HUNK <wuunj@126.com>` | 2.52.0；**仓库级身份未设**，当前只吃全局 `Wuyangzhi <wu.yangzh@aerok.com.cn>`（补设见 A.2） | **身份按机器各用各的**（见 A.2），不要求两机一致 |
-| Shell / 终端 | Git Bash，`TERM=xterm-256color`，代码页 **936 (GBK)** | **PowerShell（主力）**，Git Bash 也能用；VS Code 内置终端是 UTF-8，传统控制台代码页 **936 (GBK)** | **给用户的命令一律按 PowerShell 写**：退出码用 `$LASTEXITCODE`（不是 `echo $?`）、路径用反斜杠；终端输出必须切 UTF-8，否则 `┌─┐@#*` 全乱码 |
-| 项目当前状态 | **S2 验收完成**（2026-09-28）：构建 0 warning、`ctest` 1/1、`mini_tests` 16 passed | **S2 交互验收真机确认通过**（9 条现象）；遗留的孤儿进程问题已排进 S3 | **S3 方案已定稿**（`doc/S3_CHECKLIST.md`，四条决策已拍板），**实现未开始** |
+| 项 | 家机（2026-09-23 实测） | 公司机（2026-09-24 实测） | 新机（2026-10-02 实测） | 对方案的影响 |
+| --- | --- | --- | --- | --- |
+| CMake | **4.4.3** @ `C:\Program Files\CMake\bin`（当天用 `winget install Kitware.CMake` 补装，**装之前家机完全没有 CMake**） | **4.2.1** @ `C:\Program Files\CMake\bin` | **4.0.0-rc3** @ `C:\Program Files\CMake\bin`（**RC 版**；2026-10-02 决定先不升级、先用它跑通全绿 —— 触发条件：报出真实构建错误时再换正式版） | **CMake 4.x 已移除 `cmake_minimum_required(VERSION < 3.5)` 的兼容**，最低写 `3.20` |
+| MSVC | VS 2022 Community @ **`E:\Program Files\VisualStudio`**（**不在** C 盘）；装了 14.38.33130 / 14.44.35207 两套 toolset；CMake 生成器实测选中 **19.38.33145.0** | VS 2022 Community，cl 14.44 (19.44) | VS 2022 Community **17.13.2** @ **`C:\Program Files\Microsoft Visual Studio\2022\Community`**（**在** C 盘）；**只装 14.43.34808 一套 toolset（cl 19.43）**；生成器自动选中，未硬编码 | 主力编译器，默认生成器 `Visual Studio 17 2022`；生成器选哪套 toolset 由 VS 自己定，别在文档里硬编码 |
+| clang | **19.1.5** @ `…\VisualStudio\VC\Tools\Llvm\bin`（**不在** `C:\Program Files\LLVM`） | 17.0.6（原记录，**未复测**） | 未探测（本项目不碰） | ⛔ **不使用**（2026-09-29 决定）：不做 clang 交叉验证，构建脚本里也不留 ClangCL 分支。**它装着，但本项目不碰** |
+| Windows SDK | 10.0.22621.0 | **10.0.26100.0**（配置期自动选中，目标 10.0.26200） | **10.0.22621.0**（只装了这一个） | — |
+| g++ / gcc | **未安装** | **未安装** | **未安装** | **只做 Windows**（已确认）：不写也不跑 Linux / macOS 分支。编译器**只有 MSVC 一条路** |
+| ninja / make | **未安装**（不阻塞，VS 生成器可用） | **未安装** | **未安装** | 多配置（VS）生成器，所以**必须带 `--config`／`-C`** |
+| Git | 2.52.0；仓库 local 身份 `HUNK <wuunj@126.com>` | 2.52.0；**仓库级身份未设**，当前只吃全局 `Wuyangzhi <wu.yangzh@aerok.com.cn>`（补设见 A.2） | **2.36.1**（比另两台旧）；A.2 四步**已设齐**（`autocrlf=false` / `longpaths=true` / `quotepath=false` / `pull.rebase=true`），仓库级身份 `HUNK200 <wuunj@126.com>` ← **这台是个人机** | **身份按机器各用各的**（见 A.2），不要求两机一致 |
+| Shell / 终端 | Git Bash，`TERM=xterm-256color`，代码页 **936 (GBK)** | **PowerShell（主力）**，Git Bash 也能用；VS Code 内置终端是 UTF-8，传统控制台代码页 **936 (GBK)** | PowerShell 可用；本次实测走 Git Bash；代码页 **936 (GBK)** | **给用户的命令一律按 PowerShell 写**：退出码用 `$LASTEXITCODE`（不是 `echo $?`）、路径用反斜杠；终端输出必须切 UTF-8，否则 `┌─┐@#*` 全乱码 |
+
+> 项目当前阶段以 **B 节**为准，本节不再记状态 —— 这里原来有一行"项目当前状态：S2 验收完成"，
+> 到 S5 就自动过期了（2026-10-02 发现）。同理，本表只记"这台机器上有什么"，不记"项目做到哪"。
 
 ### 标准命令（PowerShell + 多配置生成器）
 
@@ -1194,7 +1202,14 @@ git remote add origin https://github.com/<你的用户名>/mini-engine.git   # H
 git push -u origin main
 ```
 
-### 附录 A.2 公司电脑首次 clone 后的必做四步（**关键**）
+### 附录 A.2 任一台新机器首次 clone 后的必做四步（**关键**）
+
+> **第 0 步（2026-10-02 新机实测后补）：动手前先 `cmake --version`。**
+> 三台机器三个版本（家机 4.4.3 / 公司机 4.2.1 / 新机 4.0.0-rc3），照别台的报错查会查错方向。
+> 新机实测到的两件事：① clone 后第一次 `cmake -S . -B build` 直接成功 ——
+> `build/CMakeFiles/<版本>/CompilerIdCXX/CompilerIdCXX.exe` 就是"MSVC 工具链可用"的证据；
+> ② `build/` 里若已留着别人/别次留下的配置，先 `Remove-Item -Recurse -Force build` 再配，
+> 缓存里的生成器与绝对路径不会跟着机器走。
 
 `.git/config` **不在版本控制里**，所以下面这些设置**不会跟着仓库同步**，每台新机器都要重设一次：
 
