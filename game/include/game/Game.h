@@ -1,6 +1,7 @@
 #pragma once
 
 #include "mini/core/Application.h"
+#include "mini/render/Camera.h"
 #include "mini/render/FrameBuffer.h"
 #include "mini/world/World.h"
 
@@ -17,6 +18,11 @@
 //   2. HUD 从"15 键四态面板"换成**世界坐标面板**（pos / tile / Σdt）
 //      → 于是 OnRender **不再读输入**，S3 那条 `const Input*` 缓存（TECH_DEBT C4）直接消失
 //   3. 有一条真正的开局流程（OnStart 里建地图、Spawn 玩家）
+//
+// ⚠️ S6 加的第 4 件事：**渲染走相机**，视口跟着 `@` 在地图上滚动。
+//   S5 时视口原点恒为世界 (0,0)，所以往右走约 40 格 `@` 就出屏了 —— 那是当时的已知缺口，
+//   现在由 `m_camera` + `OriginCol/OriginRow` 补上（相机本体在 `render/Camera.h`，能离线测）。
+//   顺带：**碰撞仍然没有**（S7），所以走进地图外时 `@` 会离开画面，这是预期的。
 //
 // ⚠️ 本类**不 include `platform/Input.h`**：OnUpdate 只从 `FrameContext` 拿 `const Input&`
 //   （Application.h 已前向声明），OnRender 完全不碰输入。
@@ -63,14 +69,20 @@ private:
     //    故意的，且平移一个周期会重合 → 所以还要那个地标才能判断"画面动没动"。
     void BuildDemoMap();
 
-    // 渲染。S5 **没有相机**：视口原点恒为世界 (0,0)，只差一个"顶栏占第 0 行"的 +1。
-    // 三个都是 const → 它们用的是 `World` 的 **const 版** Find()/Entities()/Map()
+    // 渲染。S6 起**有相机**：屏幕格 ↔ 世界格的对应关系是
+    //     世界列 = 相机整数原点 + 屏幕列
+    //     世界行 = 相机整数原点 + (屏幕行 − kHudRow)
+    // 相机的接口全是 const（`OriginCol/OriginRow`）→ 三个绘制函数仍然全是 const，
+    // 于是它们用的是 `World` 的 **const 版** Find()/Entities()/Map()
     //（"Find 为什么要有两版"在这里第一次有了真实生产调用者）。
     void DrawMap(mini::render::FrameBuffer& fb) const;
     void DrawEntities(mini::render::FrameBuffer& fb) const;
     void DrawHud(mini::render::FrameBuffer& fb) const;
 
     mini::world::World    m_world{kWorldW, kWorldH};
+    // 视口位置（S6）。每帧在 `World::Update` **之后** Follow 一次（帧序见 Game.cpp）。
+    // 值成员：相机是游戏侧状态，引擎不认识它；尺寸不存进相机（见 render/Camera.h 6.3）。
+    mini::render::Camera  m_camera;
     mini::world::EntityId m_player{};         // 0 = 还没出生（OnStart 之前）
     float                 m_elapsed = 0.0f;   // Σdt（秒）—— 10.2 的"自证"用它
     float                 m_moveSpeed = kMoveSpeed;   // 实际用的速度（argv[2] 可覆盖）

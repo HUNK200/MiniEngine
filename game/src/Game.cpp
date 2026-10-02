@@ -13,16 +13,22 @@
 // 这里做三件事，别的一件都不做：
 //   1. 开局：铺地图、Spawn 玩家（BuildDemoMap / OnStart）
 //   2. 每帧：输入 → 速度 → 交给 World 积分（OnUpdate，帧序是硬约束，见下）
-//   3. 每帧：世界 → 屏幕（OnRender，**没有相机**，视口原点恒为世界 (0,0)）
+//   3. 每帧：世界 → 屏幕（OnRender，S6 起走相机）
+//   4. 每帧：相机跟随（OnUpdate 末尾，**必须在 Update 之后**）—— S6 加的
 //
-// ⚠️ 帧序（S5_CHECKLIST 7.1，顺序不能换）：
-//     读输入 → 归一化 → **写速度** → Update(dt) → FlushRemovals
+// ⚠️ 帧序（S5_CHECKLIST 7.1 + S6_CHECKLIST 7.1，顺序不能换）：
+//     读输入 → 归一化 → **写速度** → Update(dt) → **相机 Follow** → FlushRemovals
 //   写速度必须在 Update 之前：反过来的现象是"按一下动一下、但慢一帧"，
 //   看着像手感问题，其实是顺序问题。
+//   相机必须在 Update 之后：用上一帧的玩家位置会让 @ 与地图差一帧相位
+//   （现象是"@ 偶尔不在正中，偶尔闪一格"）—— S6 坑 3。
 //
 // ⚠️ 坐标：`dt` 用 `ctx.deltaSeconds`（S3 已 clamp 过，**这里不夹**）；
-//   世界→屏幕的取整**一律 floor**（7.2）：列 = floor(x)、行 = floor(y) + 1
-//   （+1 是给引擎顶栏让出第 0 行）。`TileMap::ToIndex` 就是那个 floor。
+//   世界→屏幕的取整**一律 floor**（7.2），而且 S6 起**只取整一次**：
+//   相机整数原点 = floor(相机 pos)，之后全是整数加减：
+//     世界列 = 相机整数原点 + 屏幕列
+//     世界行 = 相机整数原点 + (屏幕行 − kHudRow)
+//   `TileMap::ToIndex` 与相机内部用的 `FloorToInt` 是同一个函数 —— 不许再写第二条取整路径。
 // ============================================================
 
 namespace game {
@@ -31,9 +37,11 @@ namespace {
 
 // 游戏 HUD 占第 1 行（第 0 行是引擎顶栏）。
 //
-// ⚠️ 代价说清：HUD **压在世界的第 0 行上** —— 那一行等于被 HUD 占用（地图照画，
-//    HUD 后画会盖掉它）。这是"世界→屏幕只差一个 +1"的必然结果：要让游戏内容
-//    完整可见，要么加相机（S6），要么把 +1 变成 +2（那 7.2 的公式就得改）。
+// ⚠️ 代价说清（S6 起措辞改准）：HUD 压在**视口第 0 行**上 —— 也就是相机原点那一行
+//    （`OriginRow()` 对应的世界行）。地图照画、HUD 后画会盖掉它，所以**垂直方向真正
+//    可见的世界只有 22 行**（可用视口 23 行减去这一行）。
+//    ⚠️ 因此"可用视口高 = 画布高 − kHudRow"这条不能写错：写成整屏高会让底部多露一行，
+//       并让 HUD 压错行（S6 坑 8）。
 constexpr int kHudRow = 1;
 
 } // namespace
@@ -60,8 +68,9 @@ void Game::BuildDemoMap()
     const int h = map.Height();
 
     // 1) 地图外沿一圈墙。
-    //    ⚠️ 开局视野只有左上角 80×24，所以这一圈里**只有左边那条看得见**：
-    //    上边会被游戏 HUD 占掉，右边/下边要等 S6 的相机走到地图边缘才见得到。
+    //    ⚠️ 开局视野只有左上角 80×24，所以**开局**这一圈里只有左边那条看得见：
+    //    上边会被游戏 HUD 占掉（HUD 压在视口第 0 行），右边/下边**S6 起**走到地图边缘就能看到
+    //    —— S6 的人眼验收里"走到右下角不出现错位的墙"看的就是它们。
     //    （其实不写这一圈也没关系：`TileMap::At` 越界本来就返回 Wall —— S5 决策 5。
     //      写出来只是让"地图里有什么"在代码里看得见。）
     for (int x = 0; x < w; ++x) {
@@ -160,7 +169,19 @@ void Game::OnUpdate(const mini::core::FrameContext& ctx)
     // ⑥ 积分（world 唯一的"物理"）。dt 已由 S3 clamp 过，这里**不再夹**（坑 #7）
     m_world.Update(ctx.deltaSeconds);
 
-    // ⑦ 延迟删除。S5 恒为空 —— 留着是为了让帧序在 S9 之前就是对的
+    // ⑦ 相机跟随 —— **必须在 ⑥ 之后**（用本帧最新的玩家位置，S6 的帧序硬约束）。
+    //    尺寸用 ctx 而不是 fb：`Application::Run` 第 ③ 步先 Resize、第 ④ 步才造 ctx，
+    //    所以**本帧**两者是一致的（S6_CHECKLIST 前置事实第 5 条）→ 不需要 resize 钩子。
+    //    ⚠️ 视口高要减掉引擎顶栏那一行：相机只管"多少格"，不知道 HUD 的存在（6.5 的契约）。
+    if (const mini::world::Entity* player = m_world.Find(m_player); player != nullptr) {
+        m_camera.Follow(player->transform.pos,
+                        mini::render::CameraLimits{ctx.screenWidth,
+                                                   ctx.screenHeight - kHudRow,
+                                                   m_world.Map().Width(),
+                                                   m_world.Map().Height()});
+    }
+
+    // ⑧ 延迟删除。S5 恒为空 —— 留着是为了让帧序在 S9 之前就是对的
     m_world.FlushRemovals();
 }
 
@@ -174,11 +195,17 @@ void Game::DrawMap(mini::render::FrameBuffer& fb) const
     const int w = fb.Width();
     const int h = fb.Height();
 
-    // S5 没有相机：屏幕(c,r) 对应世界 (c, r-1)
+    // S6：屏幕第 c 列显示世界第 (相机整数原点 + c) 格。
+    // ⚠️ 相机原点**只在这里取一次**（`OriginCol/OriginRow` 内部是 S6 里唯一的 floor），
+    //    下面的循环全是整数加减 —— 不能再出现第二次取整，否则就是施工图 6.4 说的
+    //    "两条取整路径"（E-8 的成因）。
+    const int originCol = m_camera.OriginCol();
+    const int originRow = m_camera.OriginRow();
+
     for (int row = kHudRow; row < h; ++row) {
-        const int worldRow = row - 1;
+        const int worldRow = originRow + (row - kHudRow);
         for (int col = 0; col < w; ++col) {
-            if (map.At(col, worldRow) == mini::world::Tile::Wall) {
+            if (map.At(originCol + col, worldRow) == mini::world::Tile::Wall) {
                 fb.Set(col, row, '#', mini::render::Color::BrightBlack);
             }
         }
@@ -187,15 +214,22 @@ void Game::DrawMap(mini::render::FrameBuffer& fb) const
 
 void Game::DrawEntities(mini::render::FrameBuffer& fb) const
 {
+    // 与 DrawMap 用**同一个整数原点**（施工图 7.2 的硬规矩）：
+    //   实体必须画在"它脚下那一格"被画到的列上 → 屏幕列 = ToIndex(pos) − OriginCol()。
+    // ⚠️ 不能写成 `floor(pos.x − 相机 pos)`（PLAN A.5 的原始写法）：相机 pos 含小数时
+    //    两者差一格 → 症状是 `@` 与它脚下的格子错位（E-8）。反向验证 R2 就钉这条。
+    const int originCol = m_camera.OriginCol();
+    const int originRow = m_camera.OriginRow();
+
     // const 版 Entities()：本方法是 const。span 只在这次遍历里有效
     for (const mini::world::Entity& entity : m_world.Entities()) {
         if (!entity.active) {
             continue;   // 不更新 ≠ 不画；active 只管 Update（见 World 的注释）
         }
 
-        // 世界 → 屏幕：**floor**，不是 round（7.2 统一后的唯一取整）
-        const int col = mini::world::TileMap::ToIndex(entity.transform.pos.x);
-        const int row = mini::world::TileMap::ToIndex(entity.transform.pos.y) + 1;
+        // 世界 → 屏幕：**floor**（`ToIndex`），再减去相机原点；行还要加回 kHudRow
+        const int col = mini::world::TileMap::ToIndex(entity.transform.pos.x) - originCol;
+        const int row = mini::world::TileMap::ToIndex(entity.transform.pos.y) - originRow + kHudRow;
 
         const mini::render::Color color = (entity.id == m_player)
                                               ? mini::render::Color::BrightYellow
@@ -215,8 +249,8 @@ void Game::DrawHud(mini::render::FrameBuffer& fb) const
     const float px = player->transform.pos.x;
     const float py = player->transform.pos.y;
 
-    // 先把这一行铺满空格，再写字：否则 HUD 右边会露出地图第 0 行的边框，
-    // 看着像"画面坏了"（S3 的顶栏也是这样独占一行的）
+    // 先把这一行铺满空格，再写字：否则 HUD 右边会露出地图在**视口第 0 行**的内容
+    //（= 相机原点那一行），看着像"画面坏了"（S3 的顶栏也是这样独占一行的）
     for (int col = 0; col < fb.Width(); ++col) {
         fb.Set(col, kHudRow, ' ');
     }
@@ -241,7 +275,9 @@ void Game::OnRender(mini::render::FrameBuffer& fb)
 {
     DrawMap(fb);
     DrawEntities(fb);
-    DrawHud(fb);   // 最后画：压在世界的第 0 行上（同"顶栏压在最上面"一个道理）
+    // 最后画：压在**视口第 0 行**上（= 相机原点那一行；同"顶栏压在最上面"一个道理）。
+    // ⚠️ 顺序不能换：HUD 要盖掉地图，而 `@` 必须画在地图之后、HUD 之前。
+    DrawHud(fb);
 }
 
 // ------------------------------------------------------------

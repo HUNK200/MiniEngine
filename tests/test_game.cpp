@@ -30,6 +30,14 @@
 //   `Game` 的 `m_world` / `m_player` 都是私有的，所以位置一律**扫 FrameBuffer 上的 '@'**，
 //   期望值一律由 `Game` 的**公有常量**（kMoveSpeed / kSpawnX / kSpawnY）算出来。
 //   这样用例改不到内部实现，"改实现不改行为"时它不会误报。
+//
+// 【⚠️ S6 起：屏幕位移 ≠ 世界位移】
+//   相机把玩家的屏幕位置钉在画面中央附近（未夹取时恒在第 `viewW/2` 列、`viewH/2 + 1` 行），
+//   所以"位移 / 速度"这类断言只在**相机退化**（视口 ≥ 地图）时才等价于世界位移。
+//   本文件里量速度的那条已改用 `kWorldCanvas*`；另外两条
+//   （`PlayerIsDrawnAtItsCell` / `VelocityTakesEffectSameFrame`）仍绿只是因为位移小
+//   （7 格 / 2 格）**还没走出跟随区** —— 调大 `kMoveSpeed`、或把画布改小，它们的期望值
+//   就会失效。见 S6_CHECKLIST 落地偏差 3。
 // ------------------------------------------------------------
 
 namespace {
@@ -48,9 +56,25 @@ using mini::platform::Key;
 using mini::platform::KeyState;
 using mini::render::FrameBuffer;
 
-// 画布尺寸：所有用例都用同一块（和 10.2 的观察口径一致：80×25）
+// 画布尺寸：默认用例用同一块（和 10.2 的观察口径一致：80×25）
 constexpr int kScreenW = 80;
 constexpr int kScreenH = 25;
+
+// ⚠️ S6 落地偏差 3：**"量速度"的用例不能用 80×25**。
+//
+//    S5 的三个用例都在拿"**屏幕**位移"当"**世界**位移"用 —— 那个等价关系的前提是
+//    "没有相机"。S6 之后相机把玩家的屏幕位置钉在画面中央附近（未夹取时恒在第 `viewW/2`
+//    列、第 `viewH/2 + 1` 行），于是**屏幕位移在跟随区里会饱和**（2026-10-02 实测）：
+//        斜向已归一化 → 屏幕 dy = 9
+//        斜向没归一化 → 屏幕 dy = 9      ← 一模一样，**"归一化坏了"根本测不出来**
+//    所以量世界位移的用例必须让**相机退化成空操作**：视口 ≥ 地图 → `Camera::Follow`
+//    恒返回 `(0, 0)`（S6_CHECKLIST 决策 4 的那条退化语义）→ 屏幕位移重新等于世界位移。
+//
+//    ⚠️ 画布要 **≥ 201×201**：相机拿到的视口高是"画布高 − 1"（顶栏那一行），
+//       200 行的画布只给到 199 行视口 → **y 轴仍然会跟随**。这里取 256×256 留余量。
+//       256 这个数由"S5/S6 的地图是 200×200"推出，地图变大时要跟着改。
+constexpr int kWorldCanvasW = 256;   // 只给"量世界位移"的用例用
+constexpr int kWorldCanvasH = 256;
 
 // —— 测试替身：复用真 InputState，只把"事件来源"换成测试自己喂 ——
 class FakeInput final : public mini::platform::Input {
@@ -69,7 +93,14 @@ private:
 };
 
 // FrameContext 是聚合体（没有构造函数），最后一个成员是 `const Input&`
-FrameContext MakeContext(const mini::platform::Input& input, float dt)
+//
+// ⚠️ 画布尺寸也在这里，且**必须与 FrameBuffer 的尺寸一致** —— `Application::Run` 就是这么
+//    保证的（第 ③ 步 Resize 之后，第 ④ 步用 `m_frameBuffer.Width()/Height()` 造 ctx）。
+//    S6 第一次修偏差 3 时只换了 FrameBuffer、漏了这里 → **相机拿到的视口还是 80×23**
+//    （相机用的是 `ctx.screenWidth/Height`，`fb` 只管画）→ `@` 仍被钉住 → 用例仍红。
+//    见 S6_CHECKLIST 落地偏差 4。
+FrameContext MakeContext(const mini::platform::Input& input, float dt,
+                         int canvasW = kScreenW, int canvasH = kScreenH)
 {
     return FrameContext{
         dt,                                   // deltaSeconds（已 clamp 的口径）
@@ -77,8 +108,8 @@ FrameContext MakeContext(const mini::platform::Input& input, float dt)
         dt * 1000.0f,                         // maxFrameMs
         0.0f,                                 // workMs
         dt > 0.0f ? 1.0f / dt : 0.0f,         // fps（dt == 0 时别除）
-        kScreenW,
-        kScreenH,
+        canvasW,
+        canvasH,
         input
     };
 }
@@ -124,15 +155,20 @@ struct Delta {
 
 // 按住 keys 里的键跑 seconds 秒（每步 1/60 秒），返回 '@' 相对起点的位移。
 // 起点用**第 0 帧（dt = 0）**渲染一次拿到 —— 这样不依赖 kSpawn 被画在哪。
-Delta RunHolding(float seconds, std::initializer_list<Key> keys)
+//
+// ⚠️ 返回的是**屏幕**位移：只有"相机退化"（视口 ≥ 地图）时才等于世界位移，
+//    所以量速度的用例必须显式传 `kWorldCanvasW/H`（见上面那段注释）。
+Delta RunHolding(float seconds, std::initializer_list<Key> keys,
+                 int canvasW = kScreenW, int canvasH = kScreenH)
 {
     FakeInput   input;
     Game        game;
-    FrameBuffer fb(kScreenW, kScreenH);
+    FrameBuffer fb(canvasW, canvasH);
     game.OnStart();
 
     // 第 0 帧：不按键、dt = 0 → 位置不变，只为把 '@' 画出来当起点
-    game.OnUpdate(MakeContext(input, 0.0f));
+    // ⚠️ ctx 与 fb 必须同一尺寸：相机读 ctx 的尺寸，`fb` 只管画（落地偏差 4）
+    game.OnUpdate(MakeContext(input, 0.0f, canvasW, canvasH));
     fb.Clear();
     game.OnRender(fb);
 
@@ -149,7 +185,7 @@ Delta RunHolding(float seconds, std::initializer_list<Key> keys)
     const float dt    = 1.0f / 60.0f;
     const int   steps = static_cast<int>(seconds / dt + 0.5f);
     for (int i = 0; i < steps; ++i) {
-        game.OnUpdate(MakeContext(input, dt));
+        game.OnUpdate(MakeContext(input, dt, canvasW, canvasH));   // ctx 与 fb 同尺寸（偏差 4）
         fb.Clear();
         game.OnRender(fb);
         input.BeginFrame();
@@ -166,13 +202,16 @@ Delta RunHolding(float seconds, std::initializer_list<Key> keys)
 
 // 直向 1 秒走 kMoveSpeed 格；斜向 1 秒每个轴只走 ≈ kMoveSpeed/√2 格。
 // **反向验证 4 的目标**：把 OnUpdate 里的 Normalized() 去掉 → 斜向变成 kMoveSpeed 格/轴 → 这条变红。
+// ⚠️ 这条效力**依赖下面两跑传的 `kWorldCanvas*`**（相机退化成 (0,0)）：用 80×25 时屏幕 dy
+//    会饱和到 9，去掉 Normalized() 也还是 9 → 反向验证失效（S6 落地偏差 3 实测过，别删那两个参数）。
 //
 // ⚠️ 期望值**必须由 `Game::kMoveSpeed` 算出来**，不许写死格数：速度是可调的
 //    （默认 20，还能用 `MiniEngine.exe 60 30` 覆盖），写死就等于"调手感必须改测试"。
 MINI_TEST(Game, DiagonalMoveIsNotFaster)
 {
+    // ⚠️ 两跑都用"相机退化"的大画布（落地偏差 3）：本用例量的是**世界**位移。
     // 直向（只按 D）：1 秒前进 kMoveSpeed 格，y 不动
-    const Delta straight = RunHolding(1.0f, {Key::D});
+    const Delta straight = RunHolding(1.0f, {Key::D}, kWorldCanvasW, kWorldCanvasH);
     MINI_CHECK(straight.ok);
     MINI_CHECK_EQ(straight.dx, static_cast<int>(Game::kMoveSpeed));
     MINI_CHECK_EQ(straight.dy, 0);
@@ -184,7 +223,7 @@ MINI_TEST(Game, DiagonalMoveIsNotFaster)
     const int   lo      = static_cast<int>(perAxis) - 1;
     const int   hi      = static_cast<int>(perAxis) + 1;
 
-    const Delta diagonal = RunHolding(1.0f, {Key::D, Key::S});
+    const Delta diagonal = RunHolding(1.0f, {Key::D, Key::S}, kWorldCanvasW, kWorldCanvasH);
     MINI_CHECK(diagonal.ok);
     MINI_CHECK(diagonal.dx >= lo && diagonal.dx <= hi);
     MINI_CHECK(diagonal.dy >= lo && diagonal.dy <= hi);
