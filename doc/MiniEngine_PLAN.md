@@ -157,6 +157,9 @@ c++_simple_engine/
 │   │   │               #   Vec3.h / Rect.h 只有契约还没建（理由见 S4_CHECKLIST 差异 2）
 │   │   ├── render/     Cell.h  Color.h  FrameBuffer.h  RowDiff.h  Renderer2D.h
 │   │   │               Camera.h  Viewport.h  Renderer3D.h  RayCaster.h
+│   │   │               # ↑ 目标态；**S6 落地了 `Camera.h`**（header-only，118 行，不需要 .cpp）
+│   │   │               #   `Viewport.h` **本阶段不建**：S6 只需要"四个 int"，0 调用者
+│   │   │               #   （S6_CHECKLIST 差异 4）。这条 render → math 是本项目第一条跨界边
 │   │   ├── world/      World.h  Entity.h  Transform.h  Velocity.h  Health.h
 │   │   │               TileMap.h  Scene.h
 │   │   │               # ↑ 同样是目标态；**S5 落地了 Entity.h / TileMap.h / World.h 三个**
@@ -187,6 +190,9 @@ c++_simple_engine/
     ├── test_math.cpp           # S4（MathUtils 7 / Vec2 9 / AABB 7 / Ray 9 = 32 个）
     ├── test_world.cpp          # **S5**（TileMap 8 / EntityId 2 / World 10 = 20 个）
     ├── test_game.cpp           # **S5**（Game 3 个，靠假 Input 替身离线跑 —— 决策 9）
+    │                           #   2026-10-02 S6：量速度那条改用 256×256 画布，
+    │                           #   让相机退化成空操作（见 S6_CHECKLIST 落地偏差 3）
+    ├── test_camera.cpp         # **S6**（Camera 14 个，纯函数、不需要终端）
     ├── test_collision.cpp      # S7 之后
     ├── test_tilemap.cpp
     └── test_gamestate.cpp
@@ -228,13 +234,31 @@ world       = camera.pos + screen_cell + 0.5     // 反算回去拿到的是那�
 map_tile    = floor(world)                       // 与 screen_cell 是同一个概念 → 用同一个函数
 ```
 
-三条必须写进注释的规矩：
+⚠️ **2026-10-02（S6 落地）修正**：第一行**只在 `camera.pos` 是整数时才和渲染一致**。
+`camera.pos` 带小数时它与"画面按整数格平移"的渲染**差一格**（S6 实测：`pos = 10.7`、实体在
+`63.2` 时，`floor(63.2 − 10.7) = 52`，而渲染把那个实体画在第 `63 − 10 = 53` 列）。
+S6 起统一为**整数原点**：
+
+```text
+OriginCol   = floor(camera.pos.x)                // 相机**唯一**一次取整
+OriginRow   = floor(camera.pos.y)
+screen_col  = ToIndex(world.x) - OriginCol       // 地图与实体**共用**这一个原点
+screen_row  = ToIndex(world.y) - OriginRow + kHudRow
+```
+
+"两条取整路径各自漂移"就是 E-8 本身 —— 理由与复现见 `doc/S6_CHECKLIST.md` 6.4 / 7.2。
+上面第三行 `world = camera.pos + screen_cell + 0.5` **仍然成立**：S9 的 `ScreenToWorld`
+必须用**浮点的 `camera.pos`**（换成整数原点会丢掉小数部分）。
+
+四条必须写进注释的规矩：
 - **实体位置用 float，画的时候才取整**；直接在 int 上做移动，斜向速度会被吃掉。
 - **"落在哪一格"和"画在哪一列"用同一个 `floor`**。混用 `round`/`floor` 的症状就是下面 E-8 的
   "画面整体偏移半格 / 走位比视觉慢一格"。
   ⚠️ 2026-09-30 修正：本块原写 `screen = round((world - camera.pos) * 1.0)`，
   它与 `doc/S5_CHECKLIST.md` 用例 23 的期望值（`(5.5, 3.5)` → `At(5, 4)`）**差一整格**，已统一为 floor。
 - **`floor` 而不是 `(int)`** 转 tile 索引；负数坐标下截断会指向错误的格。
+- **相机只取整一次**（2026-10-02 S6 加）：屏幕格 ↔ 世界格走"整数原点"
+  （`Camera::OriginCol/OriginRow`），地图与实体**共用**它 —— 见上面的 S6 修正。
 
 ---
 
@@ -498,18 +522,20 @@ AI 不会自己跑构建或 exe。一个步骤的 commit 由本人在验证通�
 | 落地偏差 | 13 条，都记在 `doc/S5_CHECKLIST.md`（布局"没规律"、手感"必须按住"、ConPTY 无 key-up 三条是**跑起来之后**才发现并处置的） |
 
 
-### S6 Camera / Viewport —— 世界大于屏幕
+### S6 Camera / Viewport —— 世界大于屏幕（✅ 2026-10-02 完成）
 
 | 项 | 内容 |
 | --- | --- |
-| 目标 | World→Camera→Screen 转换，Camera 平滑跟随 + 边界夹取 |
-| 实现 | `Camera{ Vec2 pos; Vec2 target; }`、`WorldToScreen/ ScreenToWorld`、`lerp` 跟随、只遍历可见 tile |
-| C++ 知识 | `clamp`、`lerp`、`[[nodiscard]]`、整数/浮点边界计算 |
-| 引擎知识 | 视口、滚动、边界处理、"只画看得见的"（剔除） |
-| 规模 | ~250 行 |
-| 可运行效果 | 大地图上镜头跟随 `@`，走到地图角落时镜头停住、不出现黑边 |
-| 验收 | 地图比终端大得多时，屏幕上永远不出现"世界之外"的空白；`@` 始终在画面内 |
-| 坑 | 屏幕坐标出现半格偏移（`k - 0.5` 的取整方向）；相机移动导致整屏抖动（应对相机做 `floor`） |
+| 目标 | World→Camera→Screen 转换，Camera 跟随 + 边界夹取 |
+| 实现 | `render/Camera.h`（**header-only，118 行**）：`struct CameraLimits{viewW,viewH,mapW,mapH}` + `class Camera{ Vec2 m_pos; }`；`Follow()` 逐轴 `clamp(world − view/2, 0, map − view)`（**snap，无平滑**）；`OriginCol/OriginRow()` = `floor(pos)`（渲染用的整数原点）；`Pos()`；`ScreenToWorld` **只留契约不实现**（0 调用者 → `TECH_DEBT` C11）。`game` 侧两处接入：`OnUpdate` 末尾 `Follow`（**在 `World::Update` 之后**）+ `DrawMap`/`DrawEntities` 改用整数原点。**不做 `target` 字段、不建 `Viewport.h`** |
+| C++ 知识 | `clamp`、`[[nodiscard]]`、整数/浮点边界计算、`static_assert` 钉布局、**"同一个事实只能有一个来源"**（相机不持有尺寸，尺寸每帧由调用方给） |
+| 引擎知识 | 视口、滚动、边界处理、"只画看得见的"（剔除）、**取整路径必须唯一**（两条各自漂移就是 E-8） |
+| 规模 | ~250 行 → **实测：`Camera.h` 118 行 + `tests/test_camera.cpp` 301 行（14 条用例）+ `game/`·`tests/` 改动约 +110/−28 行（含大量注释）；用例总数 90 → 104** |
+| 可运行效果 | **走进第 41 格画面开始滚动**，`@` 恒定在画面正中（第 40 列）；走到地图右下角镜头被顶住、**不出现错位的墙**；继续走**出地图**（x ≥ 200 / y ≥ 200）`@` 才离开画面 —— S7 之前能做到，属预期 |
+| 验收 | 机器形式：`Camera` suite **14 条**（含全图扫描 `PlayerStaysOnScreenInsideMap`、E-8 守卫 `PlayerColumnMatchesItsTileColumn`、退化 `ZeroViewportIsSafe`、resize `ResizeThenFollowUsesNewViewport`）；**2026-10-02 本人回报测试全绿（用例总数 104）**。人眼 7 条见 `doc/S6_CHECKLIST.md` 10.2 —— ⚠️ **人眼那 7 条尚未回报**（本人只回报了"测试全绿"）。⚠️ 这些用例**只在"1 格 = 1 字符"的整数格渲染下成立** |
+| 坑 | ① 屏幕坐标半格偏移（取整方向）→ 由"**整数原点**"从根上消掉，不是靠再补一层 floor；② **`view >= map` 时 `Clamp` 的前置条件被违反**（`lo > hi`，`MathUtils.h:33`）→ 必须自己早退；③ **HUD 占视口第 0 行** → 视口高 = 画布高 − 1，写成整屏高会让底部多露一行；④ **相机必须在 `World::Update` 之后**，否则 `@` 与地图差一帧相位；⑤ 奇数视口宽时居中偏移必须用**整数除法** |
+| 落地偏差 | 4 条，都记在 `doc/S6_CHECKLIST.md`：用例 8 的"负数 pos"不可达、施工图 6.6 与 7.1 的帧序自相矛盾、**S5 的 `Game` 用例拿屏幕位移当世界位移**（相机一介入就测不出归一化）、**"相机的权威尺寸是 `ctx` 而不是 `fb`"** |
+| 与 PLAN 的差异 | **6 条**，见 `doc/S6_CHECKLIST.md` 第 12 节（不做平滑、不建 `target`、不提供 `WorldToScreen`、不建 `Viewport.h`、`ScreenToWorld` 只留契约、遍历结构未改） |
 
 ### S7 Collision —— 不能穿墙
 
@@ -986,11 +1012,11 @@ S13  + Z-buffer：精灵与墙的遮挡关系                           —— �
 | E-5 | **Sleep 精度** | 限帧 60 实测 32 FPS | 混合睡眠：`sleep_for(remain - 2ms)` 后自旋；或 `timeBeginPeriod(1)`（可选，需链 `winmm`） | S3 |
 | E-6 | **多配置生成器** | `ctest` 找不到测试、exe 路径猜错 | 所有构建命令带 `--config Debug`，ctest 带 `-C Debug`；统一 `CMAKE_RUNTIME_OUTPUT_DIRECTORY` | S0 |
 | E-7 | **CMake 4.x 兼容** | `cmake_minimum_required(VERSION 3.5)` 直接报错 | 最低写 3.20 | S0 |
-| E-8 | **坐标系混乱** | 画面整体偏移半格、走位比视觉慢一格 | 定死 A.5 的四层约定；实体浮点、tile 用 `floor`；写一个坐标转换的单元测试 | S4/S6 |
+| E-8 | **坐标系混乱** | 画面整体偏移半格、走位比视觉慢一格 | 定死 A.5 的四层约定；实体浮点、tile 用 `floor`；写一个坐标转换的单元测试。**✅ 2026-10-02 S6 已落**：A.5 补了"**整数原点**"这条（相机只取整一次、地图与实体共用），`Camera` suite 14 条里 `PlayerColumnMatchesItsTileColumn` 就是这条的守卫（实体与它脚下的 tile 必须同列） | S4/S6 **✅ 已收口** |
 | E-9 | **迭代器失效** | 射击时随机崩溃 | 禁止"遍历中增删"；用延迟删除队列（`toRemove` 列表）或 `swap-erase` 倒序遍历 | S9 |
 | E-10 | **穿透** | 子弹跳过敌人、玩家高速穿墙 | 分轴移动（S7）；子弹子步进（S9）；`dt` clamp（S3） | S7/S9 |
 | E-11 | **Game Loop 设计错误** | 高刷屏上游戏速度变快、暂停恢复瞬移 | variable dt 且 `dt = min(dt, 0.05)`；暂停时不累积时间 | S3/S10 |
-| E-12 | **终端改尺寸** | 画面错位、越界写 | **S2 只把 `WINDOW_BUFFER_SIZE_EVENT` 安全丢弃**（不崩、不误当按键）；S3 起每帧比较 `FrameBuffer` 尺寸与 `Console::Size()`，变了才 `FrameBuffer::Resize` + 重画。**不走事件驱动**——S3 本来就有帧循环，轮询更简单且不会漏。**2026-09-28 S3 方案已定稿**：落在 `Application::Run` 第 ③ 步，`width < 2 \|\| height < 2` 时**跳过**（别拿 `Resize` 抛的异常当控制流）；相机边界 clamp 仍归 S6。见 `doc/S3_CHECKLIST.md` 6.3 / 9.3 | S3/S6 |
+| E-12 | **终端改尺寸** | 画面错位、越界写 | **S2 只把 `WINDOW_BUFFER_SIZE_EVENT` 安全丢弃**（不崩、不误当按键）；S3 起每帧比较 `FrameBuffer` 尺寸与 `Console::Size()`，变了才 `FrameBuffer::Resize` + 重画。**不走事件驱动**——S3 本来就有帧循环，轮询更简单且不会漏。**2026-09-28 S3 方案已定稿**：落在 `Application::Run` 第 ③ 步，`width < 2 \|\| height < 2` 时**跳过**（别拿 `Resize` 抛的异常当控制流）；相机边界 clamp 仍归 S6。见 `doc/S3_CHECKLIST.md` 6.3 / 9.3。**✅ 2026-10-02 S6 已落**：相机每帧用 `ctx` 的尺寸重新夹取（`ctx` 与 `fb` 同帧一致，`Application.cpp:89-118`），用例 `Camera.ResizeThenFollowUsesNewViewport` 钉住；⚠️ 但"尺寸协商本身的接受条件"（`w >= 2 && h >= 2`）**仍未抽函数、无法离线测** → 见 `TECH_DEBT` 4.1（C7 触发条件已满足，待裁定） | S3/S6 **✅ 已收口（余 C7 一条）** |
 | E-13 | **Ray Casting 鱼眼/裂缝** | 墙呈弧形、墙面有竖缝 | `cos` 校正；DDA 的 `sideDistX/Y` 初值按方向取 `(1-delta)` 或 `delta`；`rayDir` 归一化 | S12 |
 | E-14 | **ECS 过度设计** | 花两天改架构，游戏没进展 | 见 D.1：停在 D-1，需要时按具体类型分容器 | S10+ |
 | E-15 | **Profiler 失真** | 计时器被优化掉、被测代码因分配而变慢 | `std::atomic_signal_fence`/`DoNotOptimize`、固定大小环形缓冲、零分配 | S11 |

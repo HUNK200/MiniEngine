@@ -212,7 +212,7 @@ main.cpp  →  game  →  engine  →  标准库
 | 地图 | `std::vector<Tile>`（`200×200 = 40 KB`），线性化 `index = y*w + x` | 与 `FrameBuffer` 同一套路；`Tile` 是 `uint8_t` |
 | 一次遍历怎么暴露 | `std::span<Entity>` | C++20；**不带所有权、不带长度信息以外的语义**；⚠️ 任何 `Spawn` 后失效 |
 | `Entity` 大小 | `static_assert(sizeof(Entity) == ...)` 自检 | 照 S4 的 `Vec2`/`AABB`/`Ray` 先例（坑 #18） |
-| 视口（S5 版） | **没有 Camera**，视口原点恒为世界 `(0,0)` | 这是 S6 的活；S5 的"视口偏移"只是渲染时的一个减法 |
+| 视口（S5 版） | **没有 Camera**，视口原点恒为世界 `(0,0)` | 这是 S6 的活；S5 的"视口偏移"只是渲染时的一个减法<br>✅ **2026-10-02 S6 已做**：`render/Camera.h` + `Game` 接入（见 `doc/S6_CHECKLIST.md`） |
 
 ## 5. 逐文件实施步骤（每步都立刻跑一次）
 
@@ -790,7 +790,7 @@ cmake --build build --config Release                    # 期望同样 0 warning
 | 斜向（如 W+D） | 与直向**速度一样**（不 √2 倍） |
 | **dt 无关性（自证）** | HUD 显示 `sum dt` 与 `v`（速度），任何帧率下都满足 **`pos.x ≈ v × sum dt`**（±1 格）；`v` 默认 20，可用 `MiniEngine.exe 60 30` 改。<br>⚠️ **只在"提供真 key-up 的终端"里成立**（经典控制台窗口）。**VS Code 内置终端 / Windows Terminal 是 ConPTY，它不提供 key-up** → `Held` 永不出现 → 按住只按"自动重复速率 × 一帧的 dt"推进，这条自证会**明显偏小**（60fps 约 1/2，240fps 约 1/8）。见落地偏差 13 与 `TECH_DEBT` C10 |
 | 60fps 与 240fps 对比 | 上面那条**都成立** → 这就是"100fps 和 300fps 距离相同"的现代说法 |
-| 往右走约 40 格 | `@` **移出屏幕右侧** —— ✅ **预期行为**（相机是 S6），不是 bug |
+| 往右走约 40 格 | `@` **移出屏幕右侧** —— ✅ **当时的预期行为**（相机是 S6），不是 bug<br>⛔ **2026-10-02 已作废**：S6 落地后**走进第 41 格画面就开始滚动**，`@` 恒定在画面正中；只有**走出地图**（x ≥ 200，S7 之前能做到）才会离开画面。见 `doc/S6_CHECKLIST.md` |
 | 撞墙 / 走出地图 | **不发生碰撞，能穿过去** —— ✅ 预期（碰撞是 S7） |
 | 顶栏 `Rows n/n` | 仍然是个位数到几十（脏行 diff 没被破坏） |
 | `Q` / `Ctrl+C` / 关窗口 | 正常退出，终端恢复。⚠️ **Esc 不退出** —— 它从 S10 起要用来关菜单（S2 决策），游戏只认 `Q` |
@@ -872,7 +872,7 @@ cmake --build build --config Release                    # 期望同样 0 warning
 | 4 | C++ 知识栏提到 `optional` / `span` / `erase-remove` | `std::span` 用在 `Entities()`；**不用** `optional`（`Find` 返回 `Entity*`，`nullptr` 足够）；`erase-remove` 换成 **swap-erase** | `optional<Entity&>` 不存在（不能有 optional 引用）；`erase-remove` 是 O(n) 搬运，swap-erase 是 O(1) |
 | 5 | 未提 `game/` 静态库 | **本阶段就建** | PLAN:122 与顶层 CMakeLists:56-58 的注释都写死了"S5 才建"；`TECH_DEBT` C2 的触发条件也是 S5 |
 | 6 | 未提 HUD 内容 | 换成**世界坐标面板**（去掉 15 键四态面板） | 决策 3；这是 C4 能关闭的前提 |
-| 7 | S6 相机"边界夹取" | S5 的 `TileMap::At` 越界返回 `Wall`，**但相机不能靠它判边界** | 决策 5；写在这里免得 S6 时踩 |
+| 7 | S6 相机"边界夹取" | S5 的 `TileMap::At` 越界返回 `Wall`，**但相机不能靠它判边界** | 决策 5；写在这里免得 S6 时踩<br>✅ **2026-10-02 S6 已落实**：相机用 `CameraLimits` 的 `mapW/mapH` 自己夹取（**没有碰 `At()`**），`view >= map` 时还先在 `Clamp` 之前早退（否则违反它 `lo <= hi` 的前置条件） |
 | 8 | PLAN 的 S5 小节**完全没提测试**（S4 至少写了"单测 6 个"） | 加 **23 个用例**：`world` 20 + `Game` 3（假 `Input`） | 决策 8 / 9；与 S4 立下的"能离线测的就离线测"一脉相承，也让 S5 的核心现象从人眼验收变成机器验收 |
 
 ## 13. 本阶段的"学习点"备忘（给自己看的）
