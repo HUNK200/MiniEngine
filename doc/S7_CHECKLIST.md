@@ -27,7 +27,8 @@
   施工图预测"`dy` 14→13"，**实际是 14→12**（偏差 5：盒子与柱子那一**列**重叠的窗口宽 **2 格**，
   不是 1 格）。修法：斜向只跑 **0.45 秒**，路径不再经过柱子。
 - **验收口径**：机器形式见 10.1（**新增 18 条用例**：`Collision` 17 + `Game` 1 → 总数 105 → **123**，
-  已全绿；⚠️ `N passed` 仍未抄录）；**人眼 6 条（10.2）与反向验证 6 条（10.3）尚未做** ——
+  已全绿：**`123 passed / 0 failed`**，2026-10-08 本人回报 —— 总数还被反向验证 R1 那次的 `112 + 11` 独立印证过）；
+  **反向验证（10.3）已做 R1**（其余 5 条待定）；**人眼 6 条（10.2）尚未做** ——
   是否跳过由本人定（先例：S6 全跳、S5 的 A6 也跳）。
 
 ### ⚠️ 分工约定（`AGENTS.md` 1.4；本阶段沿用）
@@ -99,10 +100,10 @@
 `TileRangeAtFractionalCenter` → **`SlipsThroughDiagonalGap`** ·
 `AlreadyOverlappingDoesNotFreeze` → **`AlreadyInsideSolidDoesNotFreeze`**。
 
-**反向验证跟着改**：**R4** 从"把 `<` 改成 `<=`"改成"**把 `kContactEpsilon` 改成 0**"
-（目标：`OccupiesOnlyItsOwnTile` 最后一条 + `StopsAtWallMoving*` 里的 `!IsSolidAt` 断言）；
-**R5** 从"`kEntityHalfSize` 改成 0"（该常量已不存在）改成"**让夹紧停在边界上、不留 ε**"。
-**R1 / R2 / R3 / R6 不变。**
+**反向验证跟着改**：R4 / R5 / R6 三条**都换了破坏方式** —— 旧写法引用的是已经不存在的东西
+（`<` / `<=` 的开区间、`kEntityHalfSize`、"单轴查几格"）。**以 10.3 的表为准。**
+R1 / R2 / R3 的破坏方式不变，但**期望红集变大**（点模型下"一帧 ≥ 1 格"就可能跳过整格墙）：
+**R1 实测 11 条**，见 10.3 的「R1 实测」段 —— 那一段里还记了一条**用例设计教训**。
 
 ---
 
@@ -549,18 +550,41 @@ cmake --build build --config Release                     # 期望同样 0 warnin
 
 ### 10.3 反向验证（6 条，**每条都必须看到红**，跑完必须还原）
 
-> 与 S6 的处置不同：S6 那 4 条被本人决定跳过；**S7 这 6 条建议至少跑 R1 / R2 / R5**
-> （它们分别守卫"子步进""夹紧""开区间"这三条本阶段的核心决策）。
-> 若决定跳过，把代价与触发条件照 S6 的格式写在这里。
+> ⚠️ **2026-10-08 点模型变更后，R4 / R5 / R6 换了破坏方式**（旧写法引用的是已经不存在的符号/概念）。
+> R1 / R2 / R3 的破坏方式不变，但**期望红集变大**。
+> 与 S6 的处置不同：S6 那 4 条被本人决定跳过；**S7 建议至少跑 R1 / R2 / R4**
+> （分别守卫"子步进""夹紧""ε"三条核心决策）。跳过的照 S6 的格式写代价与触发条件。
+
+**还原方式（统一）**：破坏只改 `engine/include/mini/world/Collision.h` 一个文件 →
+跑完执行 `git checkout -- engine/include/mini/world/Collision.h`，`git status` 应干净
+（好版本在 commit `aed565e` 里）。
 
 | # | 怎么破坏 | 哪条用例应该变红 | 说明 |
 | --- | --- | --- | --- |
-| R1 | `kMaxStepPerTick` 改成 `1e9f`（= 关掉子步进）**并注释掉那条 `static_assert`** | **10**（顺带 11） | 两步才能改完，本身也证明那条 `static_assert` 真的在守着不变量 |
-| R2 | 夹紧改成"这一轴直接不动"（拒绝） | 3 / 4 / 5 / 6 | 停在最后一个自由位置（如 `9.0` 而不是 `9.5`） |
-| R3 | 取消分轴：先移 `(dx, dy)` 再整体检测并回退 | **12**（坑 7 的贴墙滑；13 也可能红） | 贴墙滑行消失 / 顶角卡住 |
-| R4 | `OverlapsSolid` 的判定从 `<` 改成 `<=`（闭区间） | **7** | "贴面"被当成重叠 → 停在接触面之后自己挡住自己 |
-| R5 | `kEntityHalfSize` 改成 `0.0f`（点碰撞）**并注释掉对应 `static_assert`** | 3（期望 9.5，实际 10.0） | 半格语义被钉住的证明（坑 3） |
-| R6 | 单轴只查 `ToIndex(center)` 那一格（丢掉第二格） | **9** | 半个身子所在的格被漏掉 → 能从旁边挤进墙里半格 |
+| R1 | `kMaxStepPerTick` 改成 `1e9f`（= 关掉子步进）**并注释掉那条 `static_assert`** | **实测 11 条**（见下） | 两步才能改完，本身也证明那条 `static_assert` 真在守着不变量 |
+| R2 | 夹紧改成"这一轴直接不动"（拒绝） | `StopsAtWallMoving{Right,Left,Down,Up}` | 停在最后一个自由位置（`9.0`）而不是 `10 − ε` |
+| R3 | 取消分轴：先移 `(dx, dy)` 再整体检测并回退 | `SlidesAlongWallOnOtherAxis` | 贴墙滑行消失 / 顶角卡住 |
+| R4（**可选**） | `kContactEpsilon` 改成 `0.0f`（+ 注释掉对应 `static_assert`） | `OccupiesOnlyItsOwnTile` 最后两条 + 四条 `StopsAtWall*` 里的 `!IsSolidAt` | 不留 ε 就正好停在**实心格里** → "接触位置一定合法"这条不变量被钉住的证明 |
+| R5（**可选**） | 左/上方向的落点写成 `boundary − ε`（= **四个镜像只写对一半**，施工图坑 17） | `StopsAtWallMovingLeft` + `StopsAtWallMovingUp` | 只在两个方向偏一整格 —— 这种错最容易漏 |
+| R6（**可选**） | 夹紧条件从"目标格实心"改成"**跨格边界就拦**" | `MovesFreelyWhenNoWall` + `BoundaryItselfIsNotAnObstacle` + `SlipsThroughDiagonalGap` | 证明"跨边界自由 / 只拦目标格"这条**点模型核心决策**有用例钉着 |
+
+#### R1 实测（2026-10-08，本人执行）
+
+破坏：`kMaxStepPerTick = 1e9f` + 注释掉 `static_assert` → 结果 **`112 passed, 11 failed`**（总数仍是 123）。
+
+红的 11 条：`StopsAtWallMoving{Right,Left,Down,Up}` · `BoundaryItselfIsNotAnObstacle` ·
+`SlipsThroughDiagonalGap` · `DoesNotTunnelThroughWallAtHighSpeed` · `DeltaAtMaxStepBoundary` ·
+`SlidesAlongWallOnOtherAxis` · `CornerClampsBothAxes` · `CannotLeaveMapThroughEdge`。
+
+**比预计（2 条）多得多，但合理**：关掉子步进后，**任何"一帧位移 ≥ 1 格且路上有墙"的用例都会直接传送过去**
+（点模型的穿刺阈值是 **1 格/帧**，旧盒模型是 2 格/帧）—— 这些用例的 delta 分别是 5 / 5 / 2 / 5 / 5 / 5 / 5 / 100 格。
+
+⚠️ **其中 `DeltaAtMaxStepBoundary` 是"假红"，不能算 R1 的有效证据**：它的**输入**是现算的
+（`kMaxStepPerTick * 0.99f / 1.0f / 1.01f`）—— 常量被改成 `1e9f` 之后，它的 delta 也变成 ~5e8 格，
+于是它是因为"位置飞到界外（越界 = 实心）"而红，**不是**因为它守卫的那条不变量被违反。
+（好处：常量正常变动时它会自动跟着测新的分段点；**代价**：它不能用来证明"常量被改坏"。）
+**教训**：**用例的输入如果取自被测常量本身，它在反向验证里就失去区分力** ——
+写"边界值"用例时要么用**字面量**、要么接受这个局限并**在文档里标出来**（这里选后者）。
 
 ### 10.4 交付后的自检
 
