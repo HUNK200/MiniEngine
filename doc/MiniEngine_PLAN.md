@@ -530,9 +530,9 @@ AI 不会自己跑构建或 exe。一个步骤的 commit 由本人在验证通�
 | 实现 | `render/Camera.h`（**header-only，118 行**）：`struct CameraLimits{viewW,viewH,mapW,mapH}` + `class Camera{ Vec2 m_pos; }`；`Follow()` 逐轴 `clamp(world − view/2, 0, map − view)`（**snap，无平滑**）；`OriginCol/OriginRow()` = `floor(pos)`（渲染用的整数原点）；`Pos()`；`ScreenToWorld` **只留契约不实现**（0 调用者 → `TECH_DEBT` C11）。`game` 侧两处接入：`OnUpdate` 末尾 `Follow`（**在 `World::Update` 之后**）+ `DrawMap`/`DrawEntities` 改用整数原点。**不做 `target` 字段、不建 `Viewport.h`** |
 | C++ 知识 | `clamp`、`[[nodiscard]]`、整数/浮点边界计算、`static_assert` 钉布局、**"同一个事实只能有一个来源"**（相机不持有尺寸，尺寸每帧由调用方给） |
 | 引擎知识 | 视口、滚动、边界处理、"只画看得见的"（剔除）、**取整路径必须唯一**（两条各自漂移就是 E-8） |
-| 规模 | ~250 行 → **实测：`Camera.h` 118 行 + `tests/test_camera.cpp` 301 行（14 条用例）+ `game/`·`tests/` 改动约 +110/−28 行（含大量注释）；用例总数 90 → 104** |
+| 规模 | ~250 行 → **实测：`Camera.h` 118 行 + `tests/test_camera.cpp` 301 行（14 条用例）+ `game/`·`tests/` 改动约 +110/−28 行（含大量注释）；用例总数 90 → **104**，C7 收窄时再 +1 → **105** |
 | 可运行效果 | **走进第 41 格画面开始滚动**，`@` 恒定在画面正中（第 40 列）；走到地图右下角镜头被顶住、**不出现错位的墙**；继续走**出地图**（x ≥ 200 / y ≥ 200）`@` 才离开画面 —— S7 之前能做到，属预期 |
-| 验收 | 机器形式：`Camera` suite **14 条**（含全图扫描 `PlayerStaysOnScreenInsideMap`、E-8 守卫 `PlayerColumnMatchesItsTileColumn`、退化 `ZeroViewportIsSafe`、resize `ResizeThenFollowUsesNewViewport`）；**2026-10-02 本人回报测试全绿（用例总数 104）**。人眼 7 条见 `doc/S6_CHECKLIST.md` 10.2 —— ⚠️ **人眼那 7 条尚未回报**（本人只回报了"测试全绿"）。⚠️ 这些用例**只在"1 格 = 1 字符"的整数格渲染下成立** |
+| 验收 | 机器形式：`Camera` suite **14 条**（含全图扫描 `PlayerStaysOnScreenInsideMap`、E-8 守卫 `PlayerColumnMatchesItsTileColumn`、退化 `ZeroViewportIsSafe`、resize `ResizeThenFollowUsesNewViewport`）；**2026-10-02 本人回报测试全绿**；**2026-10-08 本机复验 105 passed（0 warning / `ctest` 1/1）**。人眼 7 条见 `doc/S6_CHECKLIST.md` 10.2 —— ✅ **本人 2026-10-02 确认"可以了"**。⚠️ 这些用例**只在"1 格 = 1 字符"的整数格渲染下成立** |
 | 坑 | ① 屏幕坐标半格偏移（取整方向）→ 由"**整数原点**"从根上消掉，不是靠再补一层 floor；② **`view >= map` 时 `Clamp` 的前置条件被违反**（`lo > hi`，`MathUtils.h:33`）→ 必须自己早退；③ **HUD 占视口第 0 行** → 视口高 = 画布高 − 1，写成整屏高会让底部多露一行；④ **相机必须在 `World::Update` 之后**，否则 `@` 与地图差一帧相位；⑤ 奇数视口宽时居中偏移必须用**整数除法** |
 | 落地偏差 | 4 条，都记在 `doc/S6_CHECKLIST.md`：用例 8 的"负数 pos"不可达、施工图 6.6 与 7.1 的帧序自相矛盾、**S5 的 `Game` 用例拿屏幕位移当世界位移**（相机一介入就测不出归一化）、**"相机的权威尺寸是 `ctx` 而不是 `fb`"** |
 | 与 PLAN 的差异 | **6 条**，见 `doc/S6_CHECKLIST.md` 第 12 节（不做平滑、不建 `target`、不提供 `WorldToScreen`、不建 `Viewport.h`、`ScreenToWorld` 只留契约、遍历结构未改） |
