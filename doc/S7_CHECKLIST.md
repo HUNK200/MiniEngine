@@ -532,9 +532,10 @@ cmake --build build --config Release                     # 期望同样 0 warnin
 .\build\bin\Debug\MiniEngine.exe 60 100                  # 高速：人眼验收的高速那两条
 ```
 
-> **实测（2026-10-08，本人回报）**：**全绿** —— 但 ⚠️ **`N passed` 没有抄录**（只回了"全绿"两个字），
-> 所以这里仍没有可比对的数字，静态计数是 **123**。这是 `TECH_DEBT` A7 那条教训的**第二次复现**：
-> 以后跑完顺手把尾行粘回来（`123 passed, 0 failed` 这种格式），否则"全绿"在半年后没法当基线用。
+> **实测（2026-10-08，本人回报）**：**`123 passed / 0 failed`**（干净构建）。
+> ⚠️ 过程记一笔：本人先只回了"全绿"两个字、**没抄尾行**（`TECH_DEBT` A7 教训的第二次复现）；
+> 后来补上了，而**总数 123 还被反向验证那两次独立印证**（R1 的 `112 + 11`、R2 的 `113 + 10`）。
+> 这条已关：以后跑完顺手把尾行粘回来。
 
 **人眼验收**（**必须在经典控制台窗口**里跑，不要用 VS Code 内置终端 / Windows Terminal —— `TECH_DEBT` C10）：
 
@@ -562,7 +563,7 @@ cmake --build build --config Release                     # 期望同样 0 warnin
 | # | 怎么破坏 | 哪条用例应该变红 | 说明 |
 | --- | --- | --- | --- |
 | R1 | `kMaxStepPerTick` 改成 `1e9f`（= 关掉子步进）**并注释掉那条 `static_assert`** | **实测 11 条**（见下） | 两步才能改完，本身也证明那条 `static_assert` 真在守着不变量 |
-| R2 | 夹紧改成"这一轴直接不动"（拒绝） | `StopsAtWallMoving{Right,Left,Down,Up}` | 停在最后一个自由位置（`9.0`）而不是 `10 − ε` |
+| R2 | 夹紧改成"这一轴直接不动"（拒绝） | **实测 10 条**，与预测**逐条命中**（见下） | 停在**最后一个自由子步**（`9.5`，**不是** `9.0` —— 拒绝是逐子步发生的，所以还能推进到 `9.5`） |
 | R3 | 取消分轴：先移 `(dx, dy)` 再整体检测并回退 | `SlidesAlongWallOnOtherAxis` | 贴墙滑行消失 / 顶角卡住 |
 | R4（**可选**） | `kContactEpsilon` 改成 `0.0f`（+ 注释掉对应 `static_assert`） | `OccupiesOnlyItsOwnTile` 最后两条 + 四条 `StopsAtWall*` 里的 `!IsSolidAt` | 不留 ε 就正好停在**实心格里** → "接触位置一定合法"这条不变量被钉住的证明 |
 | R5（**可选**） | 左/上方向的落点写成 `boundary − ε`（= **四个镜像只写对一半**，施工图坑 17） | `StopsAtWallMovingLeft` + `StopsAtWallMovingUp` | 只在两个方向偏一整格 —— 这种错最容易漏 |
@@ -585,6 +586,27 @@ cmake --build build --config Release                     # 期望同样 0 warnin
 （好处：常量正常变动时它会自动跟着测新的分段点；**代价**：它不能用来证明"常量被改坏"。）
 **教训**：**用例的输入如果取自被测常量本身，它在反向验证里就失去区分力** ——
 写"边界值"用例时要么用**字面量**、要么接受这个局限并**在文档里标出来**（这里选后者）。
+
+#### R2 实测（2026-10-08，本人执行）
+
+破坏：`detail::StepAxis` 里撞到之后直接 `return`（"这一轴这一步白走"），把"夹到边界前 ε"整段注掉
+→ 结果 **`113 passed, 10 failed`**（总数仍是 123）。
+
+红的 10 条（**与预测逐条命中，而且没有假红**）：`StopsAtWallMoving{Right,Left,Down,Up}` ·
+`BoundaryItselfIsNotAnObstacle` · `SlipsThroughDiagonalGap` · `DoesNotTunnelThroughWallAtHighSpeed` ·
+`SlidesAlongWallOnOtherAxis` · `CornerClampsBothAxes` · `CannotLeaveMapThroughEdge`。
+
+**两条值得留下的观察**：
+
+1. **同样破坏"一处"，为什么 R1 红 11 条、R2 红 10 条，集合还不一样**：
+   R1（关掉子步进）打的是**采样密度** → 凡"一帧位移 ≥ 1 格"的用例都中枪；
+   R2（拒绝）打的是**接触位置** → 凡"断言停在哪儿"的用例都中枪。
+   ⇒ **列预期的正确姿势是"这条破坏会碰到哪一类断言"，而不是"哪条用例名字看着相关"**
+   （R1 那次我按后者数 → 低估成 2 条；R2 按前者数 → 10/10 命中）。
+2. **`Game` / `World` suite 一条都没红 —— 而且这是它该有的样子**：
+   它们只断言"渲染出来的那一格"（`floor`），而 R2 改的是**浮点落点**（`9.5` vs `9.9999`）。
+   两者经 `ToIndex` **落在同一格** → 断言不变。这正是点模型那个决定（"看见的 = 占的"）的
+   一个宏观好处：**高层用例对浮点贴边的细节不敏感**（代价是"贴多紧"只能靠 `Collision` 层自己钉）。
 
 ### 10.4 交付后的自检
 
