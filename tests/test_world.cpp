@@ -35,6 +35,20 @@ static_assert(TileMap::ToIndex(-1.0f) == -1);
 static_assert(TileMap::ToIndex(0.9f) == 0);
 static_assert(TileMap::ToIndex(3.0f) == 3);
 
+// ⚠️ **会移动**的用例不能用 4×3 的小地图（S7 起会红）。
+//
+//    `World::Update` 现在走碰撞，而 `TileMap::At` 越界一律返回 `Wall`（TileMap.h 约定 1）
+//    → 12 格/秒 跑 1 秒要 12 格，4 宽的地图会把盒子夹在 x = 3.5
+//    （2026-10-08 实测：`MovementIsDtIndependent` 期望 12.5、实际 3.5）。
+//
+//    宽度下限：0.5 + 12 = 12.5 → 盒 [12, 13) → 宽必须 > 13；取 **16**，留 3 格余量。
+//    y 方向速度为 0，但仍留 3 行（盒高 1 格 + 余量）。
+//
+//    ⚠️ **不移动**的用例继续用 4×3 —— 问题不是"地图小"，而是"移动撞上边界"；
+//       而且 `FindFindsSpawnedEntity` 还断言了 `Map().Width() == 4`，不能跟着一起改。
+constexpr int kMoveMapW = 16;
+constexpr int kMoveMapH = 3;
+
 // 项目里第一条"断言抛异常"的用例（S0~S4 的构造函数都没测过这条路径）。
 // 为什么写成函数模板：MINI_CHECK 收的是**表达式**，塞不进 try/catch。
 //
@@ -360,11 +374,11 @@ MINI_TEST(World, SpawnedIdIsNeverReused)
 MINI_TEST(World, MovementIsDtIndependent)
 {
     // 同样 1.0 秒：一个大步 vs 一百个小步 → 位置必须一样
-    World coarse(4, 3);
+    World coarse(kMoveMapW, kMoveMapH);   // ⚠️ 不能用 4×3：S7 起角色会撞上世界边界（见 kMoveMapW）
     const EntityId cid = coarse.Spawn(MakePlayer());
     coarse.Update(1.0f);
 
-    World fine(4, 3);
+    World fine(kMoveMapW, kMoveMapH);
     const EntityId fid = fine.Spawn(MakePlayer());
     for (int i = 0; i < 100; ++i) {
         fine.Update(0.01f);
@@ -386,7 +400,7 @@ MINI_TEST(World, MovementIsDtIndependent)
 // 位移与速度成正比；速度为 0 就纹丝不动
 MINI_TEST(World, MovementScalesWithSpeed)
 {
-    World world(4, 3);
+    World world(kMoveMapW, kMoveMapH);   // ⚠️ 不能用 4×3：6 格位移会撞上边界
 
     const EntityId fast = world.Spawn(MakePlayer());   // {12, 0}
     world.Update(0.5f);                                // → 移动 6 格
@@ -416,7 +430,7 @@ MINI_TEST(World, MovementScalesWithSpeed)
 // active == false 不参与积分，但**仍在容器里**（"停更" ≠ "删除"）
 MINI_TEST(World, InactiveEntityDoesNotMove)
 {
-    World world(4, 3);
+    World world(kMoveMapW, kMoveMapH);   // ⚠️ 不能用 4×3：active 那条要移动 6 格
 
     Entity frozen = MakePlayer();
     frozen.active = false;
@@ -441,7 +455,7 @@ MINI_TEST(World, InactiveEntityDoesNotMove)
 // （反向验证 3 的目标：把 MarkForRemoval 改成立即删，这条必须变红）
 MINI_TEST(World, MarkedEntitySurvivesUntilFlush)
 {
-    World world(4, 3);
+    World world(kMoveMapW, kMoveMapH);   // ⚠️ 不能用 4×3：下面要 Update 0.5 秒（6 格）
     const EntityId id = world.Spawn(MakePlayer());
 
     world.MarkForRemoval(id);

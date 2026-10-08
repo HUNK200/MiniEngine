@@ -38,6 +38,13 @@
 //   （`PlayerIsDrawnAtItsCell` / `VelocityTakesEffectSameFrame`）仍绿只是因为位移小
 //   （7 格 / 2 格）**还没走出跟随区** —— 调大 `kMoveSpeed`、或把画布改小，它们的期望值
 //   就会失效。见 S6_CHECKLIST 落地偏差 3。
+//
+// 【⚠️ S7 起：斜向跑会擦到柱子】
+//   碰撞接上之后，"直向 1 秒"与"斜向 1 秒"不再对称：斜向从出生点 (2.5, 2.5) 出发朝右下，
+//   会去撞 (10, 10) 那根柱子 —— y 在 `x ∈ (9.5, 11.5)` 这段里被柱子的**上表面夹住**
+//   （接触面 y = 9.5），于是少了约 2 格的 y 位移。那是**碰撞几何**，不是归一化失效。
+//   所以 `DiagonalMoveIsNotFaster` 的斜向只跑 **0.45 秒**（终点 ≈ (8.86, 8.86)，与柱子不接触），
+//   而直向仍然跑满 1 秒（那一行 y=2.5 上没有柱子）。见 S7_CHECKLIST 落地偏差 5。
 // ------------------------------------------------------------
 
 namespace {
@@ -217,26 +224,35 @@ MINI_TEST(Game, DiagonalMoveIsNotFaster)
     MINI_CHECK_EQ(straight.dy, 0);
 
     // 斜向（D + S）：每轴 ≈ kMoveSpeed/√2
+    //
+    // ⚠️ **S7 起斜向只跑 0.45 秒**（理由见文件头那段"斜向会擦到柱子"）：
+    //    跑满 1 秒时 y 会被 (10,10) 柱子的上表面夹住约 2 格 → 那时测到的是"碰撞几何"，
+    //    不再是"归一化"。**这不是"期望值该放宽"，是测量口径被碰撞污染了**
+    //    （同 S6 落地偏差 3：先判口径，再决定改哪里）。
+    //    0.45 秒 × 每轴 kMoveSpeed/√2 = 6.36 格 → 终点 (8.86, 8.86)，
+    //    盒 [8.36, 9.36) 与柱子那一格 [10, 11) 不接触（余量 0.64 格）。
     // ⚠️ 容差 ±1 格：屏幕上的格数是 `floor(起点 + 位移) - floor(起点)`，
     //    起点的 0.5 和小数部分会让结果比 `floor(每轴位移)` 差一格。
-    const float perAxis = Game::kMoveSpeed / std::sqrt(2.0f);
+    constexpr float kDiagonalSeconds = 0.45f;
+
+    const float perAxis = Game::kMoveSpeed / std::sqrt(2.0f) * kDiagonalSeconds;
     const int   lo      = static_cast<int>(perAxis) - 1;
     const int   hi      = static_cast<int>(perAxis) + 1;
 
-    const Delta diagonal = RunHolding(1.0f, {Key::D, Key::S}, kWorldCanvasW, kWorldCanvasH);
+    const Delta diagonal = RunHolding(kDiagonalSeconds, {Key::D, Key::S}, kWorldCanvasW, kWorldCanvasH);
     MINI_CHECK(diagonal.ok);
     MINI_CHECK(diagonal.dx >= lo && diagonal.dx <= hi);
     MINI_CHECK(diagonal.dy >= lo && diagonal.dy <= hi);
 
-    // "斜向不比直向快" = **每轴**位移都小于"直向 1 秒的位移"。
+    // "斜向不比直向快"的判别力在这两条上界里：参考值 = **同时长**下"忘了归一化"会走多远
+    //   = kMoveSpeed × 0.45 ≈ 9 格。归一化正常 → 6 < 9 通过；忘了归一化 → 9 → 红。
     //
-    // ⚠️ 2026-09-30 实测踩过的错：原先写 `diagonal.dy < straight.dy` —— 直向只往 x 走，
-    //    它的 `dy` **恒为 0**，而斜向的 dy ≈ 8，于是 `8 < 0` 永远为假 → 这条断言永远红
-    //    （其余五条全绿）。**比较基准必须是"1 秒的位移"（kMoveSpeed），不是另一次跑的 dy。**
-    //    见 S5_CHECKLIST 落地偏差 10。
-    const int oneSecondCells = static_cast<int>(Game::kMoveSpeed);
-    MINI_CHECK(diagonal.dx < oneSecondCells);   // 不归一化时这里等于 kMoveSpeed → 红
-    MINI_CHECK(diagonal.dy < oneSecondCells);
+    // ⚠️ 2026-09-30 实测踩过的错（S5_CHECKLIST 落地偏差 10）：原先写 `diagonal.dy < straight.dy`
+    //    —— 直向只往 x 走、它的 `dy` **恒为 0**，于是 `8 < 0` 永远为假 → 断言永远红。
+    //    **比较基准必须由"同一口径下的位移"算出来，不能拿另一次跑的另一个分量当基准。**
+    const int unnormalizedPerAxis = static_cast<int>(Game::kMoveSpeed * kDiagonalSeconds + 0.5f);
+    MINI_CHECK(diagonal.dx < unnormalizedPerAxis);
+    MINI_CHECK(diagonal.dy < unnormalizedPerAxis);
 }
 
 // 帧序（7.1 的可执行形式）：**本帧**按下的键，本帧就要生效。
@@ -324,4 +340,24 @@ MINI_TEST(Game, PlayerIsDrawnAtItsCell)
         MINI_CHECK_EQ(end.y, startRow);                                 // 没往 y 走
         MINI_CHECK(fb.At(expectedCol + 1, startRow).ch != '@');         // round 版会画到右边那一列
     }
+}
+
+// ------------------------------------------------------------
+// S7（用例 18）：碰撞接上之后 —— **走不出地图**，而且撞得停
+//
+// 按 W 从出生点 (2.5, 2.5) 往上：外沿墙在第 0 行（`Game::BuildDemoMap`），
+// 盒 `pos ± 0.5` 贴到 y = 1.5 就停住 → 只走 **1 格**（不是 kMoveSpeed 格）。
+//
+// ⚠️ 期望值 -1 **可以写死**：它由"外沿墙在第 0 行"这条**地图几何**决定，与速度无关
+//    （与"不许写死速度算出来的格数"不冲突 —— 那个数依赖 kMoveSpeed，这个数不依赖）。
+// ⚠️ 反向验证：把 `World::Update` 里那行改回 `pos += v * dt` → 1 秒会走 kMoveSpeed 格 → 这条变红。
+// ------------------------------------------------------------
+MINI_TEST(Game, PlayerStopsAtTopWall)
+{
+    // 不夹紧的话 1 秒会走 kMoveSpeed(20) 格（早就走出地图了）；夹紧后只走 1 格就贴住顶墙
+    const Delta up = RunHolding(1.0f, {Key::W});
+
+    MINI_CHECK(up.ok);
+    MINI_CHECK_EQ(up.dy, -1);   // (2.5, 2.5) → (2.5, 1.5)：tile 行 2 → 1
+    MINI_CHECK_EQ(up.dx, 0);    // 只动了 y
 }
