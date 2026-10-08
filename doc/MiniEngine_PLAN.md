@@ -164,7 +164,10 @@ c++_simple_engine/
 │   │   │               TileMap.h  Scene.h
 │   │   │               # ↑ 同样是目标态；**S5 落地了 Entity.h / TileMap.h / World.h 三个**
 │   │   │               #   （Transform / Velocity 并进 Entity.h —— S5 决策 4；Health/Scene 未建）
+│   │   │               #   **S7 又落地了 Collision.h**（header-only，241 行：1×1 盒的分轴 + 夹紧 + 子步进）
+│   │   │               #   ⚠️ 它按下面那行本该属于 `physics/` 层，S7 落进了 `world/` —— 见 S7_CHECKLIST 差异 7
 │   │   ├── physics/    Collision.h  PhysicsSystem.h
+│   │   │               # ↑ 目标态，**S7 没有建这一层**（Collision.h 落在 world/）
 │   │   ├── ai/         StateMachine.h  EnemyController.h
 │   │   └── debug/      DebugOverlay.h  Profiler.h
 │   └── src/                    # 与 include 镜像的 .cpp；S2 起 platform/ 下放 Windows 实现
@@ -259,6 +262,8 @@ screen_row  = ToIndex(world.y) - OriginRow + kHudRow
 - **`floor` 而不是 `(int)`** 转 tile 索引；负数坐标下截断会指向错误的格。
 - **相机只取整一次**（2026-10-02 S6 加）：屏幕格 ↔ 世界格走"整数原点"
   （`Camera::OriginCol/OriginRow`），地图与实体**共用**它 —— 见上面的 S6 修正。
+- **碰撞也共用这同一个 `ToIndex`**（2026-10-08 S7 加）：`world/Collision.h` 里"这一格是不是墙"、
+  "盒子压在哪些格上"走的都是它 —— 到 S7 为止，**全项目仍然只有这一条取整路径**。
 
 ---
 
@@ -537,18 +542,20 @@ AI 不会自己跑构建或 exe。一个步骤的 commit 由本人在验证通�
 | 落地偏差 | 4 条，都记在 `doc/S6_CHECKLIST.md`：用例 8 的"负数 pos"不可达、施工图 6.6 与 7.1 的帧序自相矛盾、**S5 的 `Game` 用例拿屏幕位移当世界位移**（相机一介入就测不出归一化）、**"相机的权威尺寸是 `ctx` 而不是 `fb`"** |
 | 与 PLAN 的差异 | **6 条**，见 `doc/S6_CHECKLIST.md` 第 12 节（不做平滑、不建 `target`、不提供 `WorldToScreen`、不建 `Viewport.h`、`ScreenToWorld` 只留契约、遍历结构未改） |
 
-### S7 Collision —— 不能穿墙
+### S7 Collision —— 不能穿墙（✅ 2026-10-08 完成）
 
 | 项 | 内容 |
 | --- | --- |
-| 目标 | 基于 tile 的碰撞 + **分轴移动**，实体间 AABB 推挤 |
-| 实现 | `MoveAndCollide(entity, delta)`：先移 X 轴单独检测、再移 Y 轴；tile 查询 `TileMap::IsSolidAt(Vec2)` |
-| C++ 知识 | 早退、`epsilon` 比较、`std::array` vs `vector`、const 正确性 |
-| 引擎知识 | 碰撞检测 vs 碰撞响应、AABB 分轴解算、为什么不能一次移完再解算（会穿角） |
-| 规模 | ~250 行 |
-| 可运行效果 | 贴着墙走很顺，斜向顶墙角不会卡住也不会穿过去；F2 显示碰撞盒 |
-| 验收 | 疯狂按键撞墙 30 秒不穿模；沿墙滑行（wall slide）手感存在 |
-| 坑 | 一次移动整个 delta 后再检测 → 高速下穿墙；用"拒绝移动"而不是"分轴"→ 贴墙卡顿 |
+| 目标 | 基于 tile 的碰撞 + **分轴移动**；`@` 撞墙停住、沿墙能滑、**永远走不出地图** |
+| 实现 | `engine/include/mini/world/Collision.h`（**header-only，241 行**）：`kEntityHalfSize = 0.5f` + `kMaxStepPerTick = 0.5f`（各配 `static_assert`）；公开三个纯函数 —— `IsSolidAt(map,tx,ty)`（**越界 = 实心**）/ `OverlapsSolid(map,center)`（**开区间**：贴面不算重叠）/ `MoveAndCollide(map,pos,delta)`（**外层子步 + 内层先 X 后 Y + 夹紧到接触面**）。`detail::AxisTileBlocks` 是"检测"与"夹紧"**共用**的同一个判据；`detail::StepAxis` 是 **±x/±y 四个方向共用**的一份实现（`movingIsX` 只切下标顺序）。接入点只有 `World::Update` 一行（`World.cpp:97`）—— **`game/` 一行没改** |
+| C++ 知识 | 早退、`[[nodiscard]]`、`constexpr`、`std::max/ceil`、**用 `static_assert` 把几何不变量写进编译期**（子步长 < 1 格、盒半宽 == 0.5）。⚠️ PLAN 原写的"`epsilon` 比较"**一次都没出现**：改成"开区间判定 + 精确半数接触面"（差异 3） |
+| 引擎知识 | 碰撞**检测** vs 碰撞**响应**、AABB 分轴解算、**离散采样 vs 连续扫掠**（子步进 = 把一次采样拆成多次）、"默认参数下不穿"是**巧合**而不是设计 |
+| 规模 | ~250 行 → **实测：`Collision.h` 241 行 + `tests/test_collision.cpp` 326 行（17 条用例）+ `World.cpp`/`World.h` 改 ~10 行 + `test_game.cpp`/`test_world.cpp` 的口径修正（含 +1 条 `Game` 用例）；用例总数 105 → **123** |
+| 可运行效果 | 按住 `W`/`A` **只走 1 格就贴住外沿墙**；斜向撞柱子会**沿柱面滑行**；**走不出地图**（`x ∈ [0.5, 198.5]`）。⚠️ PLAN 原写的"F2 显示碰撞盒"**没做**（差异 5） |
+| 验收 | 机器形式：`Collision` suite **17 条**（穿刺守卫 `DoesNotTunnelThroughWallAtHighSpeed`、边界 `CannotLeaveMapThroughEdge`、自愈 `AlreadyOverlappingDoesNotFreeze`、纯函数 `MoveAndCollideIsPureFunctionOfInputs`…）+ `Game.PlayerStopsAtTopWall`；**2026-10-08 本人回报全绿**（⚠️ `N passed` 未抄录，静态计数 123）。人眼 6 条见 `doc/S7_CHECKLIST.md` 10.2 —— **待做**；反向验证 6 条见 10.3 —— **待定** |
+| 坑 | ① 一帧位移 ≥ 2 格就会穿刺（盒宽 1 + 墙厚 1，盲区 = D − 1）→ 子步进；② **不分子步会让"冲出地图"变成永久卡死**（世界外恒为墙、四方向全 solid）—— 这是 S7 自己引入的失败态，也是子步进提前到 S7 的真正理由；③ 盒 = `pos ± 0.5`（`pos` 是格中心，不是格角）；④ 贴面**不算**重叠（否则贴着墙就动不了）；⑤ 取整只走 `TileMap::ToIndex`；⑥ 外层子步 / 内层先 X 后 Y 的**顺序定死**（换序在拐角差一格）；⑦ 一轴夹紧后**不许 `break` 整帧**（否则贴墙滑行消失）；⑧ 非整格中心时一次检测要查 **4 格**（常态） |
+| 落地偏差 | **7 条**，都记在 `doc/S7_CHECKLIST.md`：候选格局部性依赖子步长 · 用例 11 的"结果一致"不成立 · 用例 8/9 改成等价可观察形式 · 荒谬速度不设上限 · **坑 13 的"1 格"估算算错了（实际 2 格 → `dy` 14→12）** · 用例 18 复用 `RunHolding` · **漏核 `World` suite 使 4 条既有用例真红** |
+| 与 PLAN 的差异 | **7 条**，见 `doc/S7_CHECKLIST.md` 第 12 节：子步进提前到 S7 · `IsSolidAt` 的位置 · ε = 0 · 实体推挤不做 · F2 不做 · 规模 · **`Collision.h` 落在 `world/` 而不是目标树的 `physics/`** |
 
 ### S8 Enemy + AI 状态机
 
@@ -1014,7 +1021,7 @@ S13  + Z-buffer：精灵与墙的遮挡关系                           —— �
 | E-7 | **CMake 4.x 兼容** | `cmake_minimum_required(VERSION 3.5)` 直接报错 | 最低写 3.20 | S0 |
 | E-8 | **坐标系混乱** | 画面整体偏移半格、走位比视觉慢一格 | 定死 A.5 的四层约定；实体浮点、tile 用 `floor`；写一个坐标转换的单元测试。**✅ 2026-10-02 S6 已落**：A.5 补了"**整数原点**"这条（相机只取整一次、地图与实体共用），`Camera` suite 14 条里 `PlayerColumnMatchesItsTileColumn` 就是这条的守卫（实体与它脚下的 tile 必须同列） | S4/S6 **✅ 已收口** |
 | E-9 | **迭代器失效** | 射击时随机崩溃 | 禁止"遍历中增删"；用延迟删除队列（`toRemove` 列表）或 `swap-erase` 倒序遍历 | S9 |
-| E-10 | **穿透** | 子弹跳过敌人、玩家高速穿墙 | 分轴移动（S7）；子弹子步进（S9）；`dt` clamp（S3） | S7/S9 |
+| E-10 | **穿透** | 子弹跳过敌人、玩家高速穿墙 | 分轴移动（S7）；子弹子步进（S9）；`dt` clamp（S3）。**✅ 2026-10-08 S7 已落**：`world/Collision.h` 的 `MoveAndCollide` = 外层**子步进**（`kMaxStepPerTick = 0.5f`，另有 `static_assert(< 1.0f)` 把"盲区长度 < 0"这条**几何不变量**钉进编译期）+ 内层分轴**夹紧到接触面**。⚠️ **子步进从 S7 就做了**（原分配是 S9 的子弹）—— 理由：`argv[2]` 能把速度开到 5~10 格/帧（阈值 2 格/帧），且不分子步会让 S7 **引入**"冲出地图后永久卡死"。**S9 的子弹沿用同一套**。守卫用例：`Collision.DoesNotTunnelThroughWallAtHighSpeed`（离墙 1.5 格、一帧推 5 格）、`Collision.CannotLeaveMapThroughEdge` | S7 **✅ 已收口**，S9 沿用 |
 | E-11 | **Game Loop 设计错误** | 高刷屏上游戏速度变快、暂停恢复瞬移 | variable dt 且 `dt = min(dt, 0.05)`；暂停时不累积时间 | S3/S10 |
 | E-12 | **终端改尺寸** | 画面错位、越界写 | **S2 只把 `WINDOW_BUFFER_SIZE_EVENT` 安全丢弃**（不崩、不误当按键）；S3 起每帧比较 `FrameBuffer` 尺寸与 `Console::Size()`，变了才 `FrameBuffer::Resize` + 重画。**不走事件驱动**——S3 本来就有帧循环，轮询更简单且不会漏。**2026-09-28 S3 方案已定稿**：落在 `Application::Run` 第 ③ 步，`width < 2 \|\| height < 2` 时**跳过**（别拿 `Resize` 抛的异常当控制流）；相机边界 clamp 仍归 S6。见 `doc/S3_CHECKLIST.md` 6.3 / 9.3。**✅ 2026-10-02 S6 已落**：相机每帧用 `ctx` 的尺寸重新夹取（`ctx` 与 `fb` 同帧一致，`Application.cpp:89-118`），用例 `Camera.ResizeThenFollowUsesNewViewport` 钉住；⚠️ 但"尺寸协商本身的接受条件"（`w >= 2 && h >= 2`）**仍未抽函数、无法离线测** → ✅ **2026-10-02 当天办完**：抽成 `IsUsableCanvasSide/IsUsableCanvasSize`（`core/Application.h`）+ `Core.CanvasSizeAcceptanceIsBoundarySafe` 用例（`TECH_DEBT` C7 因此**收窄**为"只剩 `ConsoleWindows` 的真终端 IO"） | S3/S6 **✅ 已收口** |
 | E-13 | **Ray Casting 鱼眼/裂缝** | 墙呈弧形、墙面有竖缝 | `cos` 校正；DDA 的 `sideDistX/Y` 初值按方向取 `(1-delta)` 或 `delta`；`rayDir` 归一化 | S12 |
@@ -1175,7 +1182,7 @@ while (!shouldQuit) {
 | 256 色 + 按距离变暗/雾 | 1h | S6 之后的任一空档 | 视觉回报最高的一项 |
 | `▀` / `▄` 半块字符（纵向分辨率翻倍）| 1h | S6 相机前后皆可 | 伪 3D 观感直接跳一档 |
 | 命中/死亡小方块粒子 | 1h | S9 射击之后 | 廉价但很提气 |
-| 地图从 `map.txt` 加载 | 1h | S7 碰撞之后 | 之后调关卡不用重新编译 |
+| 地图从 `map.txt` 加载 | 1h | **S7 已完成（2026-10-08）→ 触发条件满足，随时可挑** | 之后调关卡不用重新编译 |
 | A* 寻路（解决 S8 的卡墙）| 2.5h | S8 之后 | BFS 打底，顺手在 Debug Overlay 里画路径 |
 | 装 Ninja 提速构建 | 0.5h | 任一空档（与阶段无关） | `winget install Ninja-build.Ninja`，一条命令，别折腾 |
 | 给 `mini_tests` 加 `LABELS` 与 `TIMEOUT` 属性 | 1h | 用例总数 > 50 之后 | 让 `ctest -L fast` 与超时保护可用，见 `doc/CTEST_NOTES.md` |
