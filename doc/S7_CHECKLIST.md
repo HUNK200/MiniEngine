@@ -1,0 +1,557 @@
+# S7_CHECKLIST —— Collision（不能穿墙）施工图
+
+> 本文件是 S7 的**施工图 + 进度板 + 落地记录**。写代码前先读它；
+> 实现过程中发现的偏差**追加**到「落地偏差」表，**不许回头改历史**。
+>
+> 引用格式：`PLAN:n` = `doc/MiniEngine_PLAN.md` 第 n 行；`A.x` / `D.x` / `E-x` = PLAN 的附录/小节/风险编号。
+> 本阶段的**方案在 2026-10-08 与本人口头逐条对齐**（5 个分叉的取值见第 8 节）。
+
+---
+
+## 当前状态（2026-10-08：**方案定稿，尚未写一行代码**）
+
+- **S0 ~ S6 均已完成并验收**。最近一次全量复验（2026-10-08，本机）：构建 0 warning、
+  `ctest` 1/1、`mini_tests` **105 passed / 0 failed**。收口 commit 见 `a49a0c9` 及其前两个。
+- **本阶段要解决的事**：`@` 现在能穿墙、能走出地图（S6 故意留的缺口）。
+  S7 让 `@` 撞墙停住、沿墙能滑、**永远走不出地图**。
+- **本阶段方案 2026-10-08 定稿**：解算走**夹紧**（不是拒绝）+ **子步进**（防穿刺）+ 自由函数
+  落在新建的 `engine/include/mini/world/Collision.h`。**6 处**与 `PLAN` 原文的偏离已登记（第 12 节）。
+- **5 个分叉的取值（本人 2026-10-08 拍板）**：
+  ① 夹紧 ② **子步进（做）** ③ 实体间 AABB 推挤**不做**（→ S8 触发）④ F2 碰撞盒**不做**（→ S11）
+  ⑤ `IsSolidAt` 做成 `Collision.h` 的**自由函数**，不挂 `TileMap`。
+- **本阶段最大的变化面只有一行**：`World::Update` 里的 `pos += v * dt`（`engine/src/world/World.cpp:93`）。
+  **`game/` 一行都不用改**（`Game::OnUpdate` 照旧调 `m_world.Update(dt)`）。
+- **⚠️ 已知的连锁影响（必须先看）**：`tests/test_game.cpp:226` 的 `Game.DiagonalMoveIsNotFaster`
+  斜向路径会**擦到 (10,10) 那根柱子**，S7 之后它的 `dy` 从 **14 掉到 13**（正好压在容差下界）。
+  见第 0 节最后一行 + 坑 13。**步骤 2 跑完必须单独复跑这条**。
+- **验收口径**：机器形式见 10.1（**新增 18 条用例**：`Collision` 17 + `Game` 1 → 总数 105 → **123**）；
+  人眼 6 条见 10.2；反向验证 6 条见 10.3（**是否跳过由本人定**，先例：S6 跳了、S5 的 A6 也跳过）。
+
+### ⚠️ 分工约定（`AGENTS.md` 1.4；本阶段沿用）
+
+| 谁 | 做什么 |
+| --- | --- |
+| AI | **只改/新建源文件**。不跑 `cmake`、不跑 `ctest`、不跑 `MiniEngine.exe` |
+| 本人 | 构建、跑测试、跑 exe、看现象，把结果回报 |
+
+每步报告必须包含：改了哪些文件 / 我该执行什么（PowerShell 原样可粘贴）/ 期望看到什么 /
+以及状态标注（**代码已写完，待构建 · 待运行 · 待肉眼验**）。
+
+---
+
+## 进度板
+
+| 步骤 | 内容 | 状态 |
+| --- | --- | --- |
+| 1 | `world/Collision.h` + `tests/test_collision.cpp`（17 用例）+ `tests/CMakeLists.txt` | ⬜ 未开始 |
+| 2 | `World::Update` 接进碰撞（**唯一改变 exe 行为的一步**）+ `test_game.cpp` 加 1 条 + 复核 `DiagonalMoveIsNotFaster` | ⬜ 未开始 |
+| 3 | 收口：同步第 11 节的文档 + `TECH_DEBT` | ⬜ 未开始 |
+| 4 | 验收：人眼 6 条（10.2）+ 反向验证 6 条（10.3） | ⬜ 未开始 |
+
+### 落地偏差（实现时发现的问题，逐步追加）
+
+| # | 施工图写的 | 实际落地 | 为什么 |
+| --- | --- | --- | --- |
+| — | （实现时在这里追加，**不许回头改上面的历史**） | | |
+
+---
+
+## 0. 前置事实（写方案前逐条核过的，不是推测）
+
+| # | 事实 | 位置 | 对 S7 的意义 |
+| --- | --- | --- | --- |
+| 1 | 世界层**唯一的"物理"**就是 `pos += perSecond * dt` | `engine/src/world/World.cpp:93` | S7 就换这一行；没有第二条积分路径要改 |
+| 2 | `World::Update(float dt)` 是 **`noexcept`** | `engine/include/mini/world/World.h:67` | `MoveAndCollide` 必须 `noexcept` 且**不分配**（里面不许出现 `vector` / `new`） |
+| 3 | `TileMap::At` **越界一律返回 `Wall`** | `engine/include/mini/world/TileMap.h:22-26` | S7 **免费**得到"永远走不出地图" → **不要再写一遍边界判断**（写了就是第二条会各自漂移的路径） |
+| 4 | `TileMap::Set` **越界静默忽略** | `engine/include/mini/world/TileMap.h:59-61` | ⚠️ 测试里想"在边界外铺一堵墙"会**静默失效** —— 用例会看着像"那里本来就没墙"（坑 9） |
+| 5 | `TileMap::ToIndex` 就是 `math::FloorToInt` 的转发（**constexpr**） | `engine/include/mini/world/TileMap.h:72-75` | 碰撞查格**必须**走它：取整只发生一次（S6 的纪律，坑 5） |
+| 6 | 实体 `pos` 是**格中心**（`0.5` 是第 1 格的中心，不是格角） | `engine/include/mini/world/Entity.h:48-53` | 1×1 盒 = `pos ± 0.5`，**不是** `[pos, pos+1)`；算错半格 → "贴墙那格过不去"或"嵌进去半格" |
+| 7 | `Entity` 有 `static_assert(sizeof(Entity) == 24)` | `engine/include/mini/world/Entity.h:87` | 往 `Entity` 加字段会**先编译报错**（故意的）；S7 **不加字段**（决策 6） |
+| 8 | `dt` 上限 `kMaxDelta = 0.05f` | `engine/include/mini/core/Time.h:31` | 单帧最大位移 = `0.05 × v` → 穿刺阈值表（6.5）的分母 |
+| 9 | **`argv[2]` 直接就是格/秒** | `main.cpp:35`（`std::atof(argv[2])`） | 穿墙阈值**用户一行命令就能踩到**（`MiniEngine.exe 60 100`），所以"默认参数不穿"不算保证 |
+| 10 | 默认速度 `kMoveSpeed = 20` | `game/include/game/Game.h:52` | 默认参数下最坏帧位移 = 1.0 格，离阈值 2.0 有一倍余量 —— **是巧合，不是设计** |
+| 11 | demo 地图 = 外沿一圈墙 + **每 10 格一根柱阵** + 地标楼（`x=30..36, y=5..8`） | `game/src/Game.cpp:62-112` | 人眼验收的判据基础。⚠️ **柱子只在 `x=10,20,…` 且 `y=10,20,…` 的交叉点上** → 出生那一行（`y=2.5`）向右走**一路无墙**，一直走到右墙（`x=199`）才停 |
+| 12 | 既有 3 条 `Game` 用例都沿 `y=2.5` 向右走，最多 7 格 | `tests/test_game.cpp:214 / 226 / 308` | **逐条核过**：直向那两条（214 / 308）路径上**没有墙** → S7 不影响它们 |
+| 13 | ⚠️ 但 `DiagonalMoveIsNotFaster` 是**斜向**（`D+S`，226） | `tests/test_game.cpp:226-229` | 起点 `(2.5,2.5)` 斜向下 → 必然擦到 `(10,10)` 柱子 → 沿柱子上表面滑 1 格 → **`dy`: 14 → 13**，正好等于容差下界 `lo`（`perAxis≈14.14` → `lo = 13`）。**可能变红**，见坑 13 |
+| 14 | HUD 用 `pos ≈ v × Σdt` 自证 | `game/src/Game.cpp:265`（格式串含 `pos / tile / sum dt / v`） | S7 之后这条自证**只在没撞墙的路径上成立**（坑 15）。验收时**不许**拿"停住后 `pos ≠ v×Σdt`"判 bug |
+| 15 | `Key::F2` 已有 VK 映射，注释写着"S11 的 Debug Overlay 用" | `engine/include/mini/platform/KeyCode.h:31, 83` | 现在没有任何东西可挂 → F2 碰撞盒推迟到 S11（决策 4） |
+| 16 | 浮点相等一律 `math::ApproxEquals`，**不许写 `==`**；`Vec2` 连 `operator==` 都刻意不提供 | `engine/include/mini/math/MathUtils.h:19, 86`；`math/Vec2.h:15` | 用例断言只能用 `ApproxEquals`/区间；"接触面位置"的断言要按这个口径写（6.6） |
+| 17 | S6 的验收表写着"继续走出地图（`x >= 200`）`@` 离开画面 —— **预期**" | `doc/S6_CHECKLIST.md` 10.2 表 | S7 完成后这条**作废**（收口时标注；先例：`S5_CHECKLIST.md:793`） |
+
+---
+
+## 1. 目标与**明确不做**
+
+**目标**（`PLAN:540-551`）：基于 tile 的碰撞 + **分轴移动**。贴着墙走很顺，斜向顶墙角不卡、不穿；
+**`@` 永远走不出地图**。本阶段的学习点是"**碰撞检测 vs 碰撞响应 + 分轴解算 + 为什么不能一次移完再解算**"，
+不是"物理引擎"。
+
+### 明确不做（防止"顺手多做一点"）
+
+| 不做 | 留给谁 / 触发条件 |
+| --- | --- |
+| **实体间 AABB 推挤**（`PLAN:544` 写了） | 现在**只有 1 个实体会动** → 0 调用者。**S8**（出现第二个会动的实体）才建；登记进 `TECH_DEBT` C 组。按 B2/C11 的既定纪律（S6 就这么砍掉了 `target` 与 `Viewport.h`） |
+| **F2 显示碰撞盒**（`PLAN:549` 写了） | **S11**（Debug Overlay）。1 格 = 1 字符下"碰撞盒"只能是"把占据的格子换色"，信息量接近 0 |
+| **连续扫掠检测**（解析求交 / 网格 DDA） | 用**子步进逼近**它（6.5）；真正的 DDA 归 **S12**（光线投射），那时可以回头看要不要升级 |
+| 地图从 `map.txt` 加载 | 扩展池（`PLAN:1178`，触发条件"`S7` 碰撞之后"）。本阶段地图仍写死在 `Game::BuildDemoMap` |
+| 冲刺 / 加速道具 / 击退 | 没有需求。⚠️ 它们会把"单帧位移"推到高位 —— 但那正是子步进要挡的，**已经挡得住** |
+| 圆形碰撞体 / 多尺寸碰撞体 / 把 `halfSize` 存进 `Entity` | 0 调用者；且会先撞上 `static_assert(sizeof(Entity) == 24)`（坑 11） |
+| 空间分区（网格哈希 / 四叉树） | 200×200 = 4 万格，摊还成本可忽略（`PLAN` D.1：结构被复杂度逼出来） |
+| 碰撞事件 / 触发机关 / 门 | 没有需求（S10 的 Wave 之前不定义"事件"） |
+| 改 `TileMap`（含 `At` 的越界语义、`Set` 的静默忽略） | 永远不动（S5 决策 5；`PLAN:969` 写了"S6→S12 世界数据不用改"） |
+| 把碰撞写进 `game/` | 那会让 `game` 成为第二个"知道格子是什么"的地方（世界规则属于 `world` 层） |
+
+---
+
+## 2. 交付物清单
+
+| # | 文件 | 动作 | 说明 |
+| --- | --- | --- | --- |
+| 1 | `engine/include/mini/world/Collision.h` | **新增** | header-only；常量 + 3 个自由函数（6.2） |
+| 2 | `tests/test_collision.cpp` | **新增** | suite `Collision`，**17** 个用例（10.1） |
+| 3 | `tests/CMakeLists.txt` | 改 2 行 | 源文件列表 + 头部注释各加一行（S0 起禁用 `file(GLOB)`） |
+| 4 | `engine/src/world/World.cpp` | 改 ~6 行 | `Update` 里 `pos += v*dt` → `MoveAndCollide(m_map, pos, v*dt)` + 注释（6.9） |
+| 5 | `engine/include/mini/world/World.h` | 改注释 ~4 行 | 头文件里那句"S7 的分轴碰撞会插在同一个循环里"要改成事实陈述 |
+| 6 | `tests/test_game.cpp` | 改 ~40 行 | 加 1 条 `Game.PlayerStopsAtTopWall`；顺手把 `DiagonalMoveIsNotFaster` 的容差来源写清（坑 13） |
+| — | `game/Game.h`、`game/Game.cpp`、`main.cpp`、`world/TileMap.*`、`world/Entity.h`、`render/`、`core/`、顶层 `CMakeLists.txt` | **不动** | ⚠️ 这是本阶段一个值得记住的性质：**exe 行为变了，`game/` 一行没改** |
+
+---
+
+## 3. 依赖规则（本阶段**新增 1 条边**）
+
+```text
+world/World.cpp → world/Collision.h → { world/TileMap.h , math/Vec2.h (+ MathUtils.h) }
+                     ↑ 新增：world 层内部的第一条 header-only 边
+
+⛔ 禁止出现的边（本阶段要自检）：
+   world/Collision.h → platform/   （碰撞不认识终端）
+   world/Collision.h → render/     （不认识 FrameBuffer / Camera）
+   world/Collision.h → game/       （PLAN A.3 单向，S5 已立）
+   game/ → world/Collision.h       （game 不该自己调碰撞：唯一的调用点是 World::Update）
+```
+
+`world → math` 这条边 **S5 就有**（`TileMap.h:15-17` 记录了当时的取舍），所以本阶段没有新的跨层边；
+`Collision.h` 只在 `world` 层内部，**不引入任何新的跨层依赖**。
+
+---
+
+## 4. 数据结构与所有权
+
+| 项 | 决定 | 理由 |
+| --- | --- | --- |
+| 实体形状 | **1×1 格的正方形**，`constexpr float kEntityHalfSize = 0.5f` | `pos` 是格中心（前置事实 6）→ 盒 = `pos ± 0.5`。S7 只有玩家一个实体、只有一种尺寸 |
+| 盒的存储 | **不存**。每次都从 `pos` 现算 | 存一份"盒"就会出现"盒与 pos 不一致"的第二份真相（S6 的"同一个事实只能有一个来源"） |
+| 步长上限 | `constexpr float kMaxStepPerTick = 0.5f` | 子步进（6.5）。**必须是编译期常量**，并配 `static_assert(kMaxStepPerTick < 1.0f)` 钉住"盲区长度 < 0"这条不变量 |
+| 谁拥有地图 | 不改变：`World` 持有 `m_map`（`World.h:86`） | `MoveAndCollide` 只**借** `const TileMap&`，不持有、不缓存 |
+| 状态 | **零状态**：三个函数都是纯函数（输入 → 输出；`MoveAndCollide` 通过引用改 `pos`） | 无状态 → 可离线单测、可重放、`FollowIsPureFunctionOfInputs` 那类用例能写（10.1 的 17 号） |
+| 内存 | 零分配、零容器 | `World::Update` 是 `noexcept`（前置事实 2） |
+| 头文件形态 | **header-only**（`inline` / `constexpr`） | 与 `render/Camera.h` 同一形态：不需要新 `.cpp`，`engine/CMakeLists.txt` 不用动 |
+| 指针 vs id | 不涉及：碰撞只碰 `Vec2&` 与 `const TileMap&` | 它不认识实体、不认识 `EntityId`（这也是它能纯函数化的原因） |
+
+---
+
+## 5. 逐文件实施步骤（每步都立刻跑一次）
+
+| 步 | 动作 | 跑完应该看到 |
+| --- | --- | --- |
+| 1 | 新建 `world/Collision.h`（第 6 节）→ 新建 `tests/test_collision.cpp`（10.1）→ `tests/CMakeLists.txt` 加 2 行 | `mini_tests.exe Collision` → **17 passed**；全集 → **122 passed**；`MiniEngine.exe` 现象**与 S6 完全一致**（`World` 还没用它，穿墙照旧） |
+| 2 | 改 `World.cpp` 的 `Update`（6.9）+ `World.h` 注释 + `test_game.cpp` 加 1 条 | 全集 → **123 passed**；**单独复跑 `mini_tests.exe Game`**（坑 13 的 `dy` 可能变红）；人眼 10.2 六条 |
+| 3 | 同步第 11 节列的文档 + `TECH_DEBT` | `git status` 干净 |
+
+---
+
+## 6. 接口设计（施工图）
+
+### 6.1 为什么要有 `Collision.h` —— 职责边界
+
+这一层只回答一个问题：**"一个 1×1 的盒子从 A 走到 B，中途撞到墙了吗？最终停在哪？"**
+
+- **它知道**：格子是不是实心（通过 `TileMap`）、格子占哪片区域、盒子怎么夹紧。
+- **它不知道**：玩家/敌人是谁（不认识 `Entity` / `EntityId`）、谁在读输入、屏幕长什么样、终端在哪。
+- **它不做**：不分配、不抛异常、不记录历史（无状态）。
+- 于是它可以**完全离线单测** —— 与 `Camera` 一样，是"把纯逻辑从 `game` 里抠出来"的第二次应用。
+
+### 6.2 `world/Collision.h` 的骨架（**只有声明，实现由本人敲**）
+
+```cpp
+#pragma once
+
+// 依赖：world/TileMap.h（格子是什么）+ math/Vec2.h（位置/位移）
+// 不认识 platform / render / game（第 3 节）
+
+namespace mini::world {
+
+// 实体 = 1×1 格的方形盒，中心在 pos（见 Entity.h 的 0.5 语义）
+constexpr float kEntityHalfSize = 0.5f;
+
+// 单次推进的位移上限（子步进）。必须 < 1.0，见 6.5
+constexpr float kMaxStepPerTick = 0.5f;
+
+// 该格是不是实心。**越界 = 实心**（转义 TileMap::At 的既定语义，前置事实 3）
+[[nodiscard]] bool IsSolidAt(const TileMap& map, int tx, int ty) noexcept;
+
+// 这个中心位置的 1×1 盒有没有压到实心格
+// ⚠️ 边界语义：**贴面不算重叠**（开区间），见 6.6
+[[nodiscard]] bool OverlapsSolid(const TileMap& map, mini::math::Vec2 center) noexcept;
+
+// 把 pos 沿 delta 推进，撞到墙就夹紧在接触面上；返回是否**被夹过**
+// （返回值现在是 0 调用者 → 可以不返回 void；见决策 7）
+void MoveAndCollide(const TileMap& map, mini::math::Vec2& pos, mini::math::Vec2 delta) noexcept;
+
+} // namespace mini::world
+```
+
+⚠️ `MoveAndCollide` 要不要返回 `bool hit` 是**决策 7**（默认 `void`：今天没人需要那个 bool，
+按 `TECH_DEBT` B2 的"0 调用者不建"纪律）。
+
+### 6.3 为什么不把 `IsSolidAt` 挂到 `TileMap` 上（与 PLAN 的差异 2）
+
+`PLAN:545` 写的是 `TileMap::IsSolidAt(Vec2)`。本阶段改成 `Collision.h` 的自由函数，理由两条：
+
+1. **依赖方向**：`TileMap` 现在只依赖 `math/MathUtils.h`（只为一个 `FloorToInt`，`TileMap.h:15-17`
+   专门解释过为什么）。挂上去就要再拖进 `Vec2` —— 而"格子是什么"本来不需要知道"浮点位置"。
+2. **职责**："格子表回答第 (tx,ty) 格是什么"与"1×1 的盒子怎么走"是两件事。
+   前者是数据，后者是规则。混在一起，`TileMap` 就会慢慢长出"碰撞、视线、地形代价"。
+
+**代价**：`IsSolidAt` 变成自由函数后，`TileMap::At` 的越界语义要靠转发保持同源 ——
+所以实现里**只允许**写 `return map.At(tx, ty) == Tile::Wall;`，**不许**再判一遍 `InBounds`。
+
+### 6.4 为什么是"夹紧"而不是"拒绝"（决策 1）
+
+| 方案 | 做法 | 贴着墙时的现象 | 用例能写成什么 |
+| --- | --- | --- | --- |
+| **夹紧**（本阶段选） | 撞到就把这一轴放到**接触面**上 | 恰好贴在墙表面（相邻格） | `ApproxEquals(pos.x, 9.5f)` —— **可钉死** |
+| 拒绝 | 撞了就这一轴**不动** | 离墙留最多一个步长的缝（60fps + 20 格/秒 ≈ 0.33 格） | 只能写区间 `pos.x ∈ [9.17, 9.5)`，判别力弱 |
+
+夹紧的额外好处：**接触面是"整格 − 0.5"这种精确半数**（6.6），所以用例的期望值不依赖速度、不依赖 dt。
+
+### 6.5 为什么必须子步进（决策 2，本阶段的核心）
+
+分轴 + 夹紧每帧只问两句话：**"移动前压到哪些格"**、**"移动后压到哪些格"**。
+**中间路径没人检查** —— 这就是穿刺（tunneling）。
+
+```
+移动前 AABB            盲区（没人检查）              移动后 AABB
+[p−0.5, p+0.5)         ←── 长度 = D − 1 ──→         [p+D−0.5, p+D+0.5)
+▓▓▓▓▓▓▓▓▓▓▓            · · · · · · · · · · ·        ▓▓▓▓▓▓▓▓▓▓▓
+                          ▓▓▓▓  ← 墙（厚 1 格，本图 D = 3）
+                       墙藏在盲区里 → 两次采样都看不见它 → 穿过去
+```
+
+设单帧位移 `D` 格：盒宽 1 格、墙厚 1 格 → **盲区长度 = D − 1**；
+**D ≥ 2 格/帧时，1 格厚的墙能被整块藏进盲区**。
+
+| 速度（`argv[2]`，格/秒） | 60fps 的 D | 最坏帧（`dt` 被 clamp 到 0.05）的 D | 会穿吗 |
+| --- | --- | --- | --- |
+| **20（默认）** | 0.33 | **1.0** | 不会（离阈值 2.0 有一倍余量） |
+| 30（`PLAN` 文档里的示例 `MiniEngine.exe 60 30`） | 0.50 | 1.5 | 不会 |
+| **40** | 0.67 | **2.0** | **踩线** |
+| 60 | 1.00 | 3.0 | **会** |
+| 100 | 1.67 | 5.0 | **会** |
+| 200 | 3.33 | 10.0 | **会，一次跨过整排柱子** |
+
+**子步进 = 把这一帧的位移切成若干段（每段 ≤ `kMaxStepPerTick`），每段都完整走一遍"分轴 + 夹紧"。**
+
+- 上限取 **0.5 格**（不是 0.99）：盲区长度 = `子步长 − 1 < 0` → **几何上不可能漏格**（不是"参数够用"）
+- 每一步最多跨过一个格子边界 → **夹紧的接触面是唯一的、无歧义的**
+- 代价：正常情况（`D ≤ 1`）只有 1~2 段；`D = 10` 时 20 段 —— 一次循环，可忽略
+
+**为什么这本该是 S9 的事（差异 1）**：`PLAN:1017` 的 E-10 把"子步进"写在**子弹**那一栏，
+S7 只要求"分轴移动"。但 S7 **自己会造出一个不可恢复的失败态**：
+
+| | 今天（S6，无碰撞） | S7 之后（有碰撞、不分子步） |
+| --- | --- | --- |
+| 冲出地图外沿 | 只是出屏，**还能走回来** | 世界外恒为 `Wall`（前置事实 3）→ 四方向全 solid → **永久卡死在图外**，只能重启 exe |
+
+所以子步进在 S7 就做（**本人 2026-10-08 拍板**），成本 ~10 行 + 2 条用例。
+
+### 6.6 为什么**不用 epsilon**（与 PLAN 的差异 3）
+
+`PLAN:546` 把"epsilon 比较"列为 S7 的 C++ 知识点。本阶段的实际取值是 **`ε = 0`**，理由：
+
+1. **边界语义用开区间**：`OverlapsSolid` 判的是"**有正面积的**重叠"（沿用 S4 把 AABB 定成开区间的先例）。
+   于是"贴着墙"的盒子**不算重叠** → 放在接触面上是合法状态，不会再被自己挡住。
+2. **接触面是精确半数**：从右侧撞 `tx` 格 → 停在 `tx − 0.5`；从左侧撞 → 停在 `tx + 1 + 0.5`。
+   这些都是"整数 ± 0.5"，**二进制可精确表示** → 断言可以用 `ApproxEquals(pos.x, 9.5f)` 写死。
+3. **如果引入 ε**：接触面变成"半数 − ε"，而"位置真的到位了吗"就依赖 ε 的取值 →
+   **多了一个可调参数和一个新失效模式**（ε 太大 → 视觉上离墙半格；太小 → 浮点上"贴不上去"）。
+
+**代价**：`OverlapsSolid` 必须把 `<` / `<=` 这类边界写对，并用一条用例钉住
+（10.1 的 7 号 `AlignedTouchIsNotOverlap` + 反向验证 R5）。这条代价是**可测的**，ε 的复杂度是不可测的。
+
+### 6.7 单轴一步要查几个格：1 个还是 2 个（常态是 4 个）
+
+`pos` 是格中心，盒子在轴上覆盖 `[c − 0.5, c + 0.5)`：
+
+| 中心 `c` | 覆盖区间 | 压到的格 |
+| --- | --- | --- |
+| `9.5`（**恰好格中心**） | `[9, 10)` | 1 格（`tx = 9`） |
+| `9.0` / `9.25`（非中心） | `[8.5, 9.5)` / `[8.75, 9.75)` | **2 格**（`8, 9`） |
+
+→ **两轴都非中心时，一次检测要查 4 个格子 —— 这是常态，不是罕见分支。**
+它也是"斜向顶墙角"能顶住的原因（`(10,10)` 那根柱子被两个轴同时判到）。
+⚠️ 只查 `ToIndex(center)` 那一格是**错的**：会漏掉半个身子所在的另一格，现象是"能从旁边挤进墙里半格"（R6）。
+
+### 6.8 调用方契约（`World` 侧）
+
+- **唯一调用点**：`World::Update`。`game/` **不许**自己调 `MoveAndCollide`
+  （否则就有两条"位置怎么变"的路径 → 又回到"两条路径各自漂移"）。
+- **顺序**：`World::Update` 内部先对每个 active 实体算 `delta = perSecond * dt`，再交给 `MoveAndCollide`。
+  调用方写速度、`world` 做积分与碰撞（S5 决策 6 的分工不变）。
+- **不夹 `dt`**：`ctx.deltaSeconds` 已在 S3 的 `ClampDelta` 里夹过（`World.h:63-66` 已写明）。
+
+### 6.9 `World::Update` 的改动点（步骤 2 的全部内容）
+
+```cpp
+// engine/src/world/World.cpp —— 现在（S5~S6）
+for (Entity& entity : m_entities) {
+    if (!entity.active) { continue; }
+    entity.transform.pos += entity.velocity.perSecond * dt;      // ← 只改这一行
+}
+
+// S7 之后
+for (Entity& entity : m_entities) {
+    if (!entity.active) { continue; }
+    MoveAndCollide(m_map, entity.transform.pos, entity.velocity.perSecond * dt);
+}
+```
+
+`World.h:20-21` 那句"本阶段唯一的物理就是 `pos += perSecond * dt`"要同步改成
+"积分 + 与地图碰撞（S7 起）"。
+
+---
+
+## 7. 算法与伪代码
+
+### 7.1 帧序（**不变**，仍然不能换）
+
+```text
+读输入 → 归一化 → 写速度 → World::Update(dt)[= 积分 + 碰撞] → 相机 Follow → FlushRemovals
+```
+
+S7 **不新增帧序步骤**：碰撞发生在 `World::Update` 内部（第 ⑥ 步），
+所以 S6 那条"相机必须在 `Update` 之后"仍然自动成立（相机读的是**碰撞后**的位置 —— 这正是想要的）。
+
+### 7.2 单轴一步（夹紧公式）
+
+```text
+// 以 +x 为例；−x / ±y 完全对称（对称的那套必须复用同一段逻辑，不许各写一遍）
+StepAxisX(map, pos, dx):
+    若 dx == 0 → 返回
+    tentative = pos.x + dx
+    盒子在 y 上压到的行 = [rowLo, rowHi]        // 6.7 的 1~2 行
+    盒子在 x 上「从旧位置到 tentative」扫到的列区间 = [colStart, colEnd]
+
+    对每一列 tx（按移动方向就近优先）:
+        若 ∃ ty ∈ [rowLo, rowHi] 使 IsSolidAt(map, tx, ty):
+            → 撞到：把 pos.x 夹到该格的接触面
+               向右：pos.x = tx − kEntityHalfSize          // = tx − 0.5，精确
+               向左：pos.x = tx + 1 + kEntityHalfSize
+              返回（本轴结束）
+    没撞到 → pos.x = tentative
+```
+
+**两个"提前退出的理由"**（本阶段都用得上）：
+
+1. 撞到第一个实心格就返回 —— 后面的格子不用再看（靠近方向的第一个就是接触面）。
+2. 起点就已经重叠时（见 7.4 的自愈约定）**不夹紧**，直接接受 `tentative`。
+
+### 7.3 外层子步循环
+
+```text
+MoveAndCollide(map, pos, delta):
+    n = ceil(max(|delta.x|, |delta.y|) / kMaxStepPerTick)   // ≥ 1
+    段 = delta / n
+    重复 n 次:
+        StepAxisX(map, pos, 段.x)     // 先 X
+        StepAxisY(map, pos, 段.y)     // 再 Y  —— 顺序定死，见 7.4
+```
+
+- 用 `max(|dx|, |dy|)` 而不是向量长度：分轴之后两轴各自独立，**沿轴**的子步长才是盲区公式里的那个量。
+- `n ≥ 1` 保证 `delta == 0` 时不除零、且什么都不做。
+
+### 7.4 三个必须写死的细节（写错就是"两条路径各自漂移"）
+
+| 细节 | 决定 | 写错的后果 |
+| --- | --- | --- |
+| **嵌套顺序** | **外层子步 / 内层先 X 后 Y** | 换成"先把 `delta.x` 整段走完再走 `delta.y`"，**拐角处会差一格**（先撞 X 墙还是先绕过去） |
+| **夹紧但不中止帧** | 一轴夹紧后，**剩余的段继续跑**（该轴会反复夹在接触面上，另一轴照常走） | 夹紧就 `break` 整个循环 → **斜向顶墙时另一轴少走**、贴墙滑行消失 |
+| **起点已重叠** | **允许移动**（自愈） | 反过来（重叠就直接不动）→ 一旦因为别处的 bug 嵌进墙里，就**永久卡死**（S7 已经因为"卡图外"否掉过一个方案，不再造第二个死锁） |
+
+---
+
+## 8. 接口决策表（2026-10-08 已拍板）
+
+| # | 决策 | 取值 | 为什么不选另一个 |
+| --- | --- | --- | --- |
+| 1 | 碰撞响应 | **夹紧**到接触面 | 拒绝会留最多一个步长的缝，用例只能写区间（6.4） |
+| 2 | 防穿刺 | **子步进**，`kMaxStepPerTick = 0.5f` | 默认参数下"不穿"只是算术巧合（`argv[2]` 可改速度）；且不分子步会引入"冲出地图永久卡死"（6.5） |
+| 3 | 实体间推挤 | **不做** | 0 调用者（只有 1 个实体会动）→ `TECH_DEBT` C 组，S8 触发 |
+| 4 | F2 碰撞盒 | **不做** | 没有 Debug Overlay；`Key::F2` 有映射但没东西可挂 → S11 |
+| 5 | `IsSolidAt` 放哪 | `world/Collision.h` 的**自由函数** | 挂 `TileMap` 会让它拖进 `Vec2`，且混淆"数据"与"规则"（6.3） |
+| 6 | 实体形状 | 常量 `kEntityHalfSize = 0.5f`，**不进 `Entity`** | 加字段会破坏 `static_assert(sizeof(Entity) == 24)`；S7 只有一种尺寸 |
+| 7 | 返回值 | `void`（不返回 `hit`） | 今天没人需要那个 bool → 0 调用者（`TECH_DEBT` B2 纪律）。将来"撞墙时取消冲刺"再补 |
+| 8 | 边界语义 | **开区间**（贴面不算重叠）+ **不用 ε** | 两者必须成对：用 ε 就得回答"ε 多大"，而开区间让接触面是精确半数（6.6） |
+| 9 | 单轴查格数 | 按 `pos ± 0.5` 扫 **1~2 格**（常态 4 格） | 只查 `ToIndex(center)` 会漏半格（6.7） |
+| 10 | 取整 | **只走 `TileMap::ToIndex`** | 再写一次 `static_cast<int>` 就是第二条取整路径（S6 的 E-8 纪律） |
+
+### 升级路径（现在不做，触发条件写在这里）
+
+| 触发条件 | 加什么 | 改动面 |
+| --- | --- | --- |
+| S8 出现第二个会动的实体 | 实体间 AABB 推挤（`PLAN:544`） | 新增一个 `ResolveEntityOverlap(...)`；`World::Update` 的循环变成两趟（先移动、后推挤）。⚠️ 会被 E-9（迭代器失效）缠上：推挤不许在遍历中改容器 |
+| 手感要"斜向顶角能蹭过去" | 真正的连续检测（swept AABB / DDA） | 只换 `MoveAndCollide` 内部，接口不变；正好是 S12 的前置练习 |
+| 玩家能"撞墙时被取消冲刺" | `MoveAndCollide` 返回 `bool hit` | 只加返回值 + 调用点判断；决策 7 的升级口 |
+| 想做"半格宽的角色 / 大小不同的敌人" | `halfSize` 参数化（不是进 `Entity`，而是进函数签名） | 三个函数的签名各加一个参数；`static_assert(kEntityHalfSize == 0.5f)` 要撤掉 |
+
+---
+
+## 9. 坑表
+
+| # | 情况 | 期望行为 / 坑 |
+| --- | --- | --- |
+| 1 | **穿刺**（单帧位移 ≥ 2 格） | 子步进（6.5）。⚠️ **默认速度下不穿是巧合**：`D = 1.0` 的天花板来自 `kMaxDelta = 0.05` × `kMoveSpeed = 20`，两个都是可调常量 |
+| 2 | **冲出地图外沿**（S7 引入的新失败态） | 世界外恒为 `Wall` → 四方向全 solid → **永久卡死**。子步进挡掉绝大多数；用例 14 钉"走不出地图" |
+| 3 | **半格语义** | 盒 = `pos ± 0.5`（`pos` 是格中心，前置事实 6）。写成 `[pos, pos+1)` → 现象是"贴墙那一格过不去"或"嵌进去半格" |
+| 4 | **贴面算不算重叠** | **不算**（开区间，决策 8）。算重叠 → 停在接触面之后"自己把自己挡住"，表现为**贴着墙就动不了**（尤其另一轴） |
+| 5 | **取整只发生一次** | 查格一律 `TileMap::ToIndex`（`TileMap.h:72`）。再写 `static_cast<int>` → E-8 的第二条路径（S6 已立纪律） |
+| 6 | **嵌套顺序** | 外层子步、内层先 X 后 Y（7.4）。换顺序 → 拐角处差一格 |
+| 7 | **夹紧后不许 `break` 整帧** | 该轴继续被夹、另一轴继续走（7.4）。写错 → 贴墙滑行消失 |
+| 8 | **起点已重叠**（嵌在墙里） | 允许移动（自愈，7.4）。反过来做会造出第二个"永久卡死" |
+| 9 | **`TileMap::Set` 越界静默忽略** | ⚠️ 测试里想"在边界外铺墙"会**静默失效**（`TileMap.h:59-61`）→ 用例看着像"那里本来就没墙"。要测"世界外是墙"，**不要造墙**，而要**直接往界外走**（用例 14 就是这么写的） |
+| 10 | **`noexcept` 契约** | `World::Update` 是 `noexcept`（前置事实 2）→ `MoveAndCollide` 不许分配、不许抛。写成 `std::vector` 收集"压到的格"会**破坏契约**（且在热路径上分配） |
+| 11 | **别往 `Entity` 加字段** | `static_assert(sizeof(Entity) == 24)` 会先报错（前置事实 7）。这是**故意的**：要加就得先想清楚为什么 |
+| 12 | **返回值 0 调用者** | 决策 7 定 `void`。如果实现里"顺手"返回了 `bool` 而没人用，`TECH_DEBT` B5 的纪律要求**一行注释回答"为什么存在"** —— 更简单的选择是**先不返回** |
+| 13 | ⚠️ **`Game.DiagonalMoveIsNotFaster` 的 `dy` 会掉 1** | 斜向路径擦到 `(10,10)` 柱子 → 沿柱子上表面滑 1 格 ≈ 损失 0.0707 s ≈ 1.0 格 y 位移 → `dy: 14 → 13`，正好等于容差下界 `lo = floor(14.14) − 1 = 13`。**可能变红**。修法二选一：① 把该用例的路径挪开柱子（改起点或按键）；② 把容差按**地图几何**重算并写清来由。**不要**先改实现去迁就测试 |
+| 14 | **`dt` 与速度都可变** | 人眼验收**必须**试一次高速（`MiniEngine.exe 60 100`），否则等于没验子步进 |
+| 15 | **HUD 自证会失效** | `pos ≈ v × Σdt`（`Game.cpp:265`）在**撞墙后不成立** —— 这是**预期**，不是 bug。⚠️ 别拿它判"碰撞写错了" |
+| 16 | **旧"预期"过期** | `S6_CHECKLIST` 10.2 的"继续走出地图 `@` 离开画面是预期" → **作废**（收口时标注，先例 `S5_CHECKLIST.md:793`） |
+| 17 | **左右/上下的对称分支** | `−x` 与 `+x`、`+y` 与 `−y` 的夹紧公式是镜像的（`tx − 0.5` vs `tx + 1.5`），**容易只写对一半**。用例 3~6 四条就是钉这个的 |
+
+---
+
+## 10. 验收
+
+### 10.1 用例清单（**18 个**：suite `Collision` 17 + suite `Game` 1；新文件 `tests/test_collision.cpp`）
+
+| # | 用例 | 内容 / 期望 |
+| --- | --- | --- |
+| 1 | `MovesFreelyWhenNoWall` | 空地推 `(2, 1)` → `pos == start + delta`（逐分量 `ApproxEquals`） |
+| 2 | `ZeroDeltaIsNoOp` | `delta = (0,0)` → `pos` 完全不动（且不除零） |
+| 3 | `StopsAtWallMovingRight` | 墙在 `tx = 10`，从 `x = 9.0` 推 `+5` → **`pos.x == 9.5`**、`y` 不变 |
+| 4 | `StopsAtWallMovingLeft` | 墙在 `tx = 10`，从 `x = 12.0` 推 `−5` → **`pos.x == 11.5`** |
+| 5 | `StopsAtWallMovingDown` | 墙行在 `ty = 10`，从 `y = 9.0` 推 `+5` → **`pos.y == 9.5`** |
+| 6 | `StopsAtWallMovingUp` | 墙行在 `ty = 10`，从 `y = 12.0` 推 `−5` → **`pos.y == 11.5`** |
+| 7 | **`AlignedTouchIsNotOverlap`** | `pos = (9.5, 5.5)`、墙在 `tx = 10` → `OverlapsSolid == false`（**开区间**，决策 8；R5 钉它） |
+| 8 | `TileRangeAtTileCenter` | `pos.x = 9.5` → 盒子只压 `tx = 9`（**1 格**） |
+| 9 | `TileRangeAtFractionalCenter` | `pos.x = 9.0` → 盒子压 `tx = 8, 9`（**2 格**，常态；R6 钉它） |
+| 10 | **`DoesNotTunnelThroughWallAtHighSpeed`** | 从 `x = 8.0` 一帧推 `+5`（跨过 `tx = 10`）→ **`pos.x == 9.5`**（子步进的守卫；R1 钉它） |
+| 11 | `DeltaAtMaxStepBoundary` | `delta` 恰好 = `kMaxStepPerTick`、略大、略小三种 → 结果一致且不穿（边界值） |
+| 12 | **`SlidesAlongWallOnOtherAxis`** | 顶着墙（`x` 被夹在 `9.5`）时推 `(5, 1)` → `x` 停 `9.5`、**`y` 走满 `1.0`**（R3 钉它） |
+| 13 | `CornerClampsBothAxes` | 两轴都是墙 → 两轴同时夹紧，位置可写死（斜向顶角不卡、不穿） |
+| 14 | **`CannotLeaveMapThroughEdge`** | **全空地图（没有外沿墙）**向右推 `100` → `pos.x == 0.5`（越界当墙的红利，前置事实 3 + 坑 9：**不要造墙**，直接走） |
+| 15 | `AlreadyOverlappingDoesNotFreeze` | 起点嵌在墙里 → 仍能移动（自愈语义，7.4） |
+| 16 | `IsSolidAtMirrorsTileAt` | 与 `TileMap::At` 同源，含越界（`IsSolidAt(-1, 0) == true`） |
+| 17 | `MoveAndCollideIsPureFunctionOfInputs` | 同输入两遍 → 结果相同（无隐藏状态；同 S6 用例 14 的套路） |
+| — | （编译期） | `static_assert(kMaxStepPerTick < 1.0f)`（盲区长度 < 0）+ `static_assert(kEntityHalfSize == 0.5f)` |
+| 18 | `Game.PlayerStopsAtTopWall`（**suite `Game`**） | 按住 `W` 跑 1 秒（不夹紧会走 20 格）→ `@` 只上移 **1 格**并停住：期望行 = `ToIndex(1.5) + kHudRow = 2`（起点行 3）。⚠️ 这个数**可以写死**：它由"外沿墙在第 0 行"这个**地图几何**决定，与速度无关 |
+
+> 计数口径：105（S6 收口）→ **122**（步骤 1：+17 `Collision`）→ **123**（步骤 2：+1 `Game`）。
+
+### 10.2 正向验收
+
+```powershell
+cmake --build build --config Debug                      # 期望 0 warning
+.\build\bin\Debug\mini_tests.exe Collision              # 期望 17 passed
+.\build\bin\Debug\mini_tests.exe Game                   # 期望 4 passed（⚠️ 坑 13 的 dy 见下）
+.\build\bin\Debug\mini_tests.exe                        # 期望 123 passed, 0 failed
+.\build\bin\Debug\mini_tests.exe Nope                   # 期望退出码非 0、括号里 123 case(s) registered
+ctest --test-dir build -C Debug --output-on-failure      # 期望 1/1
+cmake --build build --config Release                     # 期望同样 0 warning
+.\build\bin\Debug\MiniEngine.exe                         # 人眼验收（下表）
+.\build\bin\Debug\MiniEngine.exe 60 100                  # 高速：人眼验收的高速那两条
+```
+
+**人眼验收**（**必须在经典控制台窗口**里跑，不要用 VS Code 内置终端 / Windows Terminal —— `TECH_DEBT` C10）：
+
+| 观察点 | 期望 |
+| --- | --- |
+| 按住 `W`（从出生点向上） | 走 **1 格**就停住，停在顶墙下面；`tile` 的 y 停在 **1**、不再往下掉 |
+| 按住 `A`（向左） | 同样走 1 格停住（左墙） |
+| 按住 `D` + `S`（斜向下方） | 撞到 `(10,10)` 那根柱子：**先沿柱子上表面向右滑**，滑过去之后继续斜向 —— 不卡、不抖、不穿 |
+| 顶住墙再按另一个轴 | **能顺着滑**（wall slide）：顶住左墙按 `W`/`S` 仍能上下走 |
+| 撞墙时的 HUD | ⚠️ `pos` **不再**等于 `v × Σdt`（预期，坑 15）；`tile` 的对应分量**停住不动** |
+| 高速（`MiniEngine.exe 60 100`）按住 `D` 约 3 秒 | 走到右墙停住（`x ≈ 198.5`）：**不穿墙、不出屏、不被卡在图外**。⚠️ 这条同时验的是子步进（坑 14） |
+| 位置一致性 | `@` 始终画在它**脚下那一格**，与 `#` 不重叠（S6 的 E-8 守卫要在有碰撞之后继续成立） |
+
+### 10.3 反向验证（6 条，**每条都必须看到红**，跑完必须还原）
+
+> 与 S6 的处置不同：S6 那 4 条被本人决定跳过；**S7 这 6 条建议至少跑 R1 / R2 / R5**
+> （它们分别守卫"子步进""夹紧""开区间"这三条本阶段的核心决策）。
+> 若决定跳过，把代价与触发条件照 S6 的格式写在这里。
+
+| # | 怎么破坏 | 哪条用例应该变红 | 说明 |
+| --- | --- | --- | --- |
+| R1 | `kMaxStepPerTick` 改成 `1e9f`（= 关掉子步进）**并注释掉那条 `static_assert`** | **10**（顺带 11） | 两步才能改完，本身也证明那条 `static_assert` 真的在守着不变量 |
+| R2 | 夹紧改成"这一轴直接不动"（拒绝） | 3 / 4 / 5 / 6 | 停在最后一个自由位置（如 `9.0` 而不是 `9.5`） |
+| R3 | 取消分轴：先移 `(dx, dy)` 再整体检测并回退 | **12**（坑 7 的贴墙滑；13 也可能红） | 贴墙滑行消失 / 顶角卡住 |
+| R4 | `OverlapsSolid` 的判定从 `<` 改成 `<=`（闭区间） | **7** | "贴面"被当成重叠 → 停在接触面之后自己挡住自己 |
+| R5 | `kEntityHalfSize` 改成 `0.0f`（点碰撞）**并注释掉对应 `static_assert`** | 3（期望 9.5，实际 10.0） | 半格语义被钉住的证明（坑 3） |
+| R6 | 单轴只查 `ToIndex(center)` 那一格（丢掉第二格） | **9** | 半个身子所在的格被漏掉 → 能从旁边挤进墙里半格 |
+
+### 10.4 交付后的自检
+
+- [ ] 新头文件**被 `test_collision.cpp` include**（S5 落地偏差 7 的教训：漏 include 会连报一批）
+- [ ] 依赖自检：`world/Collision.h` 里 `windows.h` / `#ifdef` / `platform/` / `render/` / `game/` **0 命中**
+- [ ] 生产 0 调用的公开函数（若有）**有一行注释回答"为什么存在"**（`TECH_DEBT` B5 纪律）
+- [ ] 全仓没有第二处 `static_cast<int>(...pos...)`（取整只走 `ToIndex`，坑 5）
+- [ ] `world/Collision.h` 里**没有 `new` / `vector` / `throw`**（`noexcept` 契约，坑 10）
+- [ ] `git diff --stat` 显示 `game/` **0 改动**（第 2 节的承诺）
+- [ ] `Entity` 的 `sizeof == 24` 那条 `static_assert` **没被动过**
+- [ ] 反向验证跑过的那些**都还原了现场**（`git diff` 里只剩预期的改动）
+- [ ] 第 11 节的文档 + `TECH_DEBT` 全部同步
+- [ ] 草稿期临时改动零残留（`grep -rn "\[S7"` 之类）
+
+---
+
+## 11. 需要同步的文档
+
+| 文档 | 改什么 |
+| --- | --- |
+| `doc/MiniEngine_PLAN.md` **A.2 目录树** | `world/Collision.h` 标为**已落地**；`render/Camera.h` 那行的写法照抄 |
+| `doc/MiniEngine_PLAN.md` **A.5** | 补一句"**碰撞的 tile 查询与渲染共用 `ToIndex`**"（取整路径唯一这条纪律的第二处应用） |
+| `doc/MiniEngine_PLAN.md` **S7 小节** | 收口时标 ✅ + 回填实测数字（用例数、命令结果）；`PLAN:1017` 的 E-10 那栏把"子弹子步进"改成"**子步进 S7 已落**，S9 沿用" |
+| `doc/MiniEngine_PLAN.md` **H.2 扩展池** | "地图从 `map.txt` 加载"的触发条件"S7 碰撞之后"**已满足** → 标成"可以做了"（不做也行，写清状态即可） |
+| `doc/S6_CHECKLIST.md` **10.2 表** | "继续走出地图 `@` 离开画面 —— 预期" → 标 **已作废**（S7 已修） |
+| `doc/TECH_DEBT.md` | 新增 C 组两条：① "实体间 AABB 推挤未做（S8 触发）"；② "F2 碰撞盒未做（S11 触发）"。⚠️ 同时检查 C11（`ScreenToWorld`）是否也该跟着 S7 变的触发条件 |
+| `AGENTS.md` **第 2 节文档表** | 加 `doc/S7_CHECKLIST.md` 一行；⚠️ **但"现在是 S7"这件事本身**属于 `SKILL.md` 口径（见下） |
+| `.agents/skills/work-mode/SKILL.md` | `:17` 的"最新施工图"要从 S6 改成 **S7**（S6 降为"上一阶段"）；`:23` 的"项目已到 S6" → S7 |
+| 本文件 | 落地偏差表、进度板、实测数字（**追加，不改历史**） |
+
+---
+
+## 12. 与 `PLAN` 原文的差异（**必须同步**）
+
+| # | PLAN 写的 | 本阶段落地 | 为什么 |
+| --- | --- | --- | --- |
+| 1 | `PLAN:1017`（E-10）："分轴移动（**S7**）；**子弹子步进（S9）**" | **S7 就做子步进**（`kMaxStepPerTick`），S9 的子弹沿用 | `argv[2]` 可把速度开到 5~10 格/帧（穿墙阈值 2 格/帧）；且不分子步会让 S7 **引入**"冲出地图永久卡死"这个不可恢复的失败态（6.5） |
+| 2 | `PLAN:545`：tile 查询是 `TileMap::IsSolidAt(Vec2)` | `Collision.h` 的**自由函数** `IsSolidAt(map, tx, ty)` | 挂 `TileMap` 会让它拖进 `Vec2`（它现在只依赖 `MathUtils`），且混淆"数据/规则"（6.3） |
+| 3 | `PLAN:546`：C++ 知识点含"**epsilon 比较**" | **ε = 0**：开区间判定 + 精确半数接触面 | 引入 ε 就多一个可调参数 + 新失效模式；开区间让"停在 9.5"成为可写死的断言（6.6） |
+| 4 | `PLAN:544`：目标含"**实体间 AABB 推挤**" | **本阶段不做** | 只有 1 个实体会动 → 0 调用者；`TECH_DEBT` C 组 + S8 触发条件（决策 3） |
+| 5 | `PLAN:549`：可运行效果含"**F2 显示碰撞盒**" | **本阶段不做** | 没有 Debug Overlay；1 格 = 1 字符下"碰撞盒"信息量接近 0（决策 4） |
+| 6 | `PLAN:548`：规模 ~250 行 | 预估：`Collision.h` 120~160 行 + 用例 250~350 行 + `World.cpp` ~6 行 | 用例数（18）比 PLAN 想象的多：单轴对称、边界值、自愈、纯函数各要一条 |
+
+---
+
+## 13. 本阶段的"学习点"备忘（给自己看的）
+
+1. **"检测"和"响应"是两件事**：`OverlapsSolid` 只管"有没有撞"，`MoveAndCollide` 才决定"那怎么办"。
+   把它们混成一个函数，就再也没有"只测检测逻辑"的用例了。
+2. **离散采样 vs 连续解**：子步进不是"更精确的检测"，而是"把一次采样拆成多次"。
+   真正连续的那条路（解析求交 / DDA）在 S12 会正面遇到 —— 那时回头看这 10 行值不值。
+3. **"默认参数下没问题"不是设计**：`20 格/秒 × 0.05s = 1.0 格` 与阈值 `2.0 格` 的关系是巧合。
+   本阶段的收获是把"巧合"换成了 `static_assert(kMaxStepPerTick < 1.0f)` 这样一条**几何不变量**。
+4. **失败态也要排序**：S7 本来会引入"卡在图外"（比穿墙更糟：不可恢复），
+   为了躲开它才提前做了 S9 的一半。**"哪个失败更坏"比"哪个属于哪个阶段"更值得先回答。**
+5. **"预期行为"会第二次过期**：S5 写过"往右走 40 格出屏是预期"（S6 作废了），
+   S6 又写了"走出地图是预期"（S7 作废）。这已经不是偶发 —— **每次收口都该把"当时的预期"标出来。**
