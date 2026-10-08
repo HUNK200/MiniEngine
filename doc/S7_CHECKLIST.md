@@ -565,7 +565,7 @@ cmake --build build --config Release                     # 期望同样 0 warnin
 | R1 | `kMaxStepPerTick` 改成 `1e9f`（= 关掉子步进）**并注释掉那条 `static_assert`** | **实测 11 条**（见下） | 两步才能改完，本身也证明那条 `static_assert` 真在守着不变量 |
 | R2 | 夹紧改成"这一轴直接不动"（拒绝） | **实测 10 条**，与预测**逐条命中**（见下） | 停在**最后一个自由子步**（`9.5`，**不是** `9.0` —— 拒绝是逐子步发生的，所以还能推进到 `9.5`） |
 | R3 | 取消分轴：先移 `(dx, dy)` 再整体检测并回退 | `SlidesAlongWallOnOtherAxis` | 贴墙滑行消失 / 顶角卡住 |
-| R4（**可选**） | `kContactEpsilon` 改成 `0.0f`（+ 注释掉对应 `static_assert`） | `OccupiesOnlyItsOwnTile` 最后两条 + 四条 `StopsAtWall*` 里的 `!IsSolidAt` | 不留 ε 就正好停在**实心格里** → "接触位置一定合法"这条不变量被钉住的证明 |
+| R4（**实测已做**） | `kContactEpsilon` 改成 `0.0f`（+ 注释掉对应 `static_assert`） | **实测 9 条**（预测 7 条 —— **少算了 2 条**，见下） | 不留 ε 就正好停在**实心格里**；⚠️ 而且 `StepAxis` 开头的**自愈**会把"已经在墙里"当成放行 → 实体**径直穿过整堵墙** |
 | R5（**可选**） | 左/上方向的落点写成 `boundary − ε`（= **四个镜像只写对一半**，施工图坑 17） | `StopsAtWallMovingLeft` + `StopsAtWallMovingUp` | 只在两个方向偏一整格 —— 这种错最容易漏 |
 | R6（**可选**） | 夹紧条件从"目标格实心"改成"**跨格边界就拦**" | `MovesFreelyWhenNoWall` + `BoundaryItselfIsNotAnObstacle` + `SlipsThroughDiagonalGap` | 证明"跨边界自由 / 只拦目标格"这条**点模型核心决策**有用例钉着 |
 
@@ -607,6 +607,40 @@ cmake --build build --config Release                     # 期望同样 0 warnin
    它们只断言"渲染出来的那一格"（`floor`），而 R2 改的是**浮点落点**（`9.5` vs `9.9999`）。
    两者经 `ToIndex` **落在同一格** → 断言不变。这正是点模型那个决定（"看见的 = 占的"）的
    一个宏观好处：**高层用例对浮点贴边的细节不敏感**（代价是"贴多紧"只能靠 `Collision` 层自己钉）。
+
+#### R4 实测（2026-10-08，本人执行）
+
+破坏：`kContactEpsilon = 0.0f` + 注释掉 `static_assert` → 结果 **`114 passed, 9 failed`**（总数仍是 123）。
+
+红的 9 条：`StopsAtWallMoving{Right,Down}` · `OccupiesOnlyItsOwnTile`（`:186` 那条**就是专钉 ε 的**）·
+`BoundaryItselfIsNotAnObstacle` · `SlipsThroughDiagonalGap` · `DoesNotTunnelThroughWallAtHighSpeed` ·
+`SlidesAlongWallOnOtherAxis` · `CornerClampsBothAxes` · `CannotLeaveMapThroughEdge`。
+
+**预测里对的一半：方向不对称**，完全命中 —— `StopsAtWallMovingLeft` / `MovingUp` **过**
+（`CannotLeaveMapThroughEdge` 的 `:310/:311/:320/:321` 也过）：边界点归**实心那一格**，
+所以向右/向下撞墙夹到的是墙格的**左/上**边界（`10.0`，**在墙里**），
+向左/向上夹到的是墙格的**右/下**边界（`11.0`，**在空格里**）。ε=0 只让**一半方向**落进墙里。
+
+**预测里错的一半（少算 2 条）**：我以为 `BoundaryItselfIsNotAnObstacle` / `SlipsThroughDiagonalGap`
+"只有位置断言、而位置断言的期望值引用了 `kContactEpsilon` 本身 → 会跟着变成 `10.0` → 抓不住"。
+**错了**，而且错得很有信息量：ε=0 让夹紧落点**正好落在墙格里**，而 `StepAxis` 开头的**自愈**
+（"已经在墙里就放行" —— 为防永久卡死而存在）从**下一步**开始一路放行 →
+实体**径直穿过整堵墙**（终点 `14.5` 而不是 `10.0`）→ 位置断言**当然抓得住**。
+
+⇒ **两条教训**：
+
+1. **分析一次破坏时，要把状态跟到循环结束，不能只看破坏点那一步。**
+   （R1 我漏了"采样密度"这一层 → 估成 2/11；R4 我漏了"自愈会把非法状态放大成穿墙" → 估成 7/9。
+   两次是**同一类错**：只算了一阶效应。）
+2. **`kContactEpsilon > 0` 是承重结构，不是装饰**：ε=0 不只是"贴得更紧"，而是"**停在墙里**" →
+   触发自愈 → **穿墙**。那条 `static_assert` 现在有实测证据了。
+   ⚠️ 同时说明**自愈是一台放大器**：它本身是必要的（否则嵌墙 = 永久卡死），
+   但它会把任何"非法落点"放大成"穿墙"。
+
+**顺带撤回一个我自己的假设**：给 R4 做预测时我说过
+"`BoundaryItselfIsNotAnObstacle` / `SlipsThroughDiagonalGap` 是**测试缺口**（缺 `!IsSolidAt` 这类不变量断言），
+值得补一句" —— **实测把这个假设否掉了**：它们靠位置断言就抓住了（自愈级联让终点差得很远）。
+**先量再补**，不要按假设加断言。
 
 ### 10.4 交付后的自检
 
