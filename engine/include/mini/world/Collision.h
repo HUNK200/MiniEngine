@@ -7,156 +7,97 @@
 #include <cmath>       // std::ceil / std::abs
 
 // ============================================================
-// world/Collision.h —— 1×1 盒与格子地图的碰撞（S7，header-only）
+// world/Collision.h —— "你占的就是你画的那一格"（S7，header-only）
 //
-// 这一层只回答一个问题：**"一个 1×1 的盒子从 A 走到 B，中途撞到墙了吗？最终停在哪？"**
+// ⚠️ 2026-10-08 **模型改过一次**（原因见 `S7_CHECKLIST` 偏差 9 / 10）：
 //
-//   · 它**知道**：格子是不是实心（通过 TileMap）、格子占哪片区域、盒子怎么夹紧。
+//   旧版：实体 = **1×1 的盒子**（`pos ± 0.5`）。
+//     后果：盒子占 **4** 个候选格，而屏幕只画 **1** 格 → 挡住你的可能是**看不见**的那一格。
+//     实测报障：`pos=(29.5, 4.84)` 时按 D 动不了 —— 盒子 y 方向已探进第 5 行 **0.34 格**，
+//     而 `(30,5)` 是地标楼的格子（屏幕上 `@` 在 `(29,4)`，两者**斜着隔一格**，看着像"没贴墙"）。
+//
+//   新版：实体占的**就是它渲染出来的那一格** —— `ToIndex(pos)`。
+//     `game` 画 `@` 用的也是 `ToIndex(pos)`，所以**"看见的 = 占的"从结构上成立**，
+//      不可能再出现"被看不见的格子挡住"。
+//
+// 这一层只回答一个问题：**"我往前挪一点，会不会踩进实心格？踩到了该停在哪儿？"**
+//
+//   · 它**知道**：格子实不实心（通过 TileMap）、格边界在哪、撞上了停哪。
 //   · 它**不知道**：玩家/敌人是谁（不认识 Entity / EntityId）、输入、屏幕、终端。
-//   · 它**不做**：不分配、不抛异常、不记录历史 —— 三个公开函数都是纯函数，能完全离线单测。
+//   · 它**不做**：不分配、不抛异常、不记状态 —— 公开函数都是纯函数，能完全离线单测。
 //
-// 依赖谁：world/TileMap.h（格子是什么）+ math/Vec2.h（位置/位移）。
-//   **不依赖 platform / render / game**（PLAN A.3 的分层）。
-// 被谁用：world::World::Update —— **唯一调用点**。
-//   game/ 不许自己调 MoveAndCollide：否则就有了两条"位置怎么变"的路径（S6 的 E-8 教训同族）。
+// 依赖谁：world/TileMap.h + math/Vec2.h。**不依赖 platform / render / game**（PLAN A.3）。
+// 被谁用：world::World::Update —— **唯一调用点**（`game/` 不许自己调：否则就有两条
+//   "位置怎么变"的路径，那是 E-8 的同族问题）。
 //
-// ⚠️ 四条"写错就完蛋"的约定（每一条都有用例钉着，见 S7_CHECKLIST 10.1）：
+// ⚠️ 三条"写错就完蛋"的约定（每条都有用例钉着，见 S7_CHECKLIST 10.1）：
 //
-//   1. **盒子是 1×1、中心在 pos**（Entity.h 的 0.5 语义：pos 是格中心）
-//      → 盒的边界是 `pos ± 0.5`，**不是** `[pos, pos + 1)`。
-//   2. **贴面不算重叠**（"正面积重叠" / 开区间）：停在接触面上是合法状态，不会自己挡住自己。
-//      因此**不需要 epsilon** —— 接触面就是 `tx − 0.5` 这种**精确半数**（用例能把期望值写死）。
-//   3. **子步进是正确性的一部分，不是优化**：每步 ≤ `kMaxStepPerTick`（< 1 格）→
-//      "移动前 / 移动后"这两个采样点之间**塞不下一整格厚的墙**。
-//      没有它，速度稍高（`argv[2]` 可改）就会一帧穿过一根柱子。
-//   4. **候选格只取 tentative 盒子压到的那 1~2 格** —— 这一条**依赖子步长 ≤ 0.5**：
-//      若没有子步进，从 x = 5.5 一帧推 −100 会让"候选格"落在 −95 附近，
-//      夹到完全错误的格上（这正是约定 3 与这里的耦合）。
-//
-// ⚠️ 本文件里**定义的先后不是随意的**：`IsSolidAt` → `detail::AxisTileBlocks` → `OverlapsSolid`
-//    → `detail::StepAxis` → `MoveAndCollide`，每一个都用到前一个（所以 `detail` 被分成两块）。
-//    写反了 MSVC 会报"未声明的标识符"，而那种报错很容易被误当成"忘了 include"。
-//
-// 与 PLAN 的差异（见 S7_CHECKLIST 第 12 节）：PLAN 原案是 `TileMap::IsSolidAt(Vec2)`（挂在 TileMap 上）、
-// 且把"子步进"留给 S9 的子弹；本阶段改成这里的自由函数 + S7 就做子步进。
+//   1. **占格 = `ToIndex(pos)`**：于是"**跨过格边界本身不是障碍**" ——
+//      只有**目标格实心**才拦。斜向的对角缝因此能穿过去（这是新模型**有意要**的行为：
+//      屏幕上看着能过，就能过）。
+//   2. **停在边界前 `kContactEpsilon`**：撞上时把坐标夹到"边界 ∓ ε"，
+//      使 `ToIndex(接触位置)` 仍然落在**空的那一格**里。
+//      ⚠️ 这就是旧版"贴面不算重叠（开区间）"在新模型里的对应物：
+//      **接触位置一定不在实心格里**（用例 `StopsAtWallMoving*` 最后都断言这一点）。
+//   3. **子步进仍然是正确性的一部分，不是优化**：一步 `kMaxStepPerTick`（< 1 格）→
+//      一步最多跨过**一个**格边界，于是"撞上的那一格"就是 tentative 所在的那一格，
+//      不需要任何扫描；也**不可能**"跳过"一整格实心格。
+//      （点模型下穿刺更隐蔽：只看终点的话，一帧跨 3 格会直接飞过中间那堵墙。）
 // ============================================================
 
 namespace mini::world {
 
-// 实体 = 1×1 格的方形盒，中心在 pos（约定 1）。
-constexpr float kEntityHalfSize = 0.5f;
-
-// 单次推进的位移上限（子步进）。**必须 < 1.0**：
-// 盲区长度 = 子步长 − 1 格，只有 < 0 时才在几何上不可能漏格（约定 3）。
+// 单次推进的位移上限（子步进）。**必须 < 1.0**：一格实心格的厚度是 1 格，
+// 步子比 1 格小，才有可能"跨不过去"某整格。
 constexpr float kMaxStepPerTick = 0.5f;
 
-static_assert(kEntityHalfSize == 0.5f,
-              "盒子的半宽变了：接触面就不再是“整格 ∓ 0.5”这种精确半数，用例里的期望值要跟着重算");
+// 撞上之后**停在边界前多远**。它只决定"贴得多紧"，不决定"过不过得去"。
+// 取 1e-4：比 float 在 |坐标| < 1e4 时的分辨率大得多（不会和浮点误差打起来），
+// 又远小于一格的视觉尺度（屏幕上完全看不出这一点点缝）。
+constexpr float kContactEpsilon = 1e-4f;
+
 static_assert(kMaxStepPerTick < 1.0f,
-              "子步长必须 < 1 格（墙厚 1 格）：否则“移动前/移动后”之间能藏下一整格墙");
-
-// 盒子在**某一个轴**上最多压到 2 格：跨度恰好 1.0 格。
-// 中心不在格中心时两格都有正面积重叠；**恰好落在格中心时只有 1 格**（另一半的重叠为 0）。
-constexpr int kMaxTilesPerAxis = 2;
+              "子步长必须 < 1 格（一格实心格的厚度）：否则一步就能跳过一整格");
+static_assert(kContactEpsilon > 0.0f && kContactEpsilon < 0.01f,
+              "contact epsilon 必须是很小的正数：<= 0 会停在实心格里，太大等于留了一条缝");
 
 // ------------------------------------------------------------
-// 谓词 1：这一格是不是实心
+// 谓词：实心吗？（两个重载：问"某一格" / 问"这个位置占的那一格"）
 // ------------------------------------------------------------
 
-// **越界 = 实心** —— 直接转发 TileMap::At 的既定语义（TileMap.h 的文件头约定 1）。
-//
-// ⚠️ 只允许在这一处回答"实心吗"：不要再写一遍 InBounds 判断（那就是第二条会各自漂移的路径）。
-//    好处是"角色永远走不出地图"是免费的（见用例 CannotLeaveMapThroughEdge）。
+// **越界 = 实心** —— 直接转发 TileMap::At 的既定语义（TileMap.h 文件头约定 1）。
+// ⚠️ 只允许在这一处回答"实心吗"：不要再写一遍 InBounds 判断（那是第二条会各自漂移的路径）。
+//    好处是"角色永远走不出地图"是**免费**的（见用例 CannotLeaveMapThroughEdge）。
 [[nodiscard]] inline bool IsSolidAt(const TileMap& map, int tx, int ty) noexcept
 {
     return map.At(tx, ty) == Tile::Wall;
 }
 
-namespace detail {
-
-// 格子的开区间 [t, t+1)
-[[nodiscard]] constexpr float TileMin(int tile) noexcept { return static_cast<float>(tile); }
-[[nodiscard]] constexpr float TileMax(int tile) noexcept { return static_cast<float>(tile) + 1.0f; }
-
-// 区间 [a0, a1) 与 [b0, b1) 的重叠长度；不重叠（含只贴边）返回 0。
-// ⚠️ "有没有重叠"必须用 **> 0** 判 —— 这就是约定 2 的落地处。
-[[nodiscard]] constexpr float OverlapLength(float a0, float a1, float b0, float b1) noexcept
+// 这个位置的实体**占的那一格**是不是实心。
+// ⚠️ 这就是"能不能站在这儿"的全部判据 —— 没有盒子、没有其他形状（约定 1）。
+[[nodiscard]] inline bool IsSolidAt(const TileMap& map, mini::math::Vec2 center) noexcept
 {
-    const float lo = a0 > b0 ? a0 : b0;
-    const float hi = a1 < b1 ? a1 : b1;
-    return hi > lo ? hi - lo : 0.0f;
-}
-
-// 移动轴上的某一格会不会挡住"中心在 (moving, other)"的这个盒子。
-//
-// ⚠️ 检测（OverlapsSolid）与夹紧（StepAxis）**共用这一个判据** —— 它们各写一份的话，
-//    就会出现"检测说有墙、夹紧却找不到墙"（或反过来）的静默不一致。
-//
-// movingIsX 是两轴唯一的差别：它只决定**查地图时的下标顺序**
-//   （X 轴查 (moving, other)，Y 轴查 (other, moving)）。
-[[nodiscard]] inline bool AxisTileBlocks(const TileMap& map, float moving, float other,
-                                        int movingIdx, bool movingIsX) noexcept
-{
-    if (OverlapLength(moving - kEntityHalfSize, moving + kEntityHalfSize,
-                      TileMin(movingIdx), TileMax(movingIdx)) <= 0.0f) {
-        return false;   // 移动轴上"只是贴着"，不算重叠（约定 2）
-    }
-
-    const int otherIdx0 = TileMap::ToIndex(other - kEntityHalfSize);   // 取整只走 ToIndex
-    for (int i = 0; i < kMaxTilesPerAxis; ++i) {
-        const int otherIdx = otherIdx0 + i;
-        if (OverlapLength(other - kEntityHalfSize, other + kEntityHalfSize,
-                          TileMin(otherIdx), TileMax(otherIdx)) <= 0.0f) {
-            continue;   // 这一格在另一轴上只贴边
-        }
-        if (movingIsX ? IsSolidAt(map, movingIdx, otherIdx)
-                      : IsSolidAt(map, otherIdx, movingIdx)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-} // namespace detail
-
-// ------------------------------------------------------------
-// 谓词 2：盒（1×1，中心在 center）有没有压到实心格
-// ------------------------------------------------------------
-
-// **开区间语义**：贴面（重叠长度为 0）不算压到（约定 2）。
-[[nodiscard]] inline bool OverlapsSolid(const TileMap& map, mini::math::Vec2 center) noexcept
-{
-    const int tx0 = TileMap::ToIndex(center.x - kEntityHalfSize);
-    for (int i = 0; i < kMaxTilesPerAxis; ++i) {
-        // 复用 detail::AxisTileBlocks：与夹紧用同一个判据（否则两者会静默不一致）
-        if (detail::AxisTileBlocks(map, center.x, center.y, tx0 + i, /*movingIsX=*/true)) {
-            return true;
-        }
-    }
-    return false;
+    return IsSolidAt(map, TileMap::ToIndex(center.x), TileMap::ToIndex(center.y));
 }
 
 namespace detail {
 
-// 单轴推进：撞到就**夹紧到接触面**（决策 1）。
+// 单轴推进一步：撞上就把这一轴**夹到边界前 ε**。
 //
-// ⚠️ 两轴共用这一份实现（movingIsX 只在下标顺序上分岔）。
+// ⚠️ 两轴共用这一份实现（`movingIsX` 只切"取哪个坐标"）。
 //    "把 +x/−x、+y/−y 四个镜像各写一遍"是坑 17 的来源（只写对一半很难看出来）。
-//
-// ⚠️ 定义在 `OverlapsSolid` **之后**：它要用那个判据（见文件头的顺序说明）。
 inline void StepAxis(const TileMap& map, mini::math::Vec2& pos, float delta, bool movingIsX) noexcept
 {
     if (delta == 0.0f) {
-        return;   // 这一轴本段不动（顺带让下面的扫描不必处理"零位移"）
+        return;   // 这一轴本步不动
     }
 
-    float&      moving = movingIsX ? pos.x : pos.y;
-    const float other  = movingIsX ? pos.y : pos.x;   // 本段不变，只用来算另一轴的格范围
+    float& moving = movingIsX ? pos.x : pos.y;
 
-    // 自愈：起点已经嵌在墙里 → 本轴**不夹紧**，直接接受位移（7.4 的约定）。
-    // 反过来做（重叠就不许动）会把"已经嵌进去"变成永久卡死 ——
-    // S7 已经因为"冲出地图永久卡在界外"否掉过一个方案，不再造第二个死锁。
-    if (OverlapsSolid(map, pos)) {
+    // 自愈：起点就已经在实心格里（出生点摆进墙里 / 以后关卡数据改了）→ 本轴**不拦**，
+    // 让它走出去。反过来做（在墙里就不许动）会造出"永久卡死"——S7 已经因为
+    // "冲出地图永久卡在界外"否掉过一个方案，不再造第二个死锁。
+    if (IsSolidAt(map, pos)) {
         moving += delta;
         return;
     }
@@ -164,39 +105,22 @@ inline void StepAxis(const TileMap& map, mini::math::Vec2& pos, float delta, boo
     const float before    = moving;
     const float tentative = moving + delta;
 
-    moving = tentative;                        // 先放上去，用**同一个判据**问"这样行不行"
-    if (!OverlapsSolid(map, pos)) {
-        return;                                // 没撞到 → 接受
+    moving = tentative;                        // 先放上去，用同一个判据问"这样行不行"
+    if (!IsSolidAt(map, pos)) {
+        return;                                // 目标格是空的 → 接受（**跨边界本身不拦**）
     }
-    moving = before;                           // 撞到 → 撤回，再按移动方向找最近的接触面
+    moving = before;                           // 目标格实心 → 撤回，夹到边界前 ε
 
-    // 候选格：tentative 盒子在移动轴上压到的那 1~2 格（约定 4：**依赖子步长 ≤ 0.5**）
-    const int movingIdx0 = TileMap::ToIndex(tentative - kEntityHalfSize);
+    // 撞上的是哪一格？—— 就是 tentative 所在的那一格。
+    // ⚠️ 这一句成立**依赖约定 3**（子步长 < 1 格）：一步最多跨一个边界，
+    //    所以不存在"跳过中间某格、夹到更远那一格"的情况，不需要扫描。
+    const int blockedIdx = TileMap::ToIndex(tentative);
 
-    if (delta > 0.0f) {
-        // 向右 / 向下：**最小**的挡路格就是接触面（从近到远扫）
-        for (int i = 0; i < kMaxTilesPerAxis; ++i) {
-            const int movingIdx = movingIdx0 + i;
-            if (!AxisTileBlocks(map, tentative, other, movingIdx, movingIsX)) {
-                continue;
-            }
-            moving = TileMin(movingIdx) - kEntityHalfSize;   // = tx − 0.5（精确半数）
-            return;
-        }
-    } else {
-        // 向左 / 向上：**最大**的挡路格就是接触面（扫掠方向反过来）
-        for (int i = kMaxTilesPerAxis - 1; i >= 0; --i) {
-            const int movingIdx = movingIdx0 + i;
-            if (!AxisTileBlocks(map, tentative, other, movingIdx, movingIsX)) {
-                continue;
-            }
-            moving = TileMax(movingIdx) + kEntityHalfSize;   // = tx + 1 + 0.5
-            return;
-        }
-    }
-
-    // 走到这里 = "OverlapsSolid 说撞了、但按方向找不到挡路的格"。逻辑上不可达
-    // （两个判据是同一个函数、候选集也相同），保守停在原位：**宁可不动，也绝不放行**。
+    // 向右 / 向下 → 停在它的**左/上边界**前；向左 / 向上 → 停在它的**右/下边界**后。
+    // 两种落点都满足：`ToIndex(落点)` == 那个**空**的格子（约定 2）。
+    const float boundary = static_cast<float>(blockedIdx);
+    moving = (delta > 0.0f) ? boundary - kContactEpsilon
+                            : boundary + 1.0f + kContactEpsilon;
 }
 
 } // namespace detail
@@ -205,13 +129,13 @@ inline void StepAxis(const TileMap& map, mini::math::Vec2& pos, float delta, boo
 // 推进：唯一"改变位置"的入口
 // ------------------------------------------------------------
 
-// 把 pos 沿 delta 推进；撞到墙就把**那一轴**夹在接触面上。
+// 把 pos 沿 delta 推进；某一轴撞上实心格就把它夹在边界前 ε。
 //
-// ⚠️ 顺序（7.4，写错就是"两条路径各自漂移"）：
+// ⚠️ 顺序（S7_CHECKLIST 7.4，写错就是"两条路径各自漂移"）：
 //    · **外层**是子步循环（约定 3）
 //    · **内层**是"先 X、再 Y"（分轴）
 //    换成"先把 delta.x 整段走完、再走 delta.y"，在拐角处会差一格。
-// ⚠️ 一轴被夹紧后**不中止本帧**：该轴会反复夹在接触面上，另一轴照常走 —— 这才是"贴墙滑行"。
+// ⚠️ 一轴被夹住后**不中止本帧**：该轴会反复夹在边界前，另一轴照常走 —— 这才是"贴墙滑行"。
 //
 // 返回 void：今天没有调用者需要"撞没撞"这个 bool（TECH_DEBT B2 的"0 调用者不建"纪律；
 // 将来"撞墙时取消冲刺"再补 —— S7_CHECKLIST 第 8 节的升级路径）。
@@ -225,7 +149,7 @@ inline void MoveAndCollide(const TileMap& map, mini::math::Vec2& pos, mini::math
         return;
     }
 
-    // 子步数按**单轴最大位移**算：分轴之后两轴各自独立，盲区公式里的 D 就是"沿轴位移"
+    // 子步数按**单轴最大位移**算：分轴之后两轴各自独立，约定 3 里的"步子"就是沿轴位移
     const float axisSpan = std::max(std::abs(delta.x), std::abs(delta.y));
     const int   steps    = static_cast<int>(std::ceil(axisSpan / kMaxStepPerTick));   // ≥ 1
 

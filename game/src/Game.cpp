@@ -3,9 +3,11 @@
 #include "mini/math/Vec2.h"
 #include "mini/platform/Input.h"
 #include "mini/render/Color.h"
+#include "mini/world/Collision.h"   // 调试快照用：IsSolidAt / ToIndex / 点模型的判据
 #include "mini/world/TileMap.h"
 
 #include <cstdio>
+#include <fstream>   // 调试快照（追加写日志）
 
 // ============================================================
 // Game 实现（S5）—— 引擎与游戏分家之后的**唯一**游戏侧文件
@@ -43,6 +45,25 @@ namespace {
 //    ⚠️ 因此"可用视口高 = 画布高 − kHudRow"这条不能写错：写成整屏高会让底部多露一行，
 //       并让 HUD 压错行（S6 坑 8）。
 constexpr int kHudRow = 1;
+
+// 调试快照的**按键**与**落盘文件名**。
+//
+// ⚠️ 按键字母在代码里**只出现在两处**：这个常量 + `DrawHud` 里那句提示字面量。
+//    再换键 = 只改那两处。（其余注释一律写 `kDumpKey`、不抄字母 —— 免得下次又漏改一处。）
+// ⚠️ 为什么是 F4：2026-10-08 本人**连报两次冲突** —— 先是 F1 被别的软件占，换成 F3 之后
+//    F3 也不行 → 落到 F4。`KeyCode.h` 目前只映射了 `F1..F4`；想用 F5+ 得先去那儿加映射。
+//    `F2` 留着给 S11 的 Debug Overlay（`PLAN:549` 的"F2 显示碰撞盒"），所以不占它。
+constexpr mini::platform::Key kDumpKey = mini::platform::Key::F4;
+const char* kDumpFileName = "miniengine_debug.log";   // *.log 已被 .gitignore 忽略
+
+// 调试快照用：一格是空还是实心？
+// ⚠️ 它**只负责打印**，不承担任何判定职责 —— 判碰撞一律走 `Collision.h`（同一个事实只有一个来源）。
+//    标记用 `.`/`#`（不用 W/E 之类字母：W 既可能被读成"墙"也可能被读成"西边"）。
+//    越界经 `IsSolidAt` 也返回 true → 打成 '#'（世界外就是墙，这正是要看的事实之一）。
+char CellMark(const mini::world::TileMap& map, int tx, int ty)
+{
+    return mini::world::IsSolidAt(map, tx, ty) ? '#' : '.';
+}
 
 } // namespace
 
@@ -181,7 +202,14 @@ void Game::OnUpdate(const mini::core::FrameContext& ctx)
                                                    m_world.Map().Height()});
     }
 
-    // ⑧ 延迟删除。S5 恒为空 —— 留着是为了让帧序在 S9 之前就是对的
+    // ⑧ 调试快照（键 = `kDumpKey`，见本文件顶部的常量）。放在相机之后 = 记的是"本帧最终"的位置与相机。
+    //    ⚠️ **只读**：写文件 + 递增计数器，不碰世界 → 帧序不受影响。
+    //    ⚠️ 只在 `Pressed` 时写（不是 `Held`）—— 否则按住会每帧刷盘。
+    if (input.Get(kDumpKey) == KeyState::Pressed) {
+        DumpSnapshot(ctx);
+    }
+
+    // ⑨ 延迟删除。S5 恒为空 —— 留着是为了让帧序在 S9 之前就是对的
     m_world.FlushRemovals();
 }
 
@@ -259,10 +287,12 @@ void Game::DrawHud(mini::render::FrameBuffer& fb) const
     //
     // `v` 这一格是**速度**（格/秒）：看起来是调试信息，其实是 10.2 那条自证的**必需项** ——
     // 屏幕上要能一眼核对 `pos ≈ v × sum dt`。速度现在可用 argv[2] 覆盖，所以必须显示出来。
-    // 提示文字压缩成 `WASD  Q`，否则这一行会超过 80 列（终端宽度）。
+    // 提示文字压缩过，否则这一行会超过 80 列（终端宽度）。
+    // ⚠️ 2026-10-08 加了调试快照键（`kDumpKey`，见本文件顶部常量）：加之前约 71 列，现在约 73 列
+    //    —— **还剩余量但不多了**；想再加栏目必须先砍掉别的（S6 决策 5 就是因为这个没加 `cam`）。
     char text[96];
     std::snprintf(text, sizeof(text),
-                  "pos %6.2f,%6.2f | tile %4d,%4d | sum dt %6.2fs | v %4.1f | WASD  Q",
+                  "pos %6.2f,%6.2f | tile %4d,%4d | sum dt %6.2fs | v %4.1f | WASD  Q F4",
                   static_cast<double>(px), static_cast<double>(py),
                   mini::world::TileMap::ToIndex(px),
                   mini::world::TileMap::ToIndex(py),
@@ -278,6 +308,104 @@ void Game::OnRender(mini::render::FrameBuffer& fb)
     // 最后画：压在**视口第 0 行**上（= 相机原点那一行；同"顶栏压在最上面"一个道理）。
     // ⚠️ 顺序不能换：HUD 要盖掉地图，而 `@` 必须画在地图之后、HUD 之前。
     DrawHud(fb);
+}
+
+// ------------------------------------------------------------
+// 调试快照（键 = `kDumpKey`，2026-10-08 加；**同日随"点模型"改过字段**）
+//
+// 目的：查"**看着没贴墙、却动不了**"那一类问题。
+//
+//   第一版是为抓"盒子占 4 格、屏幕只画 1 格"这种**看不见的挡路者**
+//   （报障原文：`pos=(29.5,4.84)` 按 D 不动 —— 盒子探进了看不见的 `(30,5)`）。
+//   2026-10-08 碰撞模型改成**点模型**（占格 = `ToIndex(pos)`）之后，这类问题**结构上消失**了，
+//   所以字段也换成新模型真正有用的那几样：
+//     · `tile` / `frac`：占哪一格、在这一格里的什么位置（离边界多远）
+//     · `now` + 四邻：往某个方向能不能走，就是看**那一格**实不实心
+//     · `solidNow` / `tryStepX/Y`：现在站的格 / 用本帧 v×dt 试算之后的格实不实心
+//   留着它仍然有用：人眼验收（"顶墙停在哪"、"贴墙滑到哪"）也得取证，而不是靠眼睛估。
+//
+// ⚠️ 契约：
+//   · **只读**世界（不改 pos、不碰相机）→ 放在帧序哪一步都不影响别的系统；
+//   · 打开失败（目录只读 / 文件被占）就**静默返回** —— 调试输出不许影响游戏能不能跑；
+//   · 追加模式 + 每次 flush（进程被杀也不丢；按一次才写，代价可忽略）；
+//   · ⚠️ 这是 S11 的 Logger 之前的**临时出路**（`TECH_DEBT` C14）。
+// ------------------------------------------------------------
+void Game::DumpSnapshot(const mini::core::FrameContext& ctx)
+{
+    std::ofstream out(kDumpFileName, std::ios::app);
+    if (!out) {
+        return;
+    }
+
+    ++m_dumpCount;
+
+    // 新文件（或空文件）→ 先写 **UTF-8 BOM**，再写一段字段说明。
+    //
+    // ⚠️ 为什么非写 BOM 不可：Windows PowerShell 的 `Get-Content` 不带 `-Encoding` 时按
+    //    **GBK(936)** 解码 UTF-8，中文表头就显示成 `鐜╁涓績` 这种乱码（2026-10-08 实测）。
+    //    有 BOM 它就会自动认成 UTF-8 —— 这是让"数据文件在默认命令下就能读"最省事的一次性修法。
+    //    代价：文件头多 3 个字节（`*.log` 已被 `.gitignore` 忽略，与仓库无关）。
+    //
+    // ⚠️ 判断"新文件"必须用 `tellp()`（追加模式下 = 当前文件尾），**不能用 `m_dumpCount == 1`**：
+    //    那个计数器每次进程启动都从 0 开始，用它会在**第二次运行**时往文件中间再插一个 BOM。
+    //    同理，字段说明也只在文件新建时写一次（否则每跑一次就多追加一份表头）。
+    if (out.tellp() == std::streampos(0)) {
+        out << "\xEF\xBB\xBF";   // UTF-8 BOM
+        out << "# MiniEngine 调试快照（按下 HUD 里显示的那个调试键；每按一次追加两行）\n"
+               "#   pos = 玩家中心的浮点坐标；tile = 它占的那一格（== 屏幕上 @ 所在的那一格）\n"
+               "#   frac = 在这一格里的位置（0~1）—— 离哪条边界还有多远看它\n"
+               "#   now/E/W/S/N = 自己那一格与四邻（E=+x  W=-x  S=+y  N=-y）：  '.'=空  '#'=实心（含越界）\n"
+               "#   solidNow = 现在站的这一格实心吗；tryStepX/tryStepY = 用本帧 v×dt 试算后占的那一格实心吗（1/0）\n"
+               "#   ⚠️ 新模型（2026-10-08 起）：实体占的**就是**它画出来的那一格 —— 挡路的一定是看得见的那一格\n";
+    }
+
+    const mini::world::Entity* player = m_world.Find(m_player);
+    if (player == nullptr) {
+        out << "dump=" << m_dumpCount << " (player not spawned)\n";
+        return;
+    }
+
+    const float px = player->transform.pos.x;
+    const float py = player->transform.pos.y;
+    const float vx = player->velocity.perSecond.x;
+    const float vy = player->velocity.perSecond.y;
+
+    // 占格 + "在这一格里的位置"：新模型下**这两样就是全部几何**（不再有盒子，也就没有 box=）
+    const int   tx = mini::world::TileMap::ToIndex(px);
+    const int   ty = mini::world::TileMap::ToIndex(py);
+    const float fx = px - static_cast<float>(tx);   // 0 ~ 1
+    const float fy = py - static_cast<float>(ty);
+
+    const float dx = vx * ctx.deltaSeconds;
+    const float dy = vy * ctx.deltaSeconds;
+
+    out << "dump=" << m_dumpCount
+        << " sumdt=" << m_elapsed
+        << " v=" << vx << ',' << vy
+        << " pos=" << px << ',' << py
+        << " tile=(" << tx << ',' << ty << ')'
+        << " frac=(" << fx << ',' << fy << ')'
+        << " canvas=" << ctx.screenWidth << 'x' << ctx.screenHeight
+        << " fps=" << ctx.fps
+        << " ms=" << ctx.frameMs
+        << " max=" << ctx.maxFrameMs
+        << " work=" << ctx.workMs
+        << " cam=" << m_camera.OriginCol() << ',' << m_camera.OriginRow() << '\n';
+
+    // 自己那一格 + 四邻：新模型里"往某方向能不能走"就是看**那一格**实不实心
+    out << "  now(" << tx << ',' << ty << ")=" << CellMark(m_world.Map(), tx, ty)
+        << " E(" << (tx + 1) << ',' << ty << ")=" << CellMark(m_world.Map(), tx + 1, ty)
+        << " W(" << (tx - 1) << ',' << ty << ")=" << CellMark(m_world.Map(), tx - 1, ty)
+        << " S(" << tx << ',' << (ty + 1) << ")=" << CellMark(m_world.Map(), tx, ty + 1)
+        << " N(" << tx << ',' << (ty - 1) << ")=" << CellMark(m_world.Map(), tx, ty - 1)
+        << " solidNow="
+        << (mini::world::IsSolidAt(m_world.Map(), mini::math::Vec2{px, py}) ? 1 : 0)
+        << " tryStepX="
+        << (mini::world::IsSolidAt(m_world.Map(), mini::math::Vec2{px + dx, py}) ? 1 : 0)
+        << " tryStepY="
+        << (mini::world::IsSolidAt(m_world.Map(), mini::math::Vec2{px, py + dy}) ? 1 : 0) << '\n';
+
+    out.flush();
 }
 
 // ------------------------------------------------------------

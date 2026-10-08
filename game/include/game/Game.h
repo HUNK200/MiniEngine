@@ -24,6 +24,15 @@
 //   现在由 `m_camera` + `OriginCol/OriginRow` 补上（相机本体在 `render/Camera.h`，能离线测）。
 //   顺带：**碰撞仍然没有**（S7），所以走进地图外时 `@` 会离开画面，这是预期的。
 //
+// ⚠️ **调试快照键**（2026-10-08 加，为查"看着没贴墙却动不了"那类问题）：
+//   按一次就把当前帧的关键参数**追加**写进 `miniengine_debug.log`（实现见 `Game.cpp` 的 `DumpSnapshot`）。
+//   它记的东西里有一样是专门为那类 bug 准备的：**盒子压到的 4 个格各自是墙还是空**
+//   —— 因为"盒占 4 格、屏幕只画 1 格"，挡住你的常常是**看不见**的那一格。
+//   ⚠️ **具体是哪个 F 键是运行时的事**：按键写在 `Game.cpp` 顶部的 `kDumpKey` 一处，
+//      并在 HUD 提示里显示出来（不用记文档）。历程：F1 撞别的软件 → F3 也不行 → 现在 **F4**。
+//   ⚠️ 这是 S11 的 Logger 之前的**临时出路**（`TECH_DEBT` C14）；它做文件 I/O，
+//   只在手动按时发生（会污染那一帧的 `work` 值，属可接受）。
+//
 // ⚠️ 本类**不 include `platform/Input.h`**：OnUpdate 只从 `FrameContext` 拿 `const Input&`
 //   （Application.h 已前向声明），OnRender 完全不碰输入。
 // ============================================================
@@ -79,12 +88,18 @@ private:
     void DrawEntities(mini::render::FrameBuffer& fb) const;
     void DrawHud(mini::render::FrameBuffer& fb) const;
 
+    // 调试快照（键 = `kDumpKey`，见 `Game.cpp` 顶部常量）：把当前帧的参数追加写进 `miniengine_debug.log`。
+    // ⚠️ **非 const**：要写文件、还要递增 `m_dumpCount`。它**只读**世界，不改任何状态
+    //    （所以放在帧序的哪一步都不影响别的系统 —— 实现里放在相机之后）。
+    void DumpSnapshot(const mini::core::FrameContext& ctx);
+
     mini::world::World    m_world{kWorldW, kWorldH};
     // 视口位置（S6）。每帧在 `World::Update` **之后** Follow 一次（帧序见 Game.cpp）。
     // 值成员：相机是游戏侧状态，引擎不认识它；尺寸不存进相机（见 render/Camera.h 6.3）。
     mini::render::Camera  m_camera;
     mini::world::EntityId m_player{};         // 0 = 还没出生（OnStart 之前）
     float                 m_elapsed = 0.0f;   // Σdt（秒）—— 10.2 的"自证"用它
+    int                   m_dumpCount = 0;    // `kDumpKey` 按了几次（日志里的 dump=N；**只增不减**）
     float                 m_moveSpeed = kMoveSpeed;   // 实际用的速度（argv[2] 可覆盖）
     bool                  m_quit = false;     // Q 退出（ShouldQuit 的来源）
 };
