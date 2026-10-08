@@ -1,5 +1,7 @@
 #include "mini/world/World.h"
 
+#include "mini/world/Collision.h"   // S7：位移从这里走（分轴 + 夹紧 + 子步进）
+
 #include <cstddef>
 
 // ============================================================
@@ -90,7 +92,9 @@ void World::Update(float dt) noexcept
         if (!entity.active) {
             continue;
         }
-        entity.transform.pos += entity.velocity.perSecond * dt;
+        // S7：位移交给 MoveAndCollide —— 它内部做"外层子步 + 内层先 X 后 Y"的分轴夹紧。
+        // ⚠️ 这里是**唯一**改位置的地方：game/ 不许自己调碰撞（否则就有两条"位置怎么变"的路径）。
+        MoveAndCollide(m_map, entity.transform.pos, entity.velocity.perSecond * dt);
     }
 }
 

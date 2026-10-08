@@ -17,8 +17,10 @@
 // 依赖谁：同层的 Entity.h / TileMap.h + 标准库。
 // 被谁用：game/Game.cpp（步骤 3）持有它；tests/test_world.cpp 的 World suite。
 //
-// ⚠️ 本阶段唯一的"物理"就是 `pos += perSecond * dt`（PLAN:982：纯运动学，
-//    无重力、无阻尼、无迭代求解）。S7 的分轴碰撞会插在同一个循环里。
+// ⚠️ 唯一的"物理"仍然是纯运动学（`PLAN:982`：无重力、无阻尼、无迭代求解）。
+//    **S7 起**位移不再直接 `pos += v*dt`，而是交给 `world/Collision.h` 的 `MoveAndCollide`：
+//    外层子步 + 内层"先 X 后 Y"，撞到墙就夹紧在接触面上。
+//    ⚠️ 没有速度损失模型 —— 不算反弹、不算摩擦，撞上就是"贴着走"（S7 的明确不做清单）。
 //
 // ⚠️ **遍历中禁止 Spawn / 删除**：
 //    · 删除 → 走 MarkForRemoval + FlushRemovals（容器操作留到遍历之外做）
@@ -60,10 +62,11 @@ public:
     [[nodiscard]] TileMap&       Map()       noexcept;
     [[nodiscard]] const TileMap& Map() const noexcept;
 
-    // 本阶段唯一的"物理"：对每个 **active** 实体做 pos += perSecond * dt。
+    // 对每个 **active** 实体做"积分 + 与地图碰撞"：`MoveAndCollide(m_map, pos, v * dt)`（S7）。
     // ⚠️ 不夹 dt —— ctx.deltaSeconds 已经在 S3 的 ClampDelta 里夹过
     //    （S5 坑 #7：夹两次不会错，但会掩盖"到底谁夹的"）。
     // 顺序：**先由调用方写好速度，再调它**（见 S5_CHECKLIST 7.1 的帧序）。
+    // ⚠️ 仍然 `noexcept`：碰撞层零分配、不抛（`Collision.h` 的契约）。
     void Update(float dt) noexcept;
 
     // 延迟删除：只登记，不动容器。重复登记同一个 id 是**幂等**的。
