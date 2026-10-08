@@ -7,7 +7,8 @@
 #include "mini/world/TileMap.h"
 
 #include <cstdio>
-#include <fstream>   // 调试快照（追加写日志）
+#include <filesystem>   // 调试快照：判断日志文件是不是"新建的"（见 DumpSnapshot）
+#include <fstream>      // 调试快照（追加写日志）
 
 // ============================================================
 // Game 实现（S5）—— 引擎与游戏分家之后的**唯一**游戏侧文件
@@ -332,6 +333,14 @@ void Game::OnRender(mini::render::FrameBuffer& fb)
 // ------------------------------------------------------------
 void Game::DumpSnapshot(const mini::core::FrameContext& ctx)
 {
+    // ⚠️ 判断"新文件"**必须在打开之前**问文件系统 —— 两种错误做法都踩过：
+    //   · `out.tellp()`：追加模式下未写入前它**不可靠**（2026-10-08 实测：**每按一次都返回 0**
+    //     → BOM 和表头被反复插进文件中间）。**这就是那个 bug 的成因。**
+    //   · `m_dumpCount == 1`：计数器每次进程启动都从 0 开始 → 第二次运行也会重复插。
+    std::error_code ec;
+    const bool isNewFile = !std::filesystem::exists(kDumpFileName, ec) ||
+                           std::filesystem::file_size(kDumpFileName, ec) == 0;
+
     std::ofstream out(kDumpFileName, std::ios::app);
     if (!out) {
         return;
@@ -339,17 +348,13 @@ void Game::DumpSnapshot(const mini::core::FrameContext& ctx)
 
     ++m_dumpCount;
 
-    // 新文件（或空文件）→ 先写 **UTF-8 BOM**，再写一段字段说明。
+    // 新文件（或空文件）→ 先写 **UTF-8 BOM**，再写一段字段说明（**只写一次**）。
     //
     // ⚠️ 为什么非写 BOM 不可：Windows PowerShell 的 `Get-Content` 不带 `-Encoding` 时按
     //    **GBK(936)** 解码 UTF-8，中文表头就显示成 `鐜╁涓績` 这种乱码（2026-10-08 实测）。
     //    有 BOM 它就会自动认成 UTF-8 —— 这是让"数据文件在默认命令下就能读"最省事的一次性修法。
     //    代价：文件头多 3 个字节（`*.log` 已被 `.gitignore` 忽略，与仓库无关）。
-    //
-    // ⚠️ 判断"新文件"必须用 `tellp()`（追加模式下 = 当前文件尾），**不能用 `m_dumpCount == 1`**：
-    //    那个计数器每次进程启动都从 0 开始，用它会在**第二次运行**时往文件中间再插一个 BOM。
-    //    同理，字段说明也只在文件新建时写一次（否则每跑一次就多追加一份表头）。
-    if (out.tellp() == std::streampos(0)) {
+    if (isNewFile) {
         out << "\xEF\xBB\xBF";   // UTF-8 BOM
         out << "# MiniEngine 调试快照（按下 HUD 里显示的那个调试键；每按一次追加两行）\n"
                "#   pos = 玩家中心的浮点坐标；tile = 它占的那一格（== 屏幕上 @ 所在的那一格）\n"
