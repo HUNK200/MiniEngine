@@ -18,7 +18,10 @@ cmake_install.cmake
 install_manifest.txt
 compile_commands.json
 Testing/
-CMakeUserPresets.json      # 本机私有预设（含绝对路径），绝不提交
+# 本机私有预设（含绝对路径），绝不提交
+# ⚠️ 规则行必须是独立的一行：git 不支持行尾注释，
+#    写成 `CMakeUserPresets.json   # 说明` 会让整行变成一个匹配不到任何文件的 pattern（2026-10-08 修）
+CMakeUserPresets.json
 
 # ---- 编译器 / 链接器中间产物 ----
 *.obj
