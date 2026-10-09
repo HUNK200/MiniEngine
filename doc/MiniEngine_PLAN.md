@@ -169,6 +169,9 @@ c++_simple_engine/
 │   │   ├── physics/    Collision.h  PhysicsSystem.h
 │   │   │               # ↑ 目标态，**S7 没有建这一层**（Collision.h 落在 world/）
 │   │   ├── ai/         StateMachine.h  EnemyController.h
+│   │   │               # ↑ 目标态；**S8 落地的是 `EnemyBrain.h`**（header-only，249 行：五态枚举 + Decide）
+│   │   │               #   ⚠️ **没有建 `StateMachine.h`**：5 个状态用 `switch` 更直白，
+│   │   │               #   建通用模板属于"提前造抽象"（S8_CHECKLIST 差异 2）
 │   │   └── debug/      DebugOverlay.h  Profiler.h
 │   └── src/                    # 与 include 镜像的 .cpp；S2 起 platform/ 下放 Windows 实现
 │                               #   （唯一允许出现 <windows.h> 的地方，公共头一个都不能有）
@@ -177,8 +180,11 @@ c++_simple_engine/
 │   ├── CMakeLists.txt          # add_library(game STATIC ...)；PUBLIC 链 engine、PRIVATE 链 mini_options
 │   ├── include/game/
 │   │   ├── Game.h  GameState.h  Player.h  Enemy.h
+│   │   │               # ↑ 目标态；**S8 落地了 `Enemy.h`**（`EnemyData`：敌人的"状态+血量+定时器"，
+│   │   │               #   刻意**不**塞进 `mini::world::Entity` —— S8 分叉 ① / 差异 1）
+│   │   │               #   GameState / Player 仍未建（S10 / 玩家没有独立类型，就是那个 `@` 实体）
 │   │   ├── Weapon.h  Projectile.h  Pickup.h  WaveManager.h  Hud.h
-│   │   │               # ↑ 目标态；**S5 落地的只有 Game.h**（其余等 S8 之后）
+│   │   │               # ↑ 目标态；**S5 落地的只有 Game.h**（其余等 S9/S10）
 │   └── src/                    # S5：Game.cpp
 │
 └── tests/
@@ -559,19 +565,22 @@ AI 不会自己跑构建或 exe。一个步骤的 commit 由本人在验证通�
 | 落地偏差 | **10 条**（点模型前 7 条 + 收口后 3 条），都记在 `doc/S7_CHECKLIST.md`：候选格局部性依赖子步长 · 用例 11 的"结果一致"不成立 · 用例 8/9 改成等价可观察形式 · 荒谬速度不设上限 · **坑 13 的"1 格"估算算错了（实际 2 格 → `dy` 14→12）** · 用例 18 复用 `RunHolding` · **漏核 `World` suite 使 4 条既有用例真红** · **收口后本人报"看着脱墙却动不了"（模型 vs 显示错配）** · **F4 调试快照** · **碰撞模型整体换成点模型** |
 | 与 PLAN 的差异 | **7 条**，见 `doc/S7_CHECKLIST.md` 第 12 节：子步进提前到 S7 · `IsSolidAt` 的位置 · ε（**改过两次**：先去掉、2026-10-08 换点模型后又回来） · 实体推挤不做 · F2 不做 · 规模 · **`Collision.h` 落在 `world/` 而不是目标树的 `physics/`**。⚠️ 另外收口后**模型从"1×1 盒"换成"点模型"**（见 `doc/S7_CHECKLIST.md` 顶部「模型变更」） |
 
-### S8 Enemy + AI 状态机
+### S8 Enemy + AI 状态机（✅ 2026-10-09 完成）
+
+> 施工图 + 落地记录：`doc/S8_CHECKLIST.md`（含 **9 条落地偏差**、**9 条与本节原文的差异**、用例清单、反向验证）。
+> 本表记的是**实际落地**的样子。
 
 | 项 | 内容 |
 | --- | --- |
 | 目标 | `Idle → Patrol → Chase → Attack → Dead` 五态，`E` 会追 `@` |
-| 实现 | 表驱动 FSM（`switch` 或 `std::function` 表都行，先 `switch`）；距离阈值切换；Patrol 用预置路径点往返 |
-| C++ 知识 | `enum class`、`switch` 穷尽性、`std::function`、状态与数据分离 |
-| 引擎知识 | 有限状态机、感知（视距/距离）、更新顺序（AI 用上一帧位置还是最新位置） |
-| 规模 | ~350 行 |
-| 可运行效果 | `E` 沿直线追 `@`，距离 < 1.5 开始攻击扣血，`@` 跑远后 `E` 返回 Patrol |
-| 验收 | F3 打开后能实时看到 `State / Target / Distance`；5 个敌人同时追不出现抖动打转 |
-| 坑 | 相邻敌人互相推挤导致"抖动"（先忽略实体间碰撞解算的停止条件）；Chase 直接朝玩家走会卡在墙后（**这一阶段故意不做寻路**，把 A* 留到 S14，让"卡墙"成为亲眼看到的动机） |
-| 设计结论 | **状态机够了，不要上行为树。** 5 个状态的行为树只会更难看懂 |
+| 实现 | **决策与接线分家**（本阶段的核心结构决定）：<br>· `engine/include/mini/ai/EnemyBrain.h`（新增，header-only，**249 行**）= `EnemyState` 五态 + `EnemyTuning`（9 个参数，配 **6 条 `static_assert`** 把迟滞区间钉进编译期）+ `BrainInput` / `BrainOutput` + **纯函数 `Decide`**（同输入同输出、不抛、不分配、无静态状态）。它**只碰 `Vec2` + 枚举** —— 不认识 `Entity` / `World` / `TileMap` / 输入 / 屏幕。<br>· `game/include/game/Enemy.h`（新增）= `EnemyData`（`id / state / patrolPath / waypointIdx / attackTimer / idleTimer / hp`）。<br>· `game/`：`SpawnEnemies` / `DriveEnemyAi`（每帧跑一次 `Decide`，**只写速度**）/ `DrawAiPanel` / `KillNearestEnemy`。<br>⚠️ **`Entity` 零改动、`World.h/.cpp` 零改动、`Collision.h` 零改动** —— 位移仍然只有一条路径（`World::Update` → `MoveAndCollide`），所以敌人**自动**会撞墙、会沿墙滑。整个 S8 只碰了 `engine/` 里的 **`KeyCode.h`**（加 `Key::F7` 与 `Key::K` 两个映射）。 |
+| C++ 知识 | `enum class`、**`switch` 的穷尽性**（面板的 `StateName` 不写 `default`：加第六态编译器会提醒）、**纯函数 + 聚合体入参**（`BrainInput` 仿 `CameraLimits`）、`std::span`（把巡逻段交给 `Decide`）、`static_assert` 钉不变量、`std::max` 夹下限 |
+| 引擎知识 | 有限状态机、**感知**（只有欧氏距离，**不做视线遮挡**）、**更新顺序**（AI 读"本帧积分前"的位置 = 上一帧末；**决策在积分之前**，与"写速度必须在积分前"是同一条约束）、**迟滞**（`sight < lose` / `attackEnter < attackExit` 是"不抖"的**全部**机制） |
+| 规模 | `EnemyBrain.h` **249** 行 + `test_enemy.cpp` **457** 行（18 用例）+ `Enemy.h` 56 行 + `Game.h/.cpp` 约 +150 行 + `test_game.cpp` +257 行（4 条）。**用例总数 123 → 145**（原估 ~350 行，实际落在量级内） |
+| 可运行效果 | 5 个 `E` 各守一条**往返段**巡逻（`kPatrolPaths[5][2]`，每行 2 个点 → `(idx+1)%2` 就是往返）；`@` 进 10 格 → 直线追；贴到 1.5 格 → 停下、每 0.8s 扣 1 HP；`@` 跑出 14 格 → 回巡逻。**面板键是 `F7`**（原定 `F3`，本机实测冲突 → 差异 6），面板打开时 `K` 杀"离玩家最近的那个敌人"（→ `Dead` → 实体停更 → **从屏幕上消失**，但 `EnemyData` 留着，所以**面板还看得见 `state=Dead`**） |
+| 验收 | 机器形式：`Enemy` suite **18 条**（纯 `Decide`：迟滞、冷却、零距离 NaN、`Dead` 终止、越界路点……）+ `Game` suite 新增 **5 条**（巡逻不追 / 靠近会追 / 攻击扣血 / HP 停 0 / **击杀后从屏幕上消失**）→ 全集 **123 → 146**，**`146 passed / 0 failed`**（本人 2026-10-09 回报"用例全绿"）。<br>⚠️ 第 5 条是**反向验证 R6 逼出来的**（注掉 `entity->active = false;` 时测试**全绿**、exe 里敌人却留在屏幕上 → 说明"死亡后不绘制"当时零覆盖）；它自己又做了一次 R6′ 复验（`:697` 红、`:701` 绿）。详见 `doc/S8_CHECKLIST.md` 偏差 10 / §10.3。<br>⚠️ **反向验证 R1~R6 已跑完**（R1 首轮"改 tuning 参数"是空转 → 改成打代码逻辑后命中）；**人眼 8 条尚未完整跑**。本表不预先声称人眼通过。 |
+| 坑 | ① **零距离归一化 → NaN**：`self == target` 时速度可能是 NaN，而 `ToIndex(NaN)` 是 UB → `Decide` 里显式判 `LengthSq() > 0`；② **状态抖动**：单阈值必抖，靠双迟滞挡；③ **帧序**：AI 必须在 `World::Update` **之前**（否则敌人慢一帧）；④ **跨过路点**：到点判据必须是"本帧会到达或越过"（`dist <= moveSpeed*dt + arriveRadius`），写成"落进半径内"会让敌人卡在路点两侧来回抽；⑤ **两套真相**：敌人的位置在 `Entity`、状态在 `EnemyData`，靠 `id` join —— S8 **没有删除路径**所以还不出事，真删留到 S9；⑥ **`Dead` 不改容器**（只置 `active=false`）→ 会累积"僵尸 `EnemyData`" |
+| 设计结论 | **状态机够了，不要上行为树**（同原文）。本阶段另得一条同等重要的结论：**把"纯决策"和"改动世界"分开** —— 决策放 `ai/`（可离线测、零依赖），接线放 `game/`，于是 `engine/` 几乎没动。这是 S7"把碰撞做成纯函数"的**第二次兑现**。 |
 
 ### S9 Weapon / Projectile —— 可以射击
 
@@ -969,6 +978,11 @@ SetConsoleMode(hOut, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
 D-0  单结构体            S5     struct Entity { Transform; Velocity; char symbol; bool active; };
       ↓ 当"不是所有实体都有所有字段"开始烦人
 D-1  Entity + 可选字段     S8~S9  加 Health / Collider / AiState 字段，用 active/enabled 标记区分
+      ⚠️ **S8 实际没走这条路**：敌人特有的字段（状态/血量/定时器/巡逻）**没进 `Entity`**，
+         而是走下面 D-2 提到的"**按类型分容器**"—— `game/Enemy.h` 的 `EnemyData` + `std::vector<EnemyData>`。
+         结果：`Entity` 保持 24 字节、`static_assert` 一次都没响、**整个 `engine/` 只碰了 `KeyCode.h` 两行**。
+         代价是"两套真相靠 id join"（见 `doc/S8_CHECKLIST.md` 分叉 ① 与差异 1）。
+         S9 的 `Projectile` 打算照抄这个形状。
       ↓ 当字段组合出现"要么全有要么全无"的耦合（子弹不需要 Health，敌人不需要 Projectile）
 D-2  Entity + Component 指针  S10   std::vector<std::unique_ptr<Component>> + GetComponent<T>()
       ↓ 当 System 开始跨实体按类型遍历，且 cache miss 成为实测瓶颈
@@ -1130,7 +1144,7 @@ while (!shouldQuit) {
 | --- | --- | --- | --- |
 | **v0.1 "看得见"** | ① 现代 CMake 骨架 + ctest 能跑<br>② 终端出现一个带边框的 2D 画面<br>③ WASD 能控制 `@` 移动 | S0~S5 | 三条命令构建成功；终端里有 `@` 且能用 WASD 推着走 |
 | **v0.2 "走得动"** | ① 200×200 地图 + 相机跟随<br>② 不能穿墙<br>③ 顶栏 FPS/FrameTime 实时显示 | S3,S6,S7 | 在比屏幕大得多的地图上自由走动，撞墙不穿模，FPS 数字稳定 |
-| **v0.3 "玩得起来"** | ① 敌人会追会打<br>② 能射击、能击杀<br>③ HP/Ammo/Kills/Wave + 死亡重开 | S8~S10 | **一个外人可以上手玩 5 分钟的完整游戏**（这是全项目最重要的一次验收） |
+| **v0.3 "玩得起来"** | ① 敌人会追会打（**S8 ✅ 2026-10-09**）<br>② 能射击、能击杀<br>③ HP/Ammo/Kills/Wave + 死亡重开 | S8~S10 | **一个外人可以上手玩 5 分钟的完整游戏**（这是全项目最重要的一次验收） |
 | **v0.4 "看得清"** | ① F1~F4 Debug Overlay<br>② `PROFILE_SCOPE` 各子系统耗时表<br>③ 单元测试覆盖 math/collision/gamestate | S4,S11 | 能说出"渲染占了多少 ms"；`ctest` 全绿 |
 | **v0.5 "像 3D"** | ① DDA 射线投射的走廊画面<br>② 无鱼眼扭曲<br>③ `F5` 在 2D/3D 视角间切换 | S12 | 同一个世界两种视角自由切换，走位在两个视角下一致 |
 | **v1.0 "收得起来"** | ① 精灵 + z-buffer 遮挡正确<br>② README + GIF + CI（**只跑 MSVC**）<br>③ 干净克隆后三条命令能跑 | S13,S14 | 别人按 README 能复现；`git tag v1.0` |
@@ -1185,7 +1199,7 @@ while (!shouldQuit) {
 | `▀` / `▄` 半块字符（纵向分辨率翻倍）| 1h | S6 相机前后皆可 | 伪 3D 观感直接跳一档 |
 | 命中/死亡小方块粒子 | 1h | S9 射击之后 | 廉价但很提气 |
 | 地图从 `map.txt` 加载 | 1h | **S7 已完成（2026-10-08）→ 触发条件满足，随时可挑** | 之后调关卡不用重新编译 |
-| A* 寻路（解决 S8 的卡墙）| 2.5h | S8 之后 | BFS 打底，顺手在 Debug Overlay 里画路径 |
+| A* 寻路（解决 S8 的卡墙）| 2.5h | **S14**（原写"S8 之后"；S8 已完成 → "卡墙"现在**亲眼可见**了，但按 S8 的设计意留到 S14 再解） | BFS 打底，顺手在 Debug Overlay 里画路径 |
 | 装 Ninja 提速构建 | 0.5h | 任一空档（与阶段无关） | `winget install Ninja-build.Ninja`，一条命令，别折腾 |
 | 给 `mini_tests` 加 `LABELS` 与 `TIMEOUT` 属性 | 1h | 用例总数 > 50 之后 | 让 `ctest -L fast` 与超时保护可用，见 `doc/CTEST_NOTES.md` |
 | Profiler 导出 Chrome Trace JSON | 1.5h | S11 之后 | `chrome://tracing` 里看火焰图，成就感很强 |
