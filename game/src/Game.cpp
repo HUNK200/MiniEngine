@@ -474,8 +474,10 @@ void Game::DrawEntities(mini::render::FrameBuffer& fb) const
     // const 版 Entities()：本方法是 const。span 只在这次遍历里有效
     for (const mini::world::Entity& entity : m_world.Entities()) {
         if (!entity.active) {
-            continue;   // 不更新 ≠ 不画；active 只管 Update（见 World 的注释）
+            continue;   // `active == false` → **这里也不画**（不只是"不参与积分"）
         }
+        // ⚠️ 上面这个 `continue` 是 S8 的 `Dead` 敌人"从屏幕上消失"的**唯一**原因
+        //    （`DriveEnemyAi` 把 hp<=0 的实体置 inactive）。删掉它 → `Game.EnemyDiesAndDisappears` 会红。
 
         // 世界 → 屏幕：**floor**（`ToIndex`），再减去相机原点；行还要加回 kHudRow
         const int col = mini::world::TileMap::ToIndex(entity.transform.pos.x) - originCol;
