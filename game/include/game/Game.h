@@ -1,9 +1,13 @@
 #pragma once
 
+#include "game/Enemy.h"
 #include "mini/core/Application.h"
+#include "mini/math/Vec2.h"
 #include "mini/render/Camera.h"
 #include "mini/render/FrameBuffer.h"
 #include "mini/world/World.h"
+
+#include <vector>
 
 // ============================================================
 // game/Game.h —— 本项目的游戏侧（S5 第一次有"游戏"这个东西）
@@ -35,6 +39,13 @@
 //
 // ⚠️ 本类**不 include `platform/Input.h`**：OnUpdate 只从 `FrameContext` 拿 `const Input&`
 //   （Application.h 已前向声明），OnRender 完全不碰输入。
+//
+// ⚠️ S8 加的**第 5 件事**：世界上有敌人了（`E`）。
+//   敌人 = 一个普通 `Entity`（`symbol = 'E'`）+ `m_enemies` 里的一条 `EnemyData`。
+//   **`engine/` 一个字节都没改** —— 这是本阶段最值钱的性质（对标 S7 的"`game/` 一行没改"）：
+//     位移仍然只有一条路径（`World::Update` → `MoveAndCollide`），
+//     所以敌人**自动**会撞墙、会沿墙滑，一行都不用写；渲染也照旧扫 `Entities()`。
+//   敌人每帧的"决策"在 `DriveEnemyAi`（帧序第 ⑤b 步）—— 它只**写速度**，不碰位置。
 // ============================================================
 
 namespace game {
@@ -45,6 +56,11 @@ public:
     void OnUpdate(const mini::core::FrameContext& ctx) override;
     void OnRender(mini::render::FrameBuffer& fb) override;
     [[nodiscard]] bool ShouldQuit() const override;
+
+    // 玩家当前 HP（S8）。**这是给 HUD 与单测用的公开只读接口** ——
+    // 不是"为测试而加的空接口"：`DrawHud` 真的会显示它（S8_CHECKLIST §6.3 的验收要求）。
+    // ⚠️ 敌人**看不到**它：`DriveEnemyAi` 用的是私有的 `m_playerHp`。
+    [[nodiscard]] int PlayerHp() const noexcept;
 
     // —— 下面三个数是**公有** constexpr，这是刻意的：单测要用它们算期望值 ——
     //    tests/test_game.cpp 拿 kMoveSpeed 算"1 秒该走几格 / 位移多少格"，拿 kSpawnX/Y 算
@@ -72,11 +88,62 @@ private:
     static constexpr int kWorldW = 200;          // PLAN：World = 200×200
     static constexpr int kWorldH = 200;
 
+    // ── 敌人（S8）───────────────────────────────────────────────────────
+    // 数量写死 5：PLAN:572 的验收原话是"5 个敌人同时追不出现抖动打转"。
+    static constexpr int kEnemyCount    = 5;
+    static constexpr int kPatrolPathLen = 2;   // 一条巡逻路线 = 两个端点 → `(idx+1)%2` 就是**往返**
+    static constexpr int kEnemyMaxHp    = 3;   // S9 的子弹要打它；S8 只当数据放着
+
+    // 玩家 HP 上限。定 10 的理由：一个敌人贴脸是 0.8s 打 1 点，5 个同时贴脸 ≈ 4 点/秒
+    // → 约 **2.5 秒**掉光。够快到人眼验收时一眼能看见数字在掉，又不至于一进视野就归零。
+    // ⚠️ 私有：用例断言的是"HP **下降**"（`PlayerHp()` 是公开接口），不是"HP == 某个数"，
+    //    所以没必要把它变成公开常量（避免了"调手感就要改测试"的那个反向陷阱）。
+    static constexpr int kPlayerMaxHp = 10;
+
+    // 巡逻路线表：**全敌共用**一张平表，逐敌用 `EnemyData::patrolPath` 选一行。
+    // ⚠️ 每行只有 **2** 个点 → `(idx + 1) % 2` 恰好就是**往返**（PLAN:567 要的"预置路径点往返"）。
+    //    `ai::EnemyBrain` 只保证"环形前进"（它是无状态的，推不出上次往哪个方向走）——
+    //    把"往返"落在**表**上，是这个分工的结果，见 S8_CHECKLIST 落地偏差 1。
+    // ⚠️ 位置是**人工核对**过的（S8 不做地图校验，S8_CHECKLIST §6.8）：
+    //    · 全落在空格上：柱阵只在 y = 10,20,… **且** x = 10,20,… 的交叉点；地标楼在
+    //      x = 30..36 / y = 5..8。这里取的 y = 2 / 4 / 6、x = 44..72 与两者都不相交；
+    //    · 离玩家出生点 (2.5, 2.5) 最近也有 42 格 >> 视距(10) → **开局不会被追**；
+    //    · 全落在开局视口内（相机原点被夹到 0、视口 80×23）→ 一开局就能看见 5 个 E 在巡逻；
+    //    · 全避开 Game suite 那几条用例的行走区（x <= 23、y <= 9）→ 不会把 '@' 盖掉，
+    //      既有 4 条用例的期望值不受影响（S8_CHECKLIST 坑 14 那张表逐条核过）。
+    static constexpr mini::math::Vec2 kPatrolPaths[kEnemyCount][kPatrolPathLen] = {
+        {{44.5f, 2.5f}, {56.5f, 2.5f}},
+        {{60.5f, 2.5f}, {72.5f, 2.5f}},
+        {{44.5f, 4.5f}, {56.5f, 4.5f}},
+        {{60.5f, 4.5f}, {72.5f, 4.5f}},
+        {{44.5f, 6.5f}, {56.5f, 6.5f}},
+    };
+
     // 地图布局：**确定性**写死（不随机、不读文件）。
     // 内容 = 地图外沿一圈墙 + **每 10 格一根的规则柱阵** + 一个不对称地标（"一栋楼"）。
     // ⚠️ 规则性是有要求的（2026-09-30 实测被指出"# 摆得没规律"）：柱阵一眼看出是
     //    故意的，且平移一个周期会重合 → 所以还要那个地标才能判断"画面动没动"。
     void BuildDemoMap();
+
+    // 铺敌人（OnStart 里、**玩家之后**调）。
+    void SpawnEnemies();
+
+    // 敌人每帧的"决策"：对每个 `EnemyData` 跑一次 `ai::Decide`，**只写速度**。
+    // ⚠️ 必须在 `World::Update` **之前**调（写速度必须在积分之前 —— 与玩家同一条帧序硬约束，
+    //    见 Game.cpp 的帧序注释）；反过来的现象是"敌人慢一帧"。
+    // ⚠️ 读到的双方位置是**本帧积分前**的（= 上一帧末位置）—— 这是 S8 定稿的位置口径。
+    void DriveEnemyAi(const mini::core::FrameContext& ctx);
+
+    // 把"离玩家最近的那个还活着的敌人"的 hp 置 0（S8 的**临时**调试键 `K` 用）。
+    // ⚠️ 它**不**改容器、也**不**直接设 `active`：只把 hp 归零，
+    //    下一帧 `DriveEnemyAi` 会看到 `selfAlive == false` → `Decide` 返回 `Dead` 并把实体停更
+    //    （S8_CHECKLIST 6.6："Dead 只有一条进入路径"）。
+    // ⚠️ 真入口是 **S9 的子弹**；这个键落地后要删（`TECH_DEBT` 登记）。
+    void KillNearestEnemy();
+
+    // 这个 id 是不是敌人？只给绘制上色用（玩家黄 / 敌人红 / 其余白）。
+    // 线性扫 `m_enemies`：n = 5，每帧每实体扫一次，代价可忽略。
+    [[nodiscard]] bool IsEnemyId(mini::world::EntityId id) const noexcept;
 
     // 渲染。S6 起**有相机**：屏幕格 ↔ 世界格的对应关系是
     //     世界列 = 相机整数原点 + 屏幕列
@@ -87,6 +154,12 @@ private:
     void DrawMap(mini::render::FrameBuffer& fb) const;
     void DrawEntities(mini::render::FrameBuffer& fb) const;
     void DrawHud(mini::render::FrameBuffer& fb) const;
+
+    // `kAiPanelKey` 打开的**临时**敌人面板（S8）：逐敌一行 `state / distance / tile`。
+    // ⚠️ 它是 S11 正式 Debug Overlay 之前的临时出路（`TECH_DEBT` 登记）。
+    // ⚠️ **底部对齐**（不是"HUD 的下一行"）：敌人常在屏幕第 3~7 行，画在上面会把它们盖住。
+    //    只写左边一条窄带（约 34 列），右边留给地图。理由详见 `Game.cpp` 的 `DrawAiPanel`。
+    void DrawAiPanel(mini::render::FrameBuffer& fb) const;
 
     // 调试快照（键 = `kDumpKey`，见 `Game.cpp` 顶部常量）：把当前帧的参数追加写进 `miniengine_debug.log`。
     // ⚠️ **非 const**：要写文件、还要递增 `m_dumpCount`。它**只读**世界，不改任何状态
@@ -102,6 +175,19 @@ private:
     int                   m_dumpCount = 0;    // `kDumpKey` 按了几次（日志里的 dump=N；**只增不减**）
     float                 m_moveSpeed = kMoveSpeed;   // 实际用的速度（argv[2] 可覆盖）
     bool                  m_quit = false;     // Q 退出（ShouldQuit 的来源）
+
+    // S8：面板开关（键 = `kAiPanelKey`）。⚠️ 它只是"要不要画"，**不参与任何游戏逻辑** ——
+    // 所以它不影响帧序、也不影响用例（用例从不按它）。
+    bool m_showAiPanel = false;
+
+    // S8：玩家 HP。⚠️ HP 归 0 **不发生任何事**（不会死、不会重开）——
+    // 唯一的后果是敌人把它当成"死了的目标"而脱战（`targetAlive = m_playerHp > 0`）。
+    // 真正的死亡/重开是 S10 的 `GameState`。
+    int m_playerHp = kPlayerMaxHp;
+
+    // S8：敌人。⚠️ **只增不减**（`Dead` 只把 Entity 的 active 置 false，见 S8_CHECKLIST 6.6），
+    // 所以它不会在遍历中被改；真删留到 S9（届时用 std::erase_if，且必须在遍历之外）。
+    std::vector<EnemyData> m_enemies;
 };
 
 } // namespace game

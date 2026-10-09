@@ -2,6 +2,7 @@
 
 #include <game/Game.h>
 
+#include <mini/ai/EnemyBrain.h>   // S8：用例要拿 kDefaultTuning::sightRange 算"该不该被追"
 #include <mini/platform/Input.h>
 #include <mini/platform/InputState.h>
 #include <mini/render/FrameBuffer.h>
@@ -10,6 +11,7 @@
 #include <cmath>
 #include <cstddef>
 #include <initializer_list>
+#include <string>   // S8：`ScreenText` 用（在面板文本里找状态名）
 
 // ------------------------------------------------------------
 // game/ 的单元测试（S5 步骤 3：3 个用例）
@@ -205,6 +207,120 @@ Delta RunHolding(float seconds, std::initializer_list<Key> keys,
     return Delta{end.x - start.x, end.y - start.y, true};
 }
 
+// ------------------------------------------------------------
+// S8 的观察手段：**只看屏幕**（`Game` 的世界是私有的，用例不许去戳它）
+//
+// ⚠️ 为什么"屏幕格差"能当"世界格差"用：相机给地图和实体的是**同一个整数原点**
+//    （S6 的纪律），所以两者的屏幕列/行之差 == 世界格之差，**与相机滚到哪无关**。
+//    这就是 S8_CHECKLIST 10.1 里"只断言相对量、不依赖相机"那条要求。
+//
+// ⚠️ 为什么从第 2 行开始扫：第 0 行是引擎顶栏、第 1 行是游戏 HUD，它们的文本里可能有字母。
+//    实体永远画在第 2 行及以下。
+// ------------------------------------------------------------
+
+// 与 `Application` 的帧序一致地推一帧：OnUpdate → Clear → OnRender → 输入帧尾。
+void StepFrame(Game& game, FakeInput& input, FrameBuffer& fb, float dt)
+{
+    game.OnUpdate(MakeContext(input, dt, fb.Width(), fb.Height()));
+    fb.Clear();
+    game.OnRender(fb);
+    input.BeginFrame();
+}
+
+// 屏幕上所有 'E' 的位置。行优先扫描 → 顺序天然按 (y, x) 排好，可以直接逐项比较。
+// 返回写进 out 的个数（最多 cap 个）。
+int CollectEnemies(const FrameBuffer& fb, Pos* out, int cap)
+{
+    int count = 0;
+    for (int y = 2; y < fb.Height() && count < cap; ++y) {
+        for (int x = 0; x < fb.Width() && count < cap; ++x) {
+            if (fb.At(x, y).ch == 'E') {
+                out[count++] = Pos{x, y, true};
+            }
+        }
+    }
+    return count;
+}
+
+// '@' 到**最近** 'E' 的格距**平方**（屏幕上没有 'E'、或没有 '@' 时返回 -1）。
+// 用平方是为了不引入 sqrt —— 比大小不需要开方（`Vec2::LengthSq` 同一条理由）。
+int MinEnemyDistanceSq(const FrameBuffer& fb)
+{
+    const Pos player = FindChar(fb, '@');
+    if (!player.found) {
+        return -1;
+    }
+
+    int best = -1;
+    for (int y = 2; y < fb.Height(); ++y) {
+        for (int x = 0; x < fb.Width(); ++x) {
+            if (fb.At(x, y).ch != 'E') {
+                continue;
+            }
+            const int dx = x - player.x;
+            const int dy = y - player.y;
+            const int d2 = dx * dx + dy * dy;
+            if (best < 0 || d2 < best) {
+                best = d2;
+            }
+        }
+    }
+    return best;
+}
+
+// 让玩家一路向右走，直到最近的敌人进到 `kStopDist` 格以内，然后**站住**（松开 D）。
+// 返回站住那一刻的格距**平方**；走满上限还没靠近就返回 -1。
+//
+// ⚠️ `kStopDist = 8` **必须小于 `EnemyTuning::sightRange`(10)** —— 不然敌人根本不会
+//    进战，"接下来距离会变小"这个断言就不成立（会变成一条永远红的用例）。
+// ⚠️ 走多久**不写死**：敌人出生点在哪是 `Game` 的私有安排，用例只认"够近了就停"。
+int WalkPlayerNextToEnemy(Game& game, FakeInput& input, FrameBuffer& fb)
+{
+    constexpr float kDt         = 1.0f / 60.0f;
+    constexpr int   kStopDist   = 8;
+    constexpr int   kStopDistSq = kStopDist * kStopDist;
+    constexpr int   kMaxWalk    = 400;   // 5 秒上限（约 100 格），够走到地图上任何一个敌人
+
+    StepFrame(game, input, fb, kDt);     // 第 0 帧：拿起点（不按键）
+    input.Press(Key::D);
+
+    int walked = 0;
+    int distSq = -1;
+    while (walked < kMaxWalk) {
+        StepFrame(game, input, fb, kDt);
+        ++walked;
+        distSq = MinEnemyDistanceSq(fb);
+        if (distSq >= 0 && distSq <= kStopDistSq) {
+            break;
+        }
+    }
+
+    input.Release(Key::D);               // 站住：下一帧 `IsDown(D)` 就是 false 了
+    return (distSq >= 0 && distSq <= kStopDistSq) ? distSq : -1;
+}
+
+// 把整个屏幕拼成一个字符串（行优先，每行末尾补 '\n'）。
+//
+// 用途：在**面板文本**里找状态名（`Dead` / `Chase` ……）。
+// ⚠️ 这是"从公开面取证"的最后一招 —— 面板是 `Game` 唯一**主动把内部状态写出来**的地方
+//    （`EnemyData.state` 本身是私有的）。代价是它很脆：**面板的列宽/格式一改，用例就会红**。
+//    所以只在"没有更窄的观察面"时才用它，而且要断言的是**内容包含**（`find`），
+//    不是"第几列第几行是什么字"。
+std::string ScreenText(const FrameBuffer& fb)
+{
+    const std::size_t width = static_cast<std::size_t>(fb.Width());
+    std::string text;
+    text.reserve((width + 1) * static_cast<std::size_t>(fb.Height()));
+
+    for (int y = 0; y < fb.Height(); ++y) {
+        for (int x = 0; x < fb.Width(); ++x) {
+            text.push_back(fb.At(x, y).ch);
+        }
+        text.push_back('\n');
+    }
+    return text;
+}
+
 } // namespace
 
 // 直向 1 秒走 kMoveSpeed 格；斜向 1 秒每个轴只走 ≈ kMoveSpeed/√2 格。
@@ -360,4 +476,227 @@ MINI_TEST(Game, PlayerStopsAtTopWall)
     MINI_CHECK(up.ok);
     MINI_CHECK_EQ(up.dy, -1);   // (2.5, 2.5) → (2.5, 1.5)：tile 行 2 → 1
     MINI_CHECK_EQ(up.dx, 0);    // 只动了 y
+}
+
+// ------------------------------------------------------------
+// S8（敌人）的 4 条集成用例
+//
+// 【它们和 `Enemy` suite 的分工】
+//   `Enemy`（test_enemy.cpp）测的是**纯函数** `Decide`：状态机、迟滞、冷却、边界。
+//   这里测的是**接线**：敌人真的被 spawn 出来、真的在动、真的会追、玩家的 HP 真的会掉。
+//   两层都不省 —— 纯函数全绿只说明"给定输入算得对"，不说明"速度被写回了世界"。
+//
+// 【⚠️ 只碰公开接口】（S5_CHECKLIST 10.4）
+//   `Game` 的世界、敌人集合、巡逻表**全是私有的**，所以这里的观察手段只有两样：
+//     · 屏幕上的 `'@'` / `'E'`（`CollectEnemies` / `MinEnemyDistanceSq`）
+//     · 公开只读的 `Game::PlayerHp()`
+//   期望值一律由**公开常量/公开 tuning**算出，不写死"第几格"（相机一滚就失真的那类数）。
+//
+// 【⚠️ 这两条是**替代**了施工图里的用例，见 S8_CHECKLIST 偏差 7 / 8】
+//   · `EnemyStopsAtWall` —— 删了：S8 的敌人从来不会走到墙边（巡逻段与追击路径都在空地上），
+//     没有可复现的机器判据。它由"全项目只有一条积分路径"结构保证，人眼验收第 5 条负责看。
+//   · `RemovingEnemyLeavesNoDanglingId` —— 换成 `PlayerHpStopsAtZero`：
+//     S8 **根本没有删除敌人的路径**（`Dead` 只把 `active` 置 false），
+//     所以"不留悬空 id"这条在 S8 是**空用例**（永远绿、什么也没测）。它该跟 S9 的真删一起做。
+// ------------------------------------------------------------
+
+// S8（用例 19）：玩家待在出生点不动 → 敌人**只管巡逻，不追人**。
+//
+// 这条同时钉两件事，缺一不可：
+//   · 巡逻**真的在动** —— 否则"不追"可以靠"敌人根本不更新"作弊，那是最容易假绿的一种写法；
+//   · 远距离**没被拉进战斗** —— 判据用公开的 `sightRange`，不是屏幕上某个写死的格数。
+MINI_TEST(Game, EnemiesPatrolUntilPlayerIsNear)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+
+    StepFrame(game, input, fb, kDt);   // 第 0 帧：先看一眼
+
+    constexpr int kMaxEnemies = 8;     // 比 kEnemyCount(5) 宽裕，够放下所有敌人
+    Pos       before[kMaxEnemies] = {};
+    const int nBefore  = CollectEnemies(fb, before, kMaxEnemies);
+    const Pos player0  = FindChar(fb, '@');
+    const int dist0Sq  = MinEnemyDistanceSq(fb);
+
+    MINI_CHECK(player0.found);
+    // ⚠️ 这个 5 是**写死**的：`kEnemyCount` 是私有的，而且它由 `PLAN:572` 的验收
+    //    （"5 个敌人同时追"）钉着 —— 改敌人数量本来就该让这条红。
+    MINI_CHECK_EQ(nBefore, 5);
+    MINI_CHECK(dist0Sq > 0);
+
+    // 跑 1 秒。玩家一个键都不按 → 他一步都不会动，所有位移都只能来自敌人。
+    constexpr int kFrames = 60;
+    for (int i = 0; i < kFrames; ++i) {
+        StepFrame(game, input, fb, kDt);
+    }
+
+    Pos       after[kMaxEnemies] = {};
+    const int nAfter = CollectEnemies(fb, after, kMaxEnemies);
+    MINI_CHECK_EQ(nAfter, nBefore);
+
+    // 巡逻真的在动：逐个比较（`CollectEnemies` 行优先扫描 → 顺序稳定）
+    bool moved = false;
+    for (int i = 0; i < nBefore; ++i) {
+        if (after[i].x != before[i].x || after[i].y != before[i].y) {
+            moved = true;
+        }
+    }
+    MINI_CHECK(moved);
+
+    // 玩家没动 —— 这条让"距离没变小"归因清楚（是他的问题还是敌人的问题）
+    const Pos player1 = FindChar(fb, '@');
+    MINI_CHECK(player1.found);
+    MINI_CHECK_EQ(player1.x, player0.x);
+    MINI_CHECK_EQ(player1.y, player0.y);
+
+    // 远距离不追：最近的那个敌人仍在视距**之外**（比较的是平方，所以右边也要平方）
+    const int dist1Sq = MinEnemyDistanceSq(fb);
+    const int sightSq = static_cast<int>(mini::ai::kDefaultTuning.sightRange *
+                                         mini::ai::kDefaultTuning.sightRange);
+    MINI_CHECK(dist1Sq > sightSq);
+}
+
+// S8（用例 20）：玩家走进视距 → 敌人**真的会靠近**（`Chase` 生效，且速度真的写回了世界）。
+// 这是反向验证 R5 的目标：把 `DriveEnemyAi` 挪到 `World::Update` 之后 → 这条变红。
+MINI_TEST(Game, EnemyClosesInWhenPlayerIsNear)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+
+    // 走到"最近敌人 8 格以内"（< 视距 10）再站住
+    const int dist0Sq = WalkPlayerNextToEnemy(game, input, fb);
+    MINI_CHECK(dist0Sq > 0);   // -1 = 走满上限还没靠近（那说明 spawn 或移动坏了）
+
+    // 站住不动 0.4 秒：敌人应该**主动把距离拉近**
+    constexpr int kObserveFrames = 24;
+    for (int i = 0; i < kObserveFrames; ++i) {
+        StepFrame(game, input, fb, kDt);
+    }
+
+    const int dist1Sq = MinEnemyDistanceSq(fb);
+    MINI_CHECK(dist1Sq > 0);
+    MINI_CHECK(dist1Sq < dist0Sq);   // ← "会追"的判据（只比大小，不假设追到哪）
+}
+
+// S8（用例 21）：贴上去之后，玩家的 HP 会掉（`Attack` + 伤害结算真的接上了）。
+MINI_TEST(Game, AttackReducesPlayerHp)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+
+    MINI_CHECK(WalkPlayerNextToEnemy(game, input, fb) > 0);
+
+    const int hpBefore = game.PlayerHp();
+    MINI_CHECK(hpBefore > 0);
+
+    // 站住 2 秒：够敌人贴到 attackEnter(1.5) 并打出至少一击（冷却 0.8s）
+    constexpr int kFrames = 120;
+    for (int i = 0; i < kFrames; ++i) {
+        StepFrame(game, input, fb, kDt);
+    }
+
+    const int hpAfter = game.PlayerHp();
+    MINI_CHECK(hpAfter < hpBefore);
+    MINI_CHECK(hpAfter >= 0);
+}
+
+// S8（用例 22 的**替代品**，见上面那段说明与 S8_CHECKLIST 偏差 8）：
+// HP 掉到 0 就**停在那里**，永远不变负。
+// 钉的是 `DriveEnemyAi` 里那句 `std::max(0, ...)`，以及"HP 归 0 → 敌人脱战"这条连锁。
+MINI_TEST(Game, PlayerHpStopsAtZero)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+
+    MINI_CHECK(WalkPlayerNextToEnemy(game, input, fb) > 0);
+
+    // 一直站着被打：10 点血、0.8s 一击，而且可能好几个敌人一起打 → 12 秒绰绰有余
+    constexpr int kFrames = 720;
+    for (int i = 0; i < kFrames; ++i) {
+        StepFrame(game, input, fb, kDt);
+    }
+
+    MINI_CHECK_EQ(game.PlayerHp(), 0);
+
+    // 再站 1 秒：仍然**不许**变负（这就是 `std::max(0, ...)` 那条守卫）
+    constexpr int kExtraFrames = 60;
+    for (int i = 0; i < kExtraFrames; ++i) {
+        StepFrame(game, input, fb, kDt);
+    }
+    MINI_CHECK_EQ(game.PlayerHp(), 0);
+}
+
+// ------------------------------------------------------------
+// S8（补的用例，2026-10-09 反向验证 R6 逼出来的）：击杀 → 敌人**从屏幕上消失**。
+//
+// 【为什么补这一条】
+//   反向验证 R6 = 把 `DriveEnemyAi` 里那句 `entity->active = false;` 注掉。
+//   结果：**测试仍然 145 passed / 0 failed 全绿** —— 但 exe 里现象明显不对：
+//   "按 F7 → 按 K 杀掉最近的敌人，面板显示 Dead，可那个 `E` **还留在屏幕上**"。
+//   也就是说"死亡三件套"里最后一件（**不再绘制**）当时**零覆盖**。
+//
+// 【这条用例的判据必须落在哪】
+//   ✅ **屏幕上的 `'E'` 少一个** ← 只有这个能守住 `active = false`
+//   ⚠️ 面板里出现 `Dead` **不能**替代它：状态来自**另一套真相**（`EnemyData.state`），
+//      `active` 没置 false 时它照样成立（这正是 R6 全绿的直接原因）。
+//      所以下面两条断言**各守一件事**，缺一不可 —— 顺序也不能反（先数数、再看文本）。
+//
+// 【它顺便补上了施工图里写不出来的那半条】
+//   §10.1 用例 22 `RemovingEnemyLeavesNoDanglingId` 在 S8 无法实现（没有删除路径，会是空用例，
+//   见偏差 8）。这条用例覆盖了"死亡后停更 → 不绘制"的**端到端**；真正的"不留悬空 id"
+//   仍留到 S9 做真删时再补。
+//
+// 【观察面全是公开的】`F7`/`K` 只是 `Key` 枚举（`FakeInput` 照样能按）· 屏幕上的 `'@'`/`'E'`
+//   · 面板文本（`ScreenText`）。
+// ------------------------------------------------------------
+MINI_TEST(Game, EnemyDiesAndDisappears)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+
+    // 走到敌人身边：不是为了"够得着"（`K` 杀的是**离玩家最近**的那个，多远都能杀），
+    // 而是为了让**所有敌人都落在相机视口里**，这样"屏幕上少一个"才数得准。
+    MINI_CHECK(WalkPlayerNextToEnemy(game, input, fb) > 0);
+
+    constexpr int kMaxEnemies = 8;
+    Pos       before[kMaxEnemies] = {};
+    const int nBefore = CollectEnemies(fb, before, kMaxEnemies);
+    MINI_CHECK_EQ(nBefore, 5);   // 5 个（PLAN:572）；同 `EnemiesPatrolUntilPlayerIsNear`
+
+    // ④b 开面板 —— `K` **只在面板开着时才生效**（`Game.cpp` 的 ④c），所以这一步不能省
+    input.Press(Key::F7);
+    StepFrame(game, input, fb, kDt);
+
+    // ④c 杀敌（在 ⑤b 之前，所以"同帧就能看到"它是 S8 刻意的帧序安排）
+    input.Press(Key::K);
+    StepFrame(game, input, fb, kDt);
+
+    // (1) **守 `active = false` 的那一条**：屏幕上少一个 `'E'`
+    Pos       after[kMaxEnemies] = {};
+    const int nAfter = CollectEnemies(fb, after, kMaxEnemies);
+    MINI_CHECK_EQ(nAfter, nBefore - 1);
+
+    // (2) 另一套真相还在：面板里仍然看得见 `Dead`（不删 `EnemyData` 的理由，见 §6.6 / C16）
+    const std::string text = ScreenText(fb);
+    MINI_CHECK(text.find("Dead") != std::string::npos);
 }

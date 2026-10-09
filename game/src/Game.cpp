@@ -1,28 +1,37 @@
 #include "game/Game.h"
 
+#include "mini/ai/EnemyBrain.h"   // S8：敌人每帧的"决策"（纯函数；只输出速度）
 #include "mini/math/Vec2.h"
 #include "mini/platform/Input.h"
 #include "mini/render/Color.h"
 #include "mini/world/Collision.h"   // 调试快照用：IsSolidAt / ToIndex / 点模型的判据
 #include "mini/world/TileMap.h"
 
+#include <algorithm>    // std::max（S8：HP 夹到 0）
+#include <cstddef>      // std::size_t（S8：reserve 与巡逻表下标）
 #include <cstdio>
 #include <filesystem>   // 调试快照：判断日志文件是不是"新建的"（见 DumpSnapshot）
 #include <fstream>      // 调试快照（追加写日志）
+#include <span>         // S8：把巡逻路点交给 Decide
 
 // ============================================================
 // Game 实现（S5）—— 引擎与游戏分家之后的**唯一**游戏侧文件
 //
-// 这里做三件事，别的一件都不做：
-//   1. 开局：铺地图、Spawn 玩家（BuildDemoMap / OnStart）
+// 这里做五件事，别的一件都不做：
+//   1. 开局：铺地图、Spawn 玩家、铺敌人（BuildDemoMap / SpawnEnemies / OnStart）
 //   2. 每帧：输入 → 速度 → 交给 World 积分（OnUpdate，帧序是硬约束，见下）
 //   3. 每帧：世界 → 屏幕（OnRender，S6 起走相机）
 //   4. 每帧：相机跟随（OnUpdate 末尾，**必须在 Update 之后**）—— S6 加的
+//   5. 每帧：敌人决策（DriveEnemyAi，**必须在 Update 之前**）—— S8 加的
 //
-// ⚠️ 帧序（S5_CHECKLIST 7.1 + S6_CHECKLIST 7.1，顺序不能换）：
-//     读输入 → 归一化 → **写速度** → Update(dt) → **相机 Follow** → FlushRemovals
+// ⚠️ 帧序（S5_CHECKLIST 7.1 + S6_CHECKLIST 7.1 + S8_CHECKLIST §6.3，顺序不能换）：
+//     读输入 → 归一化 → **写玩家速度** → 驱动 AI（**写敌人速度**）→ Update(dt)
+//     → **相机 Follow** → FlushRemovals
 //   写速度必须在 Update 之前：反过来的现象是"按一下动一下、但慢一帧"，
 //   看着像手感问题，其实是顺序问题。
+//   驱动 AI 同理：敌人和玩家**在同一个循环里**被积分，所以两边的速度都得先写好。
+//   ⚠️ 代价（S8 的位置口径）：AI 这一帧读到的是**上一帧末**的双方位置 ——
+//     它追的是 1/60 秒前的你（≈0.33 格，肉眼看不见），换来的是"帧序不变 + 可离线复现"。
 //   相机必须在 Update 之后：用上一帧的玩家位置会让 @ 与地图差一帧相位
 //   （现象是"@ 偶尔不在正中，偶尔闪一格"）—— S6 坑 3。
 //
@@ -56,6 +65,44 @@ constexpr int kHudRow = 1;
 //    `F2` 留着给 S11 的 Debug Overlay（`PLAN:549` 的"F2 显示碰撞盒"），所以不占它。
 constexpr mini::platform::Key kDumpKey = mini::platform::Key::F4;
 const char* kDumpFileName = "miniengine_debug.log";   // *.log 已被 .gitignore 忽略
+
+// ── S8 的两个**临时**按键（都能在 `TECH_DEBT` 里查到"什么时候删"）─────────────
+//   kAiPanelKey  开/关敌人面板   → S11 的正式 Debug Overlay 落地时删
+//   kKillKey     杀最近的敌人     → S9 接上"子弹扣血"后删（那才是真入口）
+//
+// ⚠️ **为什么面板键是 `F7` 而不是 `F3`**（`PLAN:572` 写的是 F3，`S8_CHECKLIST` §6.7 也按 F3 写的）：
+//    2026-10-09 实测 **F3 在本机被别的软件占用**，按下去我们的程序**收不到**。
+//    这不是新问题 —— `kDumpKey` 那段注释记着 2026-10-08 的一模一样的经历
+//    （"F1 撞别的软件 → 换 F3 → **F3 也不行** → 落到 F4"）。这次轮到了面板键。
+//    ⚠️ 换键的代价被压到**只改这一行**：其余代码只认 `kAiPanelKey`，不认具体是哪个键。
+//    再撞下一个候选：`Tab`（本项目目前没人用；已在 `KeyCode.h` 里映射）。
+constexpr mini::platform::Key kAiPanelKey = mini::platform::Key::F7;
+constexpr mini::platform::Key kKillKey    = mini::platform::Key::K;
+
+// 面板的行数 = `kAiPanelHeaderLines` 行表头 + 每敌一行；它是**底部对齐**的（见 DrawAiPanel）。
+// ⚠️ **不画在"HUD 的下一行"**，这是实现时才看出来的：
+//    敌人待在 `y = 2..6`，而玩家靠近地图上边缘时相机会把原点夹到 0 ——
+//    于是**敌人正好落在屏幕第 3~7 行**。面板若从第 2 行往下画，**一按面板键就把敌人全盖住**，
+//    "按 K 看它消失"那个验收根本做不了。
+//    底部对齐两头都不挡：玩家在画面里的行号永远 <= 13（相机居中/夹取的结果），敌人又在第 3~7 行。
+//    这条已登记为落地偏差 5（施工图 §6.3 只写了"HUD 行的下一行"）。
+constexpr int kAiPanelHeaderLines = 1;
+
+// 状态名（面板用）。
+// ⚠️ `switch` **不写 default**：以后加第六态，编译器会在这里提醒"你没处理新状态"
+//    —— 这正是 `PLAN:568` 说的"`switch` 的穷尽性"。
+//    末尾那句 return 是给"枚举里出现了表外值"兜底的（也让 /W4 闭嘴），正常走不到。
+const char* StateName(mini::ai::EnemyState state) noexcept
+{
+    switch (state) {
+    case mini::ai::EnemyState::Idle:   return "Idle";
+    case mini::ai::EnemyState::Patrol: return "Patrol";
+    case mini::ai::EnemyState::Chase:  return "Chase";
+    case mini::ai::EnemyState::Attack: return "Attack";
+    case mini::ai::EnemyState::Dead:   return "Dead";
+    }
+    return "?";
+}
 
 // 调试快照用：一格是空还是实心？
 // ⚠️ 它**只负责打印**，不承担任何判定职责 —— 判碰撞一律走 `Collision.h`（同一个事实只有一个来源）。
@@ -145,6 +192,161 @@ void Game::OnStart()
     player.symbol           = '@';
 
     m_player = m_world.Spawn(player);
+
+    // S8：铺敌人。放在**玩家之后**是刻意的 —— 渲染顺序 = `Entities()` 的顺序，
+    // 玩家先画、敌人后画；两者位置刻意隔开（见 `kPatrolPaths` 的注释），不会互相盖掉。
+    SpawnEnemies();
+}
+
+// ------------------------------------------------------------
+// 敌人（S8）
+//
+// 三个函数的分工：
+//   SpawnEnemies   开局铺 5 个：一个 `Entity`（`symbol = 'E'`）+ 一条 `EnemyData`
+//   DriveEnemyAi   每帧：对每个敌人跑一次 `ai::Decide`，**只写速度**（不碰位置）
+//   IsEnemyId      只给绘制上色用
+// ------------------------------------------------------------
+
+void Game::SpawnEnemies()
+{
+    m_enemies.reserve(static_cast<std::size_t>(kEnemyCount));
+
+    for (int i = 0; i < kEnemyCount; ++i) {
+        // 出生点 = 这条路线的第一个端点。它必须是**空格**（人工核对过，见 `kPatrolPaths`）。
+        mini::world::Entity prototype{};
+        prototype.transform.pos      = kPatrolPaths[i][0];
+        prototype.velocity.perSecond = mini::math::Vec2{};   // 速度每帧由 AI 写，这里只是初值
+        prototype.symbol             = 'E';
+
+        const mini::world::EntityId id = m_world.Spawn(prototype);
+
+        // ⚠️ 逐敌一条路：`patrolPath` = 它负责哪一行；`waypointIdx` = 在这行里走到第几个点。
+        //    这是"全敌共用一张平表"的实现方式 —— 表是编译期常量，逐敌只多 1 个字节。
+        EnemyData enemy{};
+        enemy.id          = id;
+        enemy.state       = mini::ai::EnemyState::Idle;
+        enemy.patrolPath  = static_cast<std::uint8_t>(i);
+        enemy.waypointIdx = 0;
+        // `idleSeconds` 是"Idle 该持续多久"的**唯一**来源，由这里写进定时器（见 EnemyBrain.h 的说明）
+        enemy.idleTimer   = mini::ai::kDefaultTuning.idleSeconds;
+        enemy.attackTimer = 0.0f;
+        enemy.hp          = kEnemyMaxHp;
+
+        m_enemies.push_back(enemy);
+    }
+}
+
+void Game::DriveEnemyAi(const mini::core::FrameContext& ctx)
+{
+    // 目标位置 = 玩家。拿不到（还没出生 / 已经被删）就用 {0,0} —— 那是退化的"假目标"：
+    // 敌人照常走自己的巡逻路线（本阶段的出生点离原点都很远，不会误进战），不崩、不除零。
+    const mini::world::Entity* player = m_world.Find(m_player);
+    const mini::math::Vec2 playerPos =
+        (player != nullptr) ? player->transform.pos : mini::math::Vec2{};
+
+    for (EnemyData& enemy : m_enemies) {
+        // ⚠️ 遍历 `m_enemies` 时**禁止 Spawn**（E-9：会让 `Entities()` 的 span 与
+        //    `Find()` 的指针一起失效）。本函数只读世界 + 写速度，不增删实体。
+        mini::world::Entity* entity = m_world.Find(enemy.id);
+        if (entity == nullptr) {
+            // 悬空 id 防御：这是分叉 ①（"两套真相"）的代价之一 —— 删敌人时两边没同步就走到这。
+            // 静默跳过而不是崩，是因为"父容器里少了一个实体"不该让游戏挂掉。
+            continue;
+        }
+
+        // 这个敌人负责的那条路线（2 个点 → `(idx+1) % 2` 就是往返）。
+        // ⚠️ `patrolPath` 只由 `SpawnEnemies` 写成 `0 .. kEnemyCount-1`，所以这里不会越界；
+        //    两个常量都显式转 size_t，免得 /W4 的 signed/unsigned 提示。
+        const std::span<const mini::math::Vec2> path{
+            kPatrolPaths[static_cast<std::size_t>(enemy.patrolPath)],
+            static_cast<std::size_t>(kPatrolPathLen)};
+
+        mini::ai::BrainInput in{};
+        in.self        = entity->transform.pos;
+        in.target      = playerPos;
+        in.waypoints   = path;
+        in.waypointIdx = enemy.waypointIdx;
+        in.state       = enemy.state;
+        in.attackTimer = enemy.attackTimer;
+        in.idleTimer   = enemy.idleTimer;
+        in.selfAlive   = (enemy.hp > 0);     // S8 里恒 true（还没有伤害来源）；S9 的子弹扣它
+        in.targetAlive = (m_playerHp > 0);   // ⚠️ **S8 步骤 3 改动的那一行**：让敌人开始会追人。
+                                             //    HP 归 0 → 敌人把它当"死了的目标"而脱战
+                                             //    （S8 里玩家不会死、也不会重开 —— 那是 S10）。
+        in.dt          = ctx.deltaSeconds;
+
+        const mini::ai::BrainOutput out = mini::ai::Decide(in, mini::ai::kDefaultTuning);
+
+        // ⚠️ **只写速度**：位移仍然由 `World::Update` → `MoveAndCollide` 做。
+        //    全项目只有那一条积分路径，所以敌人**自动**会撞墙、会沿墙滑 —— 一行都不用写。
+        entity->velocity.perSecond = out.velocity;
+
+        enemy.state       = out.state;
+        enemy.waypointIdx = out.waypointIdx;
+        enemy.attackTimer = out.attackTimer;
+        enemy.idleTimer   = out.idleTimer;
+
+        // 攻击结算（S8 的"伤害"总共就这一行：没有弹道、没有命中判定，纯"距离 + 冷却"）。
+        // ⚠️ 夹到 0：HP 不许变负 —— 否则 HUD 会显示 `hp -3`，而且"<= 0 = 死"这条判据会失去意义。
+        if (out.damage > 0) {
+            m_playerHp = std::max(0, m_playerHp - out.damage);
+        }
+
+        // Dead 的**唯一后果**就在这里（S8_CHECKLIST 6.6）：把实体"停更"，**不是删掉**。
+        //   · `World::Update` 会因为 `!active` 跳过它 → 不再移动；
+        //   · `DrawEntities` 也会跳过它 → **从屏幕上消失**（"被击杀"的观感）；
+        //   · 但 `EnemyData` 留在 `m_enemies` 里 → **面板仍然能显示 `state=Dead`**（取证）。
+        // ⚠️ 真删（MarkForRemoval + 两边同步移除）留到 S9。
+        if (enemy.hp <= 0) {
+            entity->active = false;
+        }
+    }
+}
+
+void Game::KillNearestEnemy()
+{
+    const mini::world::Entity* player = m_world.Find(m_player);
+    if (player == nullptr) {
+        return;   // 玩家还没出生：没有"最近"可言
+    }
+
+    // ⚠️ 存指针而不是下标：`m_enemies` 在本函数里不会被动过（只读它算距离），
+    //    而且我们**只在循环外**通过这个指针写一次 —— 不违反 E-9。
+    EnemyData*  nearest     = nullptr;
+    float       nearestDist = 0.0f;
+
+    for (EnemyData& enemy : m_enemies) {
+        if (enemy.hp <= 0) {
+            continue;   // 已经死了：再按一次 K 不会重复计数，也不会去挑第二近的
+        }
+
+        const mini::world::Entity* entity = m_world.Find(enemy.id);
+        if (entity == nullptr) {
+            continue;   // 悬空 id（分叉 ① 的代价）—— 和 DriveEnemyAi 同一套防御
+        }
+
+        const float dist = (entity->transform.pos - player->transform.pos).Length();
+        if (nearest == nullptr || dist < nearestDist) {
+            nearest     = &enemy;
+            nearestDist = dist;
+        }
+    }
+
+    if (nearest != nullptr) {
+        // ⚠️ 只归零 hp：**不**在这里设 `active`、也**不**动容器。
+        //    "怎么死"只有一条路径 —— 交给下一帧（其实是同一帧的 ⑤b）的 `DriveEnemyAi`。
+        nearest->hp = 0;
+    }
+}
+
+bool Game::IsEnemyId(mini::world::EntityId id) const noexcept
+{
+    for (const EnemyData& enemy : m_enemies) {
+        if (enemy.id == id) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // ------------------------------------------------------------
@@ -185,8 +387,27 @@ void Game::OnUpdate(const mini::core::FrameContext& ctx)
         m_quit = true;
     }
 
+    // ④b `kAiPanelKey` 开/关敌人面板（S8 的临时面板，S11 会换成正式 Overlay）。
+    //     只在 `Pressed` 翻转：用 `Held` 会每帧闪。
+    if (input.Get(kAiPanelKey) == KeyState::Pressed) {
+        m_showAiPanel = !m_showAiPanel;
+    }
+
+    // ④c `kKillKey` 杀掉离玩家最近的敌人（S8 的临时调试键）。
+    //     ⚠️ 两个约束：
+    //       · **只在面板打开时生效** —— 防误触（不然玩着玩着就把敌人点没了）。
+    //       · 放在 **⑤b 之前** —— 于是**同一帧**它就变 `Dead`、面板上当场能看到，没有一帧延迟。
+    if (m_showAiPanel && input.Get(kKillKey) == KeyState::Pressed) {
+        KillNearestEnemy();
+    }
+
     // ⑤ Σdt：HUD 拿它自证 `pos ≈ v × sum dt`（10.2 的运行时验收；v 就是 m_moveSpeed）
     m_elapsed += ctx.deltaSeconds;
+
+    // ⑤b 敌人决策（S8）—— **必须在 ⑥ 之前**：敌人和玩家在**同一个循环里**被积分，
+    //     所以两边的速度都得先写好（与 ③ 是同一条帧序约束）。
+    //     反过来的现象：敌人慢一帧，或（若挪到 ⑥ 之后并写了速度）完全不产生位移。
+    DriveEnemyAi(ctx);
 
     // ⑥ 积分（world 唯一的"物理"）。dt 已由 S3 clamp 过，这里**不再夹**（坑 #7）
     m_world.Update(ctx.deltaSeconds);
@@ -260,9 +481,16 @@ void Game::DrawEntities(mini::render::FrameBuffer& fb) const
         const int col = mini::world::TileMap::ToIndex(entity.transform.pos.x) - originCol;
         const int row = mini::world::TileMap::ToIndex(entity.transform.pos.y) - originRow + kHudRow;
 
-        const mini::render::Color color = (entity.id == m_player)
-                                              ? mini::render::Color::BrightYellow
-                                              : mini::render::Color::BrightWhite;
+        // 颜色：玩家黄 / 敌人红 / 其余（将来的子弹等）白。
+        // ⚠️ 这里靠 `IsEnemyId` 扫一遍 `m_enemies` 才知道"它是不是敌人" ——
+        //    `Entity` 里只有 `symbol`，"谁是敌人"这个身份归 game/ 说了算（分叉 ①）。
+        mini::render::Color color = mini::render::Color::BrightWhite;
+        if (entity.id == m_player) {
+            color = mini::render::Color::BrightYellow;
+        } else if (IsEnemyId(entity.id)) {
+            color = mini::render::Color::BrightRed;
+        }
+
         fb.Set(col, row, entity.symbol, color);
     }
 }
@@ -289,26 +517,107 @@ void Game::DrawHud(mini::render::FrameBuffer& fb) const
     // `v` 这一格是**速度**（格/秒）：看起来是调试信息，其实是 10.2 那条自证的**必需项** ——
     // 屏幕上要能一眼核对 `pos ≈ v × sum dt`。速度现在可用 argv[2] 覆盖，所以必须显示出来。
     // 提示文字压缩过，否则这一行会超过 80 列（终端宽度）。
-    // ⚠️ 2026-10-08 加了调试快照键（`kDumpKey`，见本文件顶部常量）：加之前约 71 列，现在约 73 列
-    //    —— **还剩余量但不多了**；想再加栏目必须先砍掉别的（S6 决策 5 就是因为这个没加 `cam`）。
+    // ⚠️ 2026-10-08 加了调试快照键（`kDumpKey`，见本文件顶部常量）：加之前约 71 列，加之后 **73 列**。
+    // ⚠️ 2026-10-09（S8 步骤 3）这一行**改窄过一次**：要加 `hp`，而 73 列已没有余量，
+    //    所以同时砍掉了两个纯粹的冗余（`S8_CHECKLIST` 坑 8 预判的"要么砍栏目、要么简写"）：
+    //      · `sum dt %6.2fs` → `sumdt %6.2f`（少一个空格、去掉单位 's'）
+    //      · `WASD  Q` → `WASD Q`（双空格合并）
+    //    现在是 **78 列**。⚠️ 想再加栏目必须先砍掉别的 —— 这条预算从 S6 决策 5 起就没松过
+    //    （当时为了它没显示 `cam`）。
     char text[96];
     std::snprintf(text, sizeof(text),
-                  "pos %6.2f,%6.2f | tile %4d,%4d | sum dt %6.2fs | v %4.1f | WASD  Q F4",
+                  "pos %6.2f,%6.2f | tile %4d,%4d | sumdt %6.2f | v %4.1f | hp %2d | WASD Q F4",
                   static_cast<double>(px), static_cast<double>(py),
                   mini::world::TileMap::ToIndex(px),
                   mini::world::TileMap::ToIndex(py),
                   static_cast<double>(m_elapsed),
-                  static_cast<double>(m_moveSpeed));
+                  static_cast<double>(m_moveSpeed),
+                  m_playerHp);
     fb.Draw(0, kHudRow, text);
+}
+
+// ------------------------------------------------------------
+// `kAiPanelKey` 敌人面板（S8 的**临时**面板；S11 换成正式 Debug Overlay）
+//
+// 逐敌一行：`序号 状态 到玩家的距离 占的格`。这就是 `PLAN:572` 要的
+// "F3 打开后能实时看到 State / Target / Distance" 里**能看到**的那一半。
+//
+// ⚠️ 三条约定：
+//   · **底部对齐**（见 `kAiPanelHeaderLines` 那段说明）—— 不是"HUD 的下一行"，理由在那里；
+//   · **只写左边一条窄带**（不铺满整行）—— 右边留给地图，面板是"压在画面上的便条"；
+//   · 全 ASCII。⚠️ 不写中文：终端代码页是 936，UTF-8 中文在那种控制台里是乱码
+//     （同一行 HUD 也一直只用 ASCII）。
+//
+// ⚠️ 关掉面板不会有残留：`Application::Run` **每帧**都先 `Clear()` 再 `OnRender`
+//    （`Application.cpp:126`），所以下一帧那几行会被地图正常重画。
+// ------------------------------------------------------------
+void Game::DrawAiPanel(mini::render::FrameBuffer& fb) const
+{
+    const int lines = kAiPanelHeaderLines + static_cast<int>(m_enemies.size());
+
+    // 底部对齐：面板的**最后一行**贴住画布的最后一行。
+    int firstRow = fb.Height() - lines;
+
+    // 画布太矮（敌人比剩余行还多）→ 退回 HUD 下面，能画几行画几行（循环里会自己截断）
+    if (firstRow <= kHudRow) {
+        firstRow = kHudRow + 1;
+    }
+    if (firstRow >= fb.Height()) {
+        return;   // 连一行都放不下：宁可什么都不画，也不越界写
+    }
+
+    // 玩家位置（用来算 distance）。拿不到就用 {0,0} —— 与 `DriveEnemyAi` 同一个口径。
+    const mini::world::Entity* player = m_world.Find(m_player);
+    const mini::math::Vec2 playerPos =
+        (player != nullptr) ? player->transform.pos : mini::math::Vec2{};
+
+    char line[64];
+
+    // ⚠️ 表头里那个键名与 `kAiPanelKey` 是**同一个字母的两个落点**（同 `kDumpKey` 的纪律）：
+    //    换键时要一起改这两处，别的注释一律写 `kAiPanelKey`、不抄字母。
+    // ⚠️ 面板键**不进 HUD 提示行**：那一行已经 78/80 列，塞不下第三个键（偏差 4 / 坑 8）。
+    std::snprintf(line, sizeof(line), "F7 AI  n=%d   K=kill nearest",
+                  static_cast<int>(m_enemies.size()));
+    fb.Draw(0, firstRow, line);
+
+    int row = firstRow + kAiPanelHeaderLines;
+    int idx = 0;
+    for (const EnemyData& enemy : m_enemies) {
+        if (row >= fb.Height()) {
+            break;   // 敌人比剩余行多：画不下的就不画（不滚屏、不折行）
+        }
+
+        const mini::world::Entity* entity = m_world.Find(enemy.id);
+        if (entity == nullptr) {
+            // 悬空 id：面板要**看得见**这件事，不能像 DriveEnemyAi 那样静默跳过
+            std::snprintf(line, sizeof(line), "%2d %-7s  <id gone>", idx, StateName(enemy.state));
+        } else {
+            const mini::math::Vec2 pos = entity->transform.pos;
+            const float dist = (pos - playerPos).Length();
+            std::snprintf(line, sizeof(line), "%2d %-7s  d=%6.2f  t=(%3d,%3d)", idx,
+                          StateName(enemy.state), static_cast<double>(dist),
+                          mini::world::TileMap::ToIndex(pos.x),
+                          mini::world::TileMap::ToIndex(pos.y));
+        }
+
+        fb.Draw(0, row, line);
+        ++row;
+        ++idx;
+    }
 }
 
 void Game::OnRender(mini::render::FrameBuffer& fb)
 {
     DrawMap(fb);
     DrawEntities(fb);
-    // 最后画：压在**视口第 0 行**上（= 相机原点那一行；同"顶栏压在最上面"一个道理）。
+    // HUD 压在**视口第 0 行**上（= 相机原点那一行；同"顶栏压在最上面"一个道理）。
     // ⚠️ 顺序不能换：HUD 要盖掉地图，而 `@` 必须画在地图之后、HUD 之前。
     DrawHud(fb);
+
+    // 面板最后画。它**底部对齐**，与 HUD（第 1 行）以及敌人常在的第 3~7 行都不重叠。
+    if (m_showAiPanel) {
+        DrawAiPanel(fb);
+    }
 }
 
 // ------------------------------------------------------------
@@ -414,8 +723,14 @@ void Game::DumpSnapshot(const mini::core::FrameContext& ctx)
 }
 
 // ------------------------------------------------------------
-// 退出
+// 玩家状态 / 退出（S8 加的那个只读接口）
 // ------------------------------------------------------------
+
+// HUD 与单测的公开只读入口。真正的真相是私有的 `m_playerHp`（`DriveEnemyAi` 直接改它）。
+int Game::PlayerHp() const noexcept
+{
+    return m_playerHp;
+}
 
 bool Game::ShouldQuit() const
 {
