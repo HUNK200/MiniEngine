@@ -39,6 +39,8 @@ constexpr std::uint16_t kVkW    = 0x57;
 constexpr std::uint16_t kVkUp   = 0x26;
 constexpr std::uint16_t kVkEsc  = 0x1B;
 constexpr std::uint16_t kVkF1   = 0x70;
+constexpr std::uint16_t kVkF7   = 0x76;   // S8 的敌人面板开关（刻意映射；与 F1~F4 不连续）
+constexpr std::uint16_t kVkK    = 0x4B;   // S8 的临时调试键（刻意映射）
 constexpr std::uint16_t kVkB    = 0x42;   // 本项目**有意不映射**的键
 
 } // namespace
@@ -173,6 +175,8 @@ MINI_TEST(KeyCode, KeyFromVirtualKeyMapsUsedKeys)
     MINI_CHECK(KeyFromVirtualKey(0x28) == Key::ArrowDown);  // VK_DOWN
     MINI_CHECK(KeyFromVirtualKey(kVkF1) == Key::F1);        // VK_F1
     MINI_CHECK(KeyFromVirtualKey(0x73) == Key::F4);         // VK_F4
+    MINI_CHECK(KeyFromVirtualKey(kVkK) == Key::K);          // VK_K（S8 的临时调试键）
+    MINI_CHECK(KeyFromVirtualKey(kVkF7) == Key::F7);        // VK_F7（S8 的敌人面板；不连续所以要单独钉）
 
     // 有意不映射：字母 B 与修饰键。映进来只会多出要维护的状态
     MINI_CHECK(KeyFromVirtualKey(kVkB) == Key::Unknown);
