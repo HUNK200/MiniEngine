@@ -27,8 +27,12 @@
 //   · 它**不做**：不分配、不抛异常、不记状态 —— 公开函数都是纯函数，能完全离线单测。
 //
 // 依赖谁：world/TileMap.h + math/Vec2.h。**不依赖 platform / render / game**（PLAN A.3）。
-// 被谁用：world::World::Update —— **唯一调用点**（`game/` 不许自己调：否则就有两条
-//   "位置怎么变"的路径，那是 E-8 的同族问题）。
+// 被谁用：
+//   · `world::World::Update` → `MoveAndCollide`：**唯一会改变位置的调用点**
+//     （`game/` 不许自己调：否则就有两条"位置怎么变"的路径，那是 E-8 的同族问题）。
+//   · `game/Bullet.h` → `SweepStepCount` / `SweepSampleAt`（S9 加）：**只读**的采样，
+//     **不移动任何东西**，所以不违反上面那条"位移只有一条路径"的规矩。
+//     它拿采样点去问自己的两个问题（"这一点实心吗 / 有敌人吗"）。
 //
 // ⚠️ 三条"写错就完蛋"的约定（每条都有用例钉着，见 S7_CHECKLIST 10.1）：
 //
@@ -160,6 +164,67 @@ inline void MoveAndCollide(const TileMap& map, mini::math::Vec2& pos, mini::math
         detail::StepAxis(map, pos, stepX, /*movingIsX=*/true);    // 先 X
         detail::StepAxis(map, pos, stepY, /*movingIsX=*/false);   // 再 Y（顺序定死）
     }
+}
+
+// ------------------------------------------------------------
+// 采样：把线段摊成一串格点（S9 步骤 1；调用方是 `game/Bullet.h`）
+// ------------------------------------------------------------
+//
+// 干什么：把线段 [from, to] 切成若干**采样点**，让调用方逐点问自己的问题
+//   （"这一点是实心吗？" / "这一点有敌人吗？"）。
+// ⚠️ 它**不**回答"撞没撞" —— 两个调用方的命中条件不同（墙 / 敌人），
+//    采样器只做"把线段摊成格点"这件中立的事（S9_CHECKLIST §6.1 的接口粒度决定）。
+//
+// ⚠️ 为什么需要它（S9_CHECKLIST 分叉 ②）：**一帧的位移可能 ≥ 1 格**
+//   （`kMaxDelta = 0.05 s`（Time.h:31）× 45 格/秒 = **2.25 格**）——
+//   只看积分后的那一个点，会**直接穿过**一个 1 格宽的目标（PLAN 的 S9 坑栏点名过这条）。
+//   步长 ≤ 1 格就够：相邻两个采样点的 `ToIndex` 最多差 1 ⇒ **中间不存在"没被问到"的格**。
+//   （1 格宽的目标只有 1 格，躲不进两个相邻采样点之间。）
+//
+// ⚠️ 步长口径与 `MoveAndCollide` **有意不同**（两边都 < 1 格，所以两边都跳不过一整格）：
+//   · 这里按**线段长度**（欧氏距离）算步数 ⇒ 斜向线段被切得**更细**；
+//   · `MoveAndCollide` 按**单轴最大位移**算（见它上面那句）⇒ 斜向时每步欧氏位移可达 0.707 格。
+//   ⇒ 结论：**判定只会比位移更保守**（判定说"这一段没事"，位移一定也没事）。
+//
+// ⚠️ **这里刻意不加 `static_assert`**（S9_CHECKLIST 落地偏差 1）：采样要的界是"步长 ≤ 1 格"，
+//    而上面 `kMaxStepPerTick < 1.0f` 那条已经更强 —— 再写一条就是它的**推论**，
+//    永远不会红（`TECH_DEBT` C18 刚教过一次"空断言比没有更坏"）。
+//    这条性质的真正守卫是**运行时的性质用例** `Sweep.ConsecutiveSamplesNeverSkipATile`。
+
+// 这条线段要切成几步（**至少 1 步**）。
+[[nodiscard]] inline int SweepStepCount(mini::math::Vec2 from, mini::math::Vec2 to) noexcept
+{
+    const float dist = (to - from).Length();
+
+    // ⚠️ 写成 `!(dist > kMaxStepPerTick)` 而**不是** `dist <= kMaxStepPerTick`（S4 的写法）：
+    //    NaN 比较恒假 → NaN 也走这一支 ⇒ 零长度线段和 NaN 输入都拿到 1 步，
+    //    **不会把 NaN 传进 `ceil` / `static_cast<int>`**（那是 UB）。
+    if (!(dist > kMaxStepPerTick)) {
+        return 1;
+    }
+    return static_cast<int>(std::ceil(dist / kMaxStepPerTick));
+}
+
+// 第 i 个采样点，i ∈ [0, stepCount]（**两端点都含**）。
+// ⚠️ `i == 0` / `i == stepCount` **精确返回两端点**（不做浮点乘加）：
+//    端点是"差一个 ε 就落到隔壁格"最容易出问题的地方。
+// ⚠️ 纯函数要**全域安全**：`stepCount <= 0` 当 1 步、`i` 夹进 [0, stepCount] ——
+//    不崩、不 UB、不出现 0 除（调用方越界是它的 bug，但不该在这里变成一次崩溃）。
+[[nodiscard]] inline mini::math::Vec2 SweepSampleAt(mini::math::Vec2 from, mini::math::Vec2 to,
+                                                    int stepCount, int i) noexcept
+{
+    if (stepCount <= 0) {
+        stepCount = 1;
+    }
+    if (i <= 0) {
+        return from;
+    }
+    if (i >= stepCount) {
+        return to;
+    }
+
+    const float t = static_cast<float>(i) / static_cast<float>(stepCount);
+    return from + (to - from) * t;   // 只做线性插值，不取整（取整由调用方按 ToIndex 走）
 }
 
 } // namespace mini::world

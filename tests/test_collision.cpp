@@ -3,6 +3,8 @@
 #include <mini/math/MathUtils.h>
 #include <mini/world/Collision.h>
 
+#include <limits>   // std::numeric_limits<float>::quiet_NaN()（Sweep 的退化输入用例）
+
 // ------------------------------------------------------------
 // world/Collision 的单元测试（S7 步骤 1 建立；2026-10-08 按**点模型**重算了期望值）
 //
@@ -37,6 +39,8 @@ using mini::world::IsSolidAt;
 using mini::world::kContactEpsilon;
 using mini::world::kMaxStepPerTick;
 using mini::world::MoveAndCollide;
+using mini::world::SweepSampleAt;
+using mini::world::SweepStepCount;
 using mini::world::Tile;
 using mini::world::TileMap;
 
@@ -378,4 +382,209 @@ MINI_TEST(Collision, MoveAndCollideIsPureFunctionOfInputs)
     MoveAndCollide(map, second, Vec2{5.0f, 5.0f});
 
     MINI_CHECK(NearPos(first, second.x, second.y));
+}
+
+// ============================================================
+// Suite `Sweep` —— 线段采样（S9 步骤 1 加）
+//
+// ⚠️ 为什么**另开一个 suite**（而不是并进 `Collision`）：
+//   · suite 名是 runner 的过滤单位 —— `mini_tests.exe Sweep` 只跑这 6 条；
+//   · 这 6 条测的是**只读**的采样器，和 `MoveAndCollide`（唯一会改位置的函数）是两件事。
+//
+// ⚠️ 这里**刻意不测"撞没撞"**：采样器不回答那个问题（接口粒度，`S9_CHECKLIST` §6.1）——
+//    它只保证"把线段摊成格点"这件事本身对。命中判定在 `tests/test_bullet.cpp` 里测。
+// ============================================================
+
+namespace {
+
+// 沿线段的**每个**采样点问一句"这一格实心吗"（正是 `game/Bullet.h` 里墙判定要做的事，
+// 只是这里用 Collision 自己的谓词）。
+bool AnySampleSolid(const TileMap& map, Vec2 from, Vec2 to)
+{
+    const int steps = SweepStepCount(from, to);
+    for (int i = 0; i <= steps; ++i) {
+        if (IsSolidAt(map, SweepSampleAt(from, to, steps, i))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+// ------------------------------------------------------------
+// S1. 两端点都在采样点里（i = 0 与 i = steps）
+//     ⚠️ 不是凑数：子弹的起点就是玩家那一格、终点是"这一帧要飞到的地方"，
+//        端点算不算在内，直接决定"贴脸打"与"最后一步"算不算命中。
+// ------------------------------------------------------------
+MINI_TEST(Sweep, BothEndpointsAreSampled)
+{
+    const Vec2 from{2.5f, 3.5f};
+    const Vec2 to{9.75f, 3.5f};
+    const int  steps = SweepStepCount(from, to);
+
+    MINI_CHECK(steps >= 1);
+
+    const Vec2 first = SweepSampleAt(from, to, steps, 0);
+    const Vec2 last  = SweepSampleAt(from, to, steps, steps);
+
+    MINI_CHECK(NearPos(first, from.x, from.y));   // 起点**精确**是 from
+    MINI_CHECK(NearPos(last, to.x, to.y));        // 终点**精确**是 to
+}
+
+// ------------------------------------------------------------
+// S2. 退化输入：零长度、NaN、越界的 i、stepCount <= 0
+//     ⚠️ 这些分支是**特意在实现里挡掉**的（`!(dist > k)` 那个写法 + 夹取）——
+//        实现了却没人测的分支 = 没测的分支（S8 的教训：空断言比没有更坏）。
+// ------------------------------------------------------------
+MINI_TEST(Sweep, DegenerateInputsStillGiveOneStep)
+{
+    const Vec2 p{4.5f, 4.5f};
+
+    // 零长度线段：1 步（**不是 0** —— 否则调用方要么 0 除、要么一个点都不问）
+    MINI_CHECK_EQ(SweepStepCount(p, p), 1);
+
+    // NaN：`ceil(NaN)` / `static_cast<int>(NaN)` 是 UB，必须在进那两行之前挡住
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const Vec2  nanFrom{nan, nan};
+    const Vec2  nanTo{nan, 1.0f};
+    MINI_CHECK_EQ(SweepStepCount(nanFrom, p), 1);
+    MINI_CHECK_EQ(SweepStepCount(p, nanTo), 1);
+
+    // 零长度线段的两个采样点都是它自己
+    const Vec2 only = SweepSampleAt(p, p, 1, 0);
+    MINI_CHECK(NearPos(only, p.x, p.y));
+    const Vec2 onlyToo = SweepSampleAt(p, p, 1, 1);
+    MINI_CHECK(NearPos(onlyToo, p.x, p.y));
+
+    // 越界的 i 被夹进 [0, steps]：不崩、不指到线段之外
+    const Vec2 from{0.5f, 0.5f};
+    const Vec2 to{9.5f, 0.5f};
+    MINI_CHECK(NearPos(SweepSampleAt(from, to, 18, -5), from.x, from.y));
+    MINI_CHECK(NearPos(SweepSampleAt(from, to, 18, 999), to.x, to.y));
+
+    // stepCount <= 0 → 当 1 步（防 0 除）
+    MINI_CHECK(NearPos(SweepSampleAt(from, to, 0, 0), from.x, from.y));
+}
+
+// ------------------------------------------------------------
+// S3. ★★ **性质**：相邻两个采样点的**格坐标**每轴最多差 1 ⇒ 跳不过任何 1 格宽的目标
+//
+//     ⚠️ 这是分叉 ②（"子弹不会穿靶"）的**唯一机器守卫** ——
+//        采样器里**刻意没有 `static_assert`**（那会是 `kMaxStepPerTick < 1.0f` 的推论，
+//        永远不会红），理由写在 `Collision.h` 采样段的注释里。
+//     ⚠️ 期望值全部**从 `kMaxStepPerTick` 算**出来，不抄实现里的数：
+//        把步长常量改大（比如 2 格）时，这条必须**跟着红**（反向验证 R1）。
+//     ⚠️ 它**不**保证"线段擦过的每一格都被问到"：斜向线段从 (0,0) 直穿到 (1,1) 时，
+//        (1,0)/(0,1) 只在**角点**上被碰到（测度为零）。这与点模型"对角缝能穿"是**同一个**
+//        既定行为（`Collision.h` 约定 1 / `SlipsThroughDiagonalGap`），不是漏洞。
+// ------------------------------------------------------------
+MINI_TEST(Sweep, ConsecutiveSamplesNeverSkipATile)
+{
+    // 行 / 列 / 斜向 / 地图对角线（最后一条是最长可能线段：30√2 ≈ 42.4 格）
+    const Vec2 kSegments[][2] = {
+        {{0.25f, 0.25f}, {10.25f, 0.25f}},
+        {{0.25f, 0.25f}, {0.25f, 10.25f}},
+        {{0.25f, 0.25f}, {7.25f, 7.25f}},
+        {{1.50f, 1.50f}, {31.50f, 31.50f}},
+    };
+
+    for (const auto& seg : kSegments) {
+        const Vec2 from  = seg[0];
+        const Vec2 to    = seg[1];
+        const int  steps = SweepStepCount(from, to);
+
+        MINI_CHECK(steps >= 1);
+
+        // 步数够：每步的欧氏位移 ≤ kMaxStepPerTick（⇔ dist / steps ≤ kMaxStepPerTick）
+        const float dist = (to - from).Length();
+        MINI_CHECK(static_cast<float>(steps) * kMaxStepPerTick >= dist);
+
+        int prevX = TileMap::ToIndex(from.x);
+        int prevY = TileMap::ToIndex(from.y);
+
+        for (int i = 1; i <= steps; ++i) {
+            const Vec2 p = SweepSampleAt(from, to, steps, i);
+            const int  x = TileMap::ToIndex(p.x);
+            const int  y = TileMap::ToIndex(p.y);
+
+            const int dx = x - prevX;
+            const int dy = y - prevY;
+
+            // ← 把步长换成 2 格时，这里会红（相邻采样点会跨 2 格）
+            MINI_CHECK(dx >= -1 && dx <= 1);
+            MINI_CHECK(dy >= -1 && dy <= 1);
+
+            prevX = x;
+            prevY = y;
+        }
+
+        // 最后一个采样点必须落在**终点那一格**（不能"停在终点前一格"）
+        MINI_CHECK_EQ(prevX, TileMap::ToIndex(to.x));
+        MINI_CHECK_EQ(prevY, TileMap::ToIndex(to.y));
+    }
+}
+
+// ------------------------------------------------------------
+// S4. 线段穿过实心格 → 采样点能发现（这就是"子弹撞墙"的那半个判据）
+// ------------------------------------------------------------
+MINI_TEST(Sweep, SegmentThroughBlockedTileIsDetected)
+{
+    const TileMap map = MapWithWall(kWallX, kWallY);   // 只有 (10,5) 一格是墙
+
+    // 沿 y = 5 这一行从 x = 2.5 走到 18.5 → 必然经过 (10,5)
+    MINI_CHECK(AnySampleSolid(map, Vec2{2.5f, 5.5f}, Vec2{18.5f, 5.5f}));
+
+    // 起点自己就在实心格里（出生点摆错的情况）：也要能发现
+    MINI_CHECK(AnySampleSolid(map, Vec2{10.5f, 5.5f}, Vec2{10.5f, 5.5f}));
+
+    // 反向走（起点在墙后面、终点在墙前面）：也必须发现，不能"只看终点"
+    MINI_CHECK(AnySampleSolid(map, Vec2{18.5f, 5.5f}, Vec2{2.5f, 5.5f}));
+}
+
+// ------------------------------------------------------------
+// S5. 线段**贴着**实心格旁边走 → 不算命中
+//     ⚠️ 防的是"用包围盒 / 把格子膨胀一圈"这种糊弄实现：那种实现会把
+//        "紧贴墙飞过去"误判成撞墙（屏幕上看起来像"子弹凭空消失了"）。
+// ------------------------------------------------------------
+MINI_TEST(Sweep, SegmentBesideABlockedTileIsNotDetected)
+{
+    const TileMap map = MapWithWall(kWallX, kWallY);   // (10,5) 实心
+
+    // 紧贴上面一行（y = 4.5 ⇒ 格行 4）与下面一行（y = 6.5 ⇒ 格行 6）
+    MINI_CHECK(!AnySampleSolid(map, Vec2{2.5f, 4.5f}, Vec2{18.5f, 4.5f}));
+    MINI_CHECK(!AnySampleSolid(map, Vec2{2.5f, 6.5f}, Vec2{18.5f, 6.5f}));
+
+    // 走到墙**前面**就停：终点 x = 9.9 ⇒ 格列 9，还没进 (10,5)
+    MINI_CHECK(!AnySampleSolid(map, Vec2{2.5f, 5.5f}, Vec2{9.9f, 5.5f}));
+}
+
+// ------------------------------------------------------------
+// S6. 纯函数：同输入两遍 → 同结果
+//     ⚠️ 对一个无状态函数来说这**天然成立**，所以它挡不住任何现在的 bug ——
+//        它的作用是把"这一层不许有隐藏状态"写成机器可查的形式
+//        （同 `Collision.MoveAndCollideIsPureFunctionOfInputs` 的定位）。
+// ------------------------------------------------------------
+MINI_TEST(Sweep, SweepIsPureFunctionOfInputs)
+{
+    const Vec2 from{3.25f, 7.75f};
+    const Vec2 to{13.5f, 2.25f};
+
+    const int firstSteps  = SweepStepCount(from, to);
+    const int secondSteps = SweepStepCount(from, to);
+    MINI_CHECK_EQ(firstSteps, secondSteps);
+
+    // 逐个采样点：连着取两遍必须一样
+    for (int i = 0; i <= firstSteps; ++i) {
+        const Vec2 a = SweepSampleAt(from, to, firstSteps, i);
+        const Vec2 b = SweepSampleAt(from, to, firstSteps, i);
+        MINI_CHECK(NearPos(a, b.x, b.y));
+    }
+
+    // **倒着**再取一遍：取用顺序不影响任何一点的取值
+    for (int i = firstSteps; i >= 0; --i) {
+        const Vec2 backward = SweepSampleAt(from, to, firstSteps, i);
+        const Vec2 forward  = SweepSampleAt(from, to, firstSteps, i);
+        MINI_CHECK(NearPos(backward, forward.x, forward.y));
+    }
 }
