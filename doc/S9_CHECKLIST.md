@@ -445,6 +445,7 @@ return result                                               // 什么都没碰�
 | 12 | **面板（`F7`）与两行 HUD 的行距** | `DrawAiPanel` 的 `firstRow` 夹取用的是 `kHudRow` ⇒ 自动适配；但**人眼要确认两行 HUD 没盖住面板表头** |
 | 13 | **子弹永远不消失**（若某条路径漏了标删） | 用例 `BulletsDoNotAccumulateForever`（连发 N 次后场上子弹数回落） |
 | 14 | **`kEnemyMaxHp`(3) 与 `kBulletDamage`(1) 的关系不能写死** | 用例用两个公开常量算出"三发" |
+| 15 | ⚠️ **斜向"擦格角"的那一格可能一个采样点都没有** ⇒ 该格里的敌人不会被命中（**方法的固有限制，不是 bug**） | **明确不修，只记录**（本人 2026-10-10 决定）→ `TECH_DEBT` **C21** + `Bullet.h` 的 `FirstEnemyOnSegment` 注释。边界：轴向**不可能漏**（格宽 1 > 间距 0.5）、穿格"边"**不可能漏**（路程 ≥ 1 格）、**只有擦角**会漏（切入可以任意小）。⚠️ 与 S7 点模型"对角缝能穿"**语义一致**；现状**没有用例覆盖擦角** |
 
 ---
 
@@ -564,6 +565,27 @@ ctest --test-dir build -C Debug --output-on-failure
 2. **发现一个用例缺口** → `§10.1` 补记 **B9**（`EnemyStandingInsideWallIsBlockedNotHit`，⬜ 待补）：把"循环内墙优先"这条顺序钉住。
    ⚠️ 它测的是**不可达状态下的防御分支**，属于"实现了的分支必须有用例"那条纪律，**不是**功能需求；
 3. **诚实登记**：B9 补齐之前，"循环内两条判定的先后"**没有机器守卫** —— 靠的是这条"墙在敌人前面"的推理 + `B7` 的两条断言（它们守住的是**规则本身**，不是**顺序**）。
+
+#### 10.3.3 实测记录 —— R3′（2026-10-10；AI 改破坏码，本人跑）
+
+**破坏方式**：把 `FirstEnemyOnSegment` 里的**墙判定整段删掉**（`IsSolidAt` 那个 `if` 连同 `return BulletHit{-1, true}`）；为免 /W4 报"未使用形参"，临时留一句 `(void)map;`。
+
+**结果**：`[FAIL] Bullet.WallBlocksEnemyBehindIt` —— 整次运行只有这一条红。
+
+**红集（断言行级，与动手前的预判逐条对照）**：
+
+| 红线 | 实际输出 | 预测 | 一致 |
+| --- | --- | --- | --- |
+| `test_bullet.cpp:265` `MINI_CHECK(hit.blocked)` | 红 | 红 | ✅ |
+| `test_bullet.cpp:266` `MINI_CHECK_EQ(hit.enemyIndex, -1)` | 红，`lhs=0 rhs=-1`（**返回了下标 0** = 命中了墙后的敌人） | 红 | ✅ |
+| `test_bullet.cpp:275` `MINI_CHECK(inside.blocked)` | 红 | 红 | ✅ |
+| `test_bullet.cpp:276` `MINI_CHECK_EQ(inside.enemyIndex, -1)` | 红，`lhs=0 rhs=-1` | 红 | ✅ |
+| `:270` / `:271`（`back`，从墙后朝墙打） | 绿 | 绿 | ✅ |
+| `B1`~`B6`、`B8`（7 条用例） | 绿 | 绿 | ✅ |
+
+⇒ **4/4 行逐条吻合**，而且失败信息本身说明了性质：`lhs=0 rhs=-1` = "墙后的敌人**被命中了**" —— 正是墙判定存在的理由。
+
+**还原**：`git checkout -- game/include/game/Bullet.h` 一行回到提交状态（🚨 标记 0 处、`(void)map` 0 处、`IsSolidAt` 回到 2 处）。**未再运行**（还原后与 `2d364ac` 逐字节相同）。
 
 ### 10.4 交付后的自检
 
