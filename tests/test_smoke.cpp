@@ -4,6 +4,7 @@
 #include <mini/core/Version.h>       // 引擎头走 PUBLIC include，用尖括号
 
 #include <cstddef>
+#include <cstring>   // std::strcmp（C18：版本字符串要比对内容，不能只判非空）
 #include <string>
 
 // ------------------------------------------------------------
@@ -13,9 +14,20 @@
 
 MINI_TEST(Core, VersionIsReported)
 {
-    MINI_CHECK(mini::core::VersionString() != nullptr);
+    // ⚠️ 2026-10-10（C3 改版本号 + C18 当场修）：
+    //
+    // 原来第一句是 `MINI_CHECK(VersionString() != nullptr)` —— 那是**恒真**的
+    //（字符串字面量不可能是空指针），所以它**根本没在守版本字符串**：
+    // 把返回值改成 "banana" 也照样全绿（这是 S8 学到的"**空用例比没有更坏**"的微型样本）。
+    // 现在改成**比对内容**，于是它真的在守两件事：
+    //   1. `VersionString()` 的取值（改错就红）；
+    //   2. "字符串"与"数字 API"**不许各说各话**（Major/Minor 改了、字符串忘了改 → 红）。
+    // ⚠️ 代价是**故意的**：以后改版本号要动**四处**（字符串 + 两个函数 + 这里），
+    //    逼着四个落点一起走 —— 同 `kDumpKey` 那种"一个字母两个落点"的纪律。
+    // ⚠️ 这里的逗号在 `strcmp(...)` 的括号内，`MINI_CHECK` 是变参宏，不会被拆成两个参数。
+    MINI_CHECK(std::strcmp(mini::core::VersionString(), "0.2.0-dev") == 0);
     MINI_CHECK_EQ(mini::core::VersionMajor(), 0);
-    MINI_CHECK_EQ(mini::core::VersionMinor(), 1);
+    MINI_CHECK_EQ(mini::core::VersionMinor(), 2);
 }
 
 // 画布尺寸的接受条件（TECH_DEBT C7 收窄：这段逻辑以前埋在 Application.cpp 的匿名
