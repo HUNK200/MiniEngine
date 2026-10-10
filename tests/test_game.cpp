@@ -3,6 +3,7 @@
 #include <game/Game.h>
 
 #include <mini/ai/EnemyBrain.h>   // S8：用例要拿 kDefaultTuning::sightRange 算"该不该被追"
+#include <mini/core/Time.h>       // S9：`kMaxDelta`（dt 的上限，G7 的防穿靶用例要用它）
 #include <mini/platform/Input.h>
 #include <mini/platform/InputState.h>
 #include <mini/render/FrameBuffer.h>
@@ -58,6 +59,7 @@ namespace {
 //      **命名空间**，刷出一串 `C2882 "game": 在表达式中非法使用命名空间标识符`。
 //    ⚠️ 别去找 include：头文件在、include 目录也在（可从 build/tests/mini_tests.vcxproj 查）。
 //    这是**名字查找**问题，不是包含问题。
+using game::Facing8;
 using game::Game;
 using mini::core::FrameContext;
 using mini::platform::InputState;
@@ -297,6 +299,33 @@ int WalkPlayerNextToEnemy(Game& game, FakeInput& input, FrameBuffer& fb)
 
     input.Release(Key::D);               // 站住：下一帧 `IsDown(D)` 就是 false 了
     return (distSq >= 0 && distSq <= kStopDistSq) ? distSq : -1;
+}
+
+// ── S9 的两个小辅助 ────────────────────────────────────────────────────
+//
+// 开一枪：按下 → 推一帧（这一帧的 ⑤c 看到 `Pressed` 并生成子弹）→ 松开。
+//
+// ⚠️ **连续开火时，两次调用之间必须至少推一帧**（让状态机看到"抬起过"）。
+//    原因在 `InputState::Get`：`Pressed` 要求 `was == false`，而 `BeginFrame` 是在**帧尾**
+//    把"本帧末的按下状态"折成 `was` 的 —— 按完立刻再按，`was` 还是 true ⇒ 第二次拿到的
+//    是 `Held`，**子弹会少一发**（用例里表现为"三发只打中两发"这种很难查的现象）。
+//    所以下面这些用例都是"开一枪 → 再推若干帧"，天然满足。
+//
+// ⚠️ 开完枪**当帧就能看到子弹**（`FireBullet` 在 ⑤c = 积分之前）—— 想看"刚出膛"的样子
+//    就在调用后立刻查屏幕；想等它飞过去就再 `StepFrames`。
+void FireOnce(Game& game, FakeInput& input, FrameBuffer& fb, float dt)
+{
+    input.Press(Key::Space);
+    StepFrame(game, input, fb, dt);
+    input.Release(Key::Space);
+}
+
+// 不按键地推 n 帧（等子弹飞 / 等状态机收敛）。
+void StepFrames(Game& game, FakeInput& input, FrameBuffer& fb, float dt, int n)
+{
+    for (int i = 0; i < n; ++i) {
+        StepFrame(game, input, fb, dt);
+    }
 }
 
 // 把整个屏幕拼成一个字符串（行优先，每行末尾补 '\n'）。
@@ -674,8 +703,9 @@ MINI_TEST(Game, EnemyDiesAndDisappears)
     FrameBuffer fb(kScreenW, kScreenH);
     game.OnStart();
 
-    // 走到敌人身边：不是为了"够得着"（`K` 杀的是**离玩家最近**的那个，多远都能杀），
-    // 而是为了让**所有敌人都落在相机视口里**，这样"屏幕上少一个"才数得准。
+    // 走到敌人身边：① 让**所有敌人都落在相机视口里**（这样"屏幕上少一个"才数得准）；
+    //              ② 让玩家**面朝东** —— `WalkPlayerNextToEnemy` 一路按 `D` 走过来，
+    //                 而分叉 ③ 是"移动方向即朝向"，所以这时开火就是朝那个方向打。
     MINI_CHECK(WalkPlayerNextToEnemy(game, input, fb) > 0);
 
     constexpr int kMaxEnemies = 8;
@@ -683,20 +713,258 @@ MINI_TEST(Game, EnemyDiesAndDisappears)
     const int nBefore = CollectEnemies(fb, before, kMaxEnemies);
     MINI_CHECK_EQ(nBefore, 5);   // 5 个（PLAN:572）；同 `EnemiesPatrolUntilPlayerIsNear`
 
-    // ④b 开面板 —— `K` **只在面板开着时才生效**（`Game.cpp` 的 ④c），所以这一步不能省
-    input.Press(Key::F7);
-    StepFrame(game, input, fb, kDt);
-
-    // ④c 杀敌（在 ⑤b 之前，所以"同帧就能看到"它是 S8 刻意的帧序安排）
-    input.Press(Key::K);
-    StepFrame(game, input, fb, kDt);
+    // ⚠️ **2026-10-10（S9 步骤 3）改写过**：原来这里是"按 `F7` 开面板 + 按 `K` 杀敌"。
+    //    `K` 连同它的枚举都删了（`TECH_DEBT` C15 到期）—— 真入口是子弹，所以改成**真的开枪**。
+    // ⚠️ 打几发**由两个公开常量算**（`kEnemyMaxHp / kDefaultBullet.damage`），不写死 3。
+    constexpr int kShotsToKill = Game::kEnemyMaxHp / game::kDefaultBullet.damage;
+    for (int i = 0; i < kShotsToKill; ++i) {
+        FireOnce(game, input, fb, kDt);          // ⑤c 生成一发
+        StepFrames(game, input, fb, kDt, 30);    // 等它飞过去并结算（≤8 格 ÷ 45 格/秒 ≈ 11 帧）
+    }
 
     // (1) **守 `active = false` 的那一条**：屏幕上少一个 `'E'`
     Pos       after[kMaxEnemies] = {};
     const int nAfter = CollectEnemies(fb, after, kMaxEnemies);
     MINI_CHECK_EQ(nAfter, nBefore - 1);
 
-    // (2) 另一套真相还在：面板里仍然看得见 `Dead`（不删 `EnemyData` 的理由，见 §6.6 / C16）
+    // (2) 击杀计数（S9 新加的公开接口）：**打死了一个**（不是"打中了一次"）
+    MINI_CHECK_EQ(game.Kills(), 1);
+
+    // (3) 另一套真相还在：面板里仍然看得见 `Dead`（不删 `EnemyData` 的理由，见 S8 §6.6 / C16）
+    //     ⚠️ **S9 步骤 4 做真删时，这条断言必须去掉** —— 那时 `EnemyData` 也没了，
+    //        面板里那一行会消失（`n=5` 变 `n=4`），`Dead` 就不再出现在屏幕上。
+    input.Press(Key::F7);
+    StepFrame(game, input, fb, kDt);
     const std::string text = ScreenText(fb);
     MINI_CHECK(text.find("Dead") != std::string::npos);
+}
+
+// ============================================================
+// S9 的接线用例（步骤 3 加；原来那条 `EnemyDiesAndDisappears` 在上面已改写）
+//
+// ⚠️ 判据全部走**公开面**：屏幕上的字符（`'*'` / `'E'`）、`game.Facing()`、`game.Kills()`、
+//    以及 `F7` 面板的文本。私有成员（`m_bullets` / `m_enemies` / `m_facing`）用例一概不碰。
+// ⚠️ "打几发"一律由 `Game::kEnemyMaxHp / game::kDefaultBullet.damage` **算**出来，不写死 3。
+// ============================================================
+
+// ------------------------------------------------------------
+// G1. 开火方向 = **当前朝向**；而朝向 = "移动方向，停下沿用"（分叉 ③ 的两半都钉）
+// ------------------------------------------------------------
+MINI_TEST(Game, FiringSpawnsBulletAlongFacing)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+
+    StepFrame(game, input, fb, kDt);
+    MINI_CHECK(game.Facing() == Facing8::East);   // 初值是确定性的：东
+    MINI_CHECK_EQ(CountChar(fb, '*'), 0);         // 还没开过枪
+
+    // 往北走一小步（只按一帧，别走到贴墙上）→ 朝向变北
+    input.Press(Key::W);
+    StepFrame(game, input, fb, kDt);
+    input.Release(Key::W);
+    MINI_CHECK(game.Facing() == Facing8::North);
+
+    // **松开之后沿用**（分叉 ③ 的另一半）：不按键再推一帧，朝向不许变
+    StepFrame(game, input, fb, kDt);
+    MINI_CHECK(game.Facing() == Facing8::North);
+
+    // 站着不动开火 ⇒ 子弹朝**北**飞
+    FireOnce(game, input, fb, kDt);
+
+    const Pos player = FindChar(fb, '@');
+    const Pos bullet = FindChar(fb, '*');
+    MINI_CHECK(player.found);
+    MINI_CHECK(bullet.found);
+    if (player.found && bullet.found) {
+        MINI_CHECK_EQ(bullet.x, player.x);   // 同一列
+        MINI_CHECK(bullet.y < player.y);     // 而且在**上面**：世界 Y 向下 ⇒ 北 = −Y
+    }
+}
+
+// ------------------------------------------------------------
+// G2. 边沿触发：**按住不放也只有一发**（不是"按住连射"）
+//     ⚠️ 反向验证 R4 就是把 `kFireKey` 的判定从 `Pressed` 改成 `IsDown` —— 那时这里会红。
+// ------------------------------------------------------------
+MINI_TEST(Game, HoldingSpaceFiresOnlyOnce)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+    StepFrame(game, input, fb, kDt);
+
+    // `FakeInput::Press` = "按下并保持"（直到 `Release`），所以这就是"按住不放"
+    input.Press(Key::Space);
+    StepFrames(game, input, fb, kDt, 3);
+
+    // 3 帧里只该有 1 发。若改成"按住连射"，第 n 帧就已经有 n 发了（3 发布在相邻的格子里）
+    MINI_CHECK_EQ(CountChar(fb, '*'), 1);
+}
+
+// ------------------------------------------------------------
+// G3. 撞墙的子弹**会消失**（不是永远贴在墙面上）
+//     ⚠️ 这条挡两种错：(a) 判定看到了墙但**忘了标删** —— 子弹会被 `MoveAndCollide`
+//        夹在上墙面上、**永远画着**；(b) 判定根本没看到墙（那更明显）。
+//     所以打完之后要**等它飞完**再查屏幕：此时一个 `'*'` 都不该剩。
+// ------------------------------------------------------------
+MINI_TEST(Game, BulletDiesOnWall)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+    StepFrame(game, input, fb, kDt);
+
+    // 面朝北（世界 Y 向下 ⇒ 北就是地图上边缘那堵墙的方向），只走一帧别贴到墙上
+    input.Press(Key::W);
+    StepFrame(game, input, fb, kDt);
+    input.Release(Key::W);
+    MINI_CHECK(game.Facing() == Facing8::North);
+
+    FireOnce(game, input, fb, kDt);
+    StepFrames(game, input, fb, kDt, 20);   // 2 格多一点的飞行，20 帧绰绰有余
+
+    MINI_CHECK_EQ(CountChar(fb, '*'), 0);
+}
+
+// ------------------------------------------------------------
+// G4. 一发**打不死**（`kEnemyMaxHp - 1` 发也不行）—— 从"不够"那一侧钉住伤害
+//     ⚠️ 与 G5 是一对：G4 挡住"伤害太大（一击必杀）"，G5 挡住"伤害太小/没生效"。
+// ------------------------------------------------------------
+MINI_TEST(Game, BulletDamagesEnemy)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+
+    MINI_CHECK(WalkPlayerNextToEnemy(game, input, fb) > 0);   // 走过去 = 朝东 = 正对着最东边那个敌人
+
+    constexpr int kMaxEnemies = 8;
+    Pos       before[kMaxEnemies] = {};
+    const int nBefore = CollectEnemies(fb, before, kMaxEnemies);
+    MINI_CHECK_EQ(nBefore, 5);
+
+    constexpr int kShotsToKill = Game::kEnemyMaxHp / game::kDefaultBullet.damage;
+    for (int i = 0; i < kShotsToKill - 1; ++i) {   // 差一发
+        FireOnce(game, input, fb, kDt);
+        StepFrames(game, input, fb, kDt, 30);
+    }
+
+    Pos       after[kMaxEnemies] = {};
+    const int nAfter = CollectEnemies(fb, after, kMaxEnemies);
+    MINI_CHECK_EQ(nAfter, nBefore);     // 一个都没少
+    MINI_CHECK_EQ(game.Kills(), 0);     // "打中"不等于"击杀"
+}
+
+// ------------------------------------------------------------
+// G5. `kEnemyMaxHp / kDefaultBullet.damage` 发把它打死，`Kills()` 恰好 +1
+// ------------------------------------------------------------
+MINI_TEST(Game, ThreeHitsKillAnEnemy)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+
+    MINI_CHECK(WalkPlayerNextToEnemy(game, input, fb) > 0);
+
+    constexpr int kMaxEnemies = 8;
+    Pos       before[kMaxEnemies] = {};
+    const int nBefore = CollectEnemies(fb, before, kMaxEnemies);
+    MINI_CHECK_EQ(nBefore, 5);
+
+    // ⚠️ 发数由公开常量算（不写死 3）：`kEnemyMaxHp` 3 ÷ `kDefaultBullet.damage` 1 = 3
+    constexpr int kShotsToKill = Game::kEnemyMaxHp / game::kDefaultBullet.damage;
+    for (int i = 0; i < kShotsToKill; ++i) {
+        FireOnce(game, input, fb, kDt);
+        StepFrames(game, input, fb, kDt, 30);
+    }
+
+    Pos       after[kMaxEnemies] = {};
+    const int nAfter = CollectEnemies(fb, after, kMaxEnemies);
+    MINI_CHECK_EQ(nAfter, nBefore - 1);   // 死了一个
+    MINI_CHECK_EQ(game.Kills(), 1);       // 而且只记了一次（不是"每发打中 +1"）
+}
+
+// ------------------------------------------------------------
+// G6. 数量有界：开完枪、**等它们全部消失**之后，屏幕上不该还剩任何 `'*'`
+//
+//     ⚠️ 判据写成"== 0"而不是"变少了"（`PLAN` A.6 第 ② 条）：子弹**会重叠**
+//        —— 5 发叠在同一格里也只数得出 1 个 ⇒ "变少了"那种写法在漏删时照样绿。
+//     ⚠️ 等待时间按"地图对角线 ÷ 弹速"给足（> 6.3 秒 = 378 帧），开 400 帧。
+// ------------------------------------------------------------
+MINI_TEST(Game, BulletsDoNotAccumulateForever)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+    StepFrame(game, input, fb, kDt);
+
+    // 面朝北（上墙只有 2 格远 ⇒ 每发都在几帧内撞墙消失）
+    input.Press(Key::W);
+    StepFrame(game, input, fb, kDt);
+    input.Release(Key::W);
+
+    for (int shot = 0; shot < 5; ++shot) {
+        FireOnce(game, input, fb, kDt);
+        StepFrames(game, input, fb, kDt, 10);
+    }
+
+    StepFrames(game, input, fb, kDt, 400);   // > 6.3 秒
+
+    MINI_CHECK_EQ(CountChar(fb, '*'), 0);
+}
+
+// ------------------------------------------------------------
+// G7. ★ 用 dt 的**上限**打一发 —— 一帧飞 2.25 格，照样命中
+//
+//     ⚠️ 这是分叉 ②（"防穿靶"）的**接线级证明**：`kMaxDelta = 0.05 s` ⇒
+//        45 格/秒 × 0.05 = **2.25 格/帧**，而敌人只占 1 格。用"只看终点"的实现，
+//        这几发子弹会**从敌人身上飞过去** ⇒ 敌人打不死 ⇒ 下面 `nAfter` 红。
+//     ⚠️ 实测口径：它与 `Bullet.HitsWhenBothEndsOutside` 是同一件事的两个层次
+//        （那条测纯函数，这条测"`Game` 真的把预测线段算对了"）。
+// ------------------------------------------------------------
+MINI_TEST(Game, BulletHitsEnemyEvenAtMaxDelta)
+{
+    constexpr float kDt = mini::core::kMaxDelta;   // 0.05 s —— dt 的**上限**
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+
+    MINI_CHECK(WalkPlayerNextToEnemy(game, input, fb) > 0);
+
+    constexpr int kMaxEnemies = 8;
+    Pos       before[kMaxEnemies] = {};
+    const int nBefore = CollectEnemies(fb, before, kMaxEnemies);
+    MINI_CHECK_EQ(nBefore, 5);
+
+    constexpr int kShotsToKill = Game::kEnemyMaxHp / game::kDefaultBullet.damage;
+    for (int i = 0; i < kShotsToKill; ++i) {
+        FireOnce(game, input, fb, kDt);
+        StepFrames(game, input, fb, kDt, 10);   // 2.25 格/帧 ⇒ 10 帧足够飞到（≤8 格）
+    }
+
+    Pos       after[kMaxEnemies] = {};
+    const int nAfter = CollectEnemies(fb, after, kMaxEnemies);
+    MINI_CHECK_EQ(nAfter, nBefore - 1);   // 穿靶的实现在这里会红
+    MINI_CHECK_EQ(game.Kills(), 1);
 }

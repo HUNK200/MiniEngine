@@ -1,5 +1,6 @@
 #pragma once
 
+#include "game/Bullet.h"      // S9：子弹的规则（朝向 + 命中判定纯函数）
 #include "game/Enemy.h"
 #include "mini/core/Application.h"
 #include "mini/math/Vec2.h"
@@ -62,6 +63,18 @@ public:
     // ⚠️ 敌人**看不到**它：`DriveEnemyAi` 用的是私有的 `m_playerHp`。
     [[nodiscard]] int PlayerHp() const noexcept;
 
+    // 击杀数（S9）。同 `PlayerHp`：**真接口**（HUD 第二行会显示它），不是"为测试而加"。
+    [[nodiscard]] int Kills() const noexcept;
+
+    // 玩家当前朝向（S9）。给 HUD 画 `dir ->` 用（分叉 ③ 的"必要配套"：停下沿用朝向就必须看得见）；
+    // 用例也用它算"子弹该出现在哪个方向"。
+    [[nodiscard]] Facing8 Facing() const noexcept;
+
+    // 敌人 HP 上限。⚠️ **2026-10-10 从 private 挪到 public**（S9 步骤 3）：
+    //    子弹的"三发打死一个"必须由**公开常量**算出来（`kEnemyMaxHp / kDefaultBullet.damage`），
+    //    否则用例只能写死 3 —— 那就变成"调手感要改测试"（S5_CHECKLIST 10.4 的纪律）。
+    static constexpr int kEnemyMaxHp = 3;
+
     // —— 下面三个数是**公有** constexpr，这是刻意的：单测要用它们算期望值 ——
     //    tests/test_game.cpp 拿 kMoveSpeed 算"1 秒该走几格 / 位移多少格"，拿 kSpawnX/Y 算
     //    "起点该画在哪一格"。**用例里不许写死格数**，必须由这几个常量算出来
@@ -92,7 +105,7 @@ private:
     // 数量写死 5：PLAN:572 的验收原话是"5 个敌人同时追不出现抖动打转"。
     static constexpr int kEnemyCount    = 5;
     static constexpr int kPatrolPathLen = 2;   // 一条巡逻路线 = 两个端点 → `(idx+1)%2` 就是**往返**
-    static constexpr int kEnemyMaxHp    = 3;   // S9 的子弹要打它；S8 只当数据放着
+    // ⚠️ `kEnemyMaxHp` 已于 2026-10-10（S9 步骤 3）挪到 **public** —— 用例要用它算"几发打死"。
 
     // 玩家 HP 上限。定 10 的理由：一个敌人贴脸是 0.8s 打 1 点，5 个同时贴脸 ≈ 4 点/秒
     // → 约 **2.5 秒**掉光。够快到人眼验收时一眼能看见数字在掉，又不至于一进视野就归零。
@@ -134,12 +147,22 @@ private:
     // ⚠️ 读到的双方位置是**本帧积分前**的（= 上一帧末位置）—— 这是 S8 定稿的位置口径。
     void DriveEnemyAi(const mini::core::FrameContext& ctx);
 
-    // 把"离玩家最近的那个还活着的敌人"的 hp 置 0（S8 的**临时**调试键 `K` 用）。
-    // ⚠️ 它**不**改容器、也**不**直接设 `active`：只把 hp 归零，
-    //    下一帧 `DriveEnemyAi` 会看到 `selfAlive == false` → `Decide` 返回 `Dead` 并把实体停更
-    //    （S8_CHECKLIST 6.6："Dead 只有一条进入路径"）。
-    // ⚠️ 真入口是 **S9 的子弹**；这个键落地后要删（`TECH_DEBT` 登记）。
-    void KillNearestEnemy();
+    // ── 子弹（S9）───────────────────────────────────────────────────────
+    // 生成一发子弹：位置 = 玩家当前位置，速度 = 朝向 × `kDefaultBullet.speed`，`symbol = '*'`。
+    // ⚠️ 子弹就是**一个普通 `Entity`**（连一个额外字段都不需要，见 `S9_CHECKLIST` 分叉 ①）——
+    //    所以积分（`World::Update`）、绘制（`DrawEntities`）、删除（`MarkForRemoval`）
+    //    **全部是白拿的**，这里只负责"造出来 + 记下 id"。
+    // ⚠️ 帧序：**必须**在 `World::Update` **之前**（子弹当帧就要飞出去）。
+    // ⚠️ 键（`Space`）的判定在 `OnUpdate` 里（与其他按键一致），所以本函数**不带参数**。
+    void FireBullet();
+
+    // 逐发子弹做命中判定 + 标删（帧序第 ⑤d 步，**也在** `World::Update` **之前**）。
+    // ⚠️ 它用的是**预测线段** `[pos, pos + velocity × dt]`：判定要读"这一帧子弹要走多远"，
+    //    若挪到积分之后就得存"上一帧位置"，而用 `pos_after − v·dt` **反推**在被墙夹住时是错的
+    //    （起点会落进墙里 ⇒ 线段穿墙 ⇒ 假命中墙后的敌人）。详见 `S9_CHECKLIST` 坑 2。
+    // ⚠️ 遍历的是 `m_bullets`（**不是** `m_entities`）⇒ 遍历中 `Spawn`/`MarkForRemoval`
+    //    都不会让我们脚下的容器重新分配（PLAN 点名的 S9 坑 1 在架构上消失）。
+    void ResolveBullets(const mini::core::FrameContext& ctx);
 
     // 这个 id 是不是敌人？只给绘制上色用（玩家黄 / 敌人红 / 其余白）。
     // 线性扫 `m_enemies`：n = 5，每帧每实体扫一次，代价可忽略。
@@ -188,6 +211,26 @@ private:
     // S8：敌人。⚠️ **只增不减**（`Dead` 只把 Entity 的 active 置 false，见 S8_CHECKLIST 6.6），
     // 所以它不会在遍历中被改；真删留到 S9（届时用 std::erase_if，且必须在遍历之外）。
     std::vector<EnemyData> m_enemies;
+
+    // ── S9：子弹 ────────────────────────────────────────────────────────
+    // **只存 EntityId**（4 字节/发）—— 子弹的位置/速度/字符全在世界里（那是**唯一**一份真相）。
+    // ⚠️ 这样就不存在"两份数据不一致"这个最难查的故障；表本身只是"哪些实体是子弹"的索引。
+    // 维护规则**只有两处**（见 `Game.cpp`）：`FireBullet` 里 push_back、⑨ 之后自愈压缩。
+    // ⚠️ 它**故意**不是 `std::vector<BulletData>`：子弹除 `Entity` 已有字段外，额外字段是 **0 个**
+    //    （分叉 ①）。将来要带属性（穿透/不同伤害）时，把 `EntityId` 换成 `BulletData` 即可。
+    // ⚠️ 那些"过期 id"是**自愈**的：⑨ 之后 `erase_if(Find(id) == nullptr)` 一处清掉，
+    //    失败表现只是"多发一次 Find"，**不是"指错实体"**（`EntityId` 永不复用）。
+    std::vector<mini::world::EntityId> m_bullets;
+
+    // 玩家朝向（S9，分叉 ③）：**移动方向即朝向，停下沿用**。
+    // ⚠️ 用枚举而不是 `Vec2`：用例断言 `Facing() == Facing8::East` 不用比浮点，
+    //    HUD 也能直接查表画字形（`kFacingGlyphs`）。
+    // ⚠️ 初值 = 东：与 `kSpawnX/Y` 无关，只是"第一发子弹往哪打"的确定性默认值。
+    Facing8 m_facing = Facing8::East;
+
+    // 击杀数（S9）：**只在敌人的 hp 从 > 0 掉到 <= 0 的那一次** +1（不是"打中一次 +1"）。
+    // ⚠️ 它只增不减；HUD 第二行会显示它（S9 步骤 5）。
+    int m_kills = 0;
 };
 
 } // namespace game

@@ -1,5 +1,6 @@
 #include "game/Game.h"
 
+#include "game/Bullet.h"           // S9：朝向 ↔ 向量、线段命中判定（纯函数）
 #include "mini/ai/EnemyBrain.h"   // S8：敌人每帧的"决策"（纯函数；只输出速度）
 #include "mini/math/Vec2.h"
 #include "mini/platform/Input.h"
@@ -7,31 +8,36 @@
 #include "mini/world/Collision.h"   // 调试快照用：IsSolidAt / ToIndex / 点模型的判据
 #include "mini/world/TileMap.h"
 
-#include <algorithm>    // std::max（S8：HP 夹到 0）
+#include <algorithm>    // std::max（S8：HP 夹到 0）；std::erase_if（S9：子弹表自愈压缩）
+#include <array>        // S9：定长暂存（kEnemyCount 是编译期常量 ⇒ 判定时不分配）
 #include <cstddef>      // std::size_t（S8：reserve 与巡逻表下标）
 #include <cstdio>
 #include <filesystem>   // 调试快照：判断日志文件是不是"新建的"（见 DumpSnapshot）
 #include <fstream>      // 调试快照（追加写日志）
-#include <span>         // S8：把巡逻路点交给 Decide
+#include <span>         // S8：把巡逻路点交给 Decide；S9：把敌人位置交给 FirstEnemyOnSegment
 
 // ============================================================
 // Game 实现（S5）—— 引擎与游戏分家之后的**唯一**游戏侧文件
 //
-// 这里做五件事，别的一件都不做：
+// 这里做六件事，别的一件都不做：
 //   1. 开局：铺地图、Spawn 玩家、铺敌人（BuildDemoMap / SpawnEnemies / OnStart）
 //   2. 每帧：输入 → 速度 → 交给 World 积分（OnUpdate，帧序是硬约束，见下）
 //   3. 每帧：世界 → 屏幕（OnRender，S6 起走相机）
 //   4. 每帧：相机跟随（OnUpdate 末尾，**必须在 Update 之后**）—— S6 加的
 //   5. 每帧：敌人决策（DriveEnemyAi，**必须在 Update 之前**）—— S8 加的
+//   6. 每帧：生成子弹 + 命中判定（FireBullet / ResolveBullets，**都在 Update 之前**）—— S9 加的
 //
-// ⚠️ 帧序（S5_CHECKLIST 7.1 + S6_CHECKLIST 7.1 + S8_CHECKLIST §6.3，顺序不能换）：
-//     读输入 → 归一化 → **写玩家速度** → 驱动 AI（**写敌人速度**）→ Update(dt)
-//     → **相机 Follow** → FlushRemovals
+// ⚠️ 帧序（S5_CHECKLIST 7.1 + S6 7.1 + S8 §6.3 + S9 §7.1，顺序不能换）：
+//     读输入 → 归一化（顺手更新朝向）→ **写玩家速度** → 驱动 AI（**写敌人速度**）
+//     → **生成子弹** → **命中判定/标删** → Update(dt) → **相机 Follow** → FlushRemovals
 //   写速度必须在 Update 之前：反过来的现象是"按一下动一下、但慢一帧"，
 //   看着像手感问题，其实是顺序问题。
 //   驱动 AI 同理：敌人和玩家**在同一个循环里**被积分，所以两边的速度都得先写好。
 //   ⚠️ 代价（S8 的位置口径）：AI 这一帧读到的是**上一帧末**的双方位置 ——
 //     它追的是 1/60 秒前的你（≈0.33 格，肉眼看不见），换来的是"帧序不变 + 可离线复现"。
+//   ⚠️ 子弹的**生成**与**判定**为什么也都在 Update 之前（S9 定）：判定用的是
+//     **预测线段** `[pos, pos + velocity × dt]`；若挪到 Update 之后就得知道"上一帧位置"，
+//     而用 `pos_after − v·dt` 反推在被墙夹住时是错的（起点落进墙里 ⇒ 假命中墙后的敌人）。
 //   相机必须在 Update 之后：用上一帧的玩家位置会让 @ 与地图差一帧相位
 //   （现象是"@ 偶尔不在正中，偶尔闪一格"）—— S6 坑 3。
 //
@@ -66,9 +72,10 @@ constexpr int kHudRow = 1;
 constexpr mini::platform::Key kDumpKey = mini::platform::Key::F4;
 const char* kDumpFileName = "miniengine_debug.log";   // *.log 已被 .gitignore 忽略
 
-// ── S8 的两个**临时**按键（都能在 `TECH_DEBT` 里查到"什么时候删"）─────────────
+// ── `kAiPanelKey`：S8 的**临时**面板键（`TECH_DEBT` C15 记着"什么时候删"）────────
 //   kAiPanelKey  开/关敌人面板   → S11 的正式 Debug Overlay 落地时删
-//   kKillKey     杀最近的敌人     → S9 接上"子弹扣血"后删（那才是真入口）
+//   ⚠️ `kKillKey`（S8 的临时杀敌键）已于 **2026-10-10（S9 步骤 3）删除** —— `TECH_DEBT` C15 到期：
+//      S9 接上了**真入口**（子弹），不需要那个替代品；`Key::K` 也从 `KeyCode.h` 删掉了。
 //
 // ⚠️ **为什么面板键是 `F7` 而不是 `F3`**（`PLAN:572` 写的是 F3，`S8_CHECKLIST` §6.7 也按 F3 写的）：
 //    2026-10-09 实测 **F3 在本机被别的软件占用**，按下去我们的程序**收不到**。
@@ -77,7 +84,21 @@ const char* kDumpFileName = "miniengine_debug.log";   // *.log 已被 .gitignore
 //    ⚠️ 换键的代价被压到**只改这一行**：其余代码只认 `kAiPanelKey`，不认具体是哪个键。
 //    再撞下一个候选：`Tab`（本项目目前没人用；已在 `KeyCode.h` 里映射）。
 constexpr mini::platform::Key kAiPanelKey = mini::platform::Key::F7;
-constexpr mini::platform::Key kKillKey    = mini::platform::Key::K;
+
+// ── `kFireKey`：S9 的开火键 ────────────────────────────────────────────────
+// ⚠️ 键字母在代码里**只有两处**（同 `kDumpKey` 那条纪律）：这个常量 + `DrawHud` 提示行里的 `SPC`。
+// ⚠️ **边沿触发**（`Get(...) == KeyState::Pressed`，不是 `IsDown`）—— 按一下一发。
+//    用 `IsDown` 会变成"按住连射"：用例 `Game.HoldingSpaceFiresOnlyOnce` 钉这一条，
+//    反向验证 R4 就是"把它改成 `IsDown`"。连发是 S10 的手感活（那时有 `Ammo` 兜着）。
+// ⚠️ `Space` **早就映射好了**（S2 起就在 `KeyCode.h` 里）⇒ S9 对 `engine/` 的改动
+//    只有"删 `Key::K`"这一处。
+constexpr mini::platform::Key kFireKey = mini::platform::Key::Space;
+
+// 子弹画什么字符。⚠️ 它就是普通实体的 `symbol`（分叉 ①：子弹没有额外字段）——
+// 绘制走 `DrawEntities` 的既有规则（玩家黄 / 敌人红 / **其余白**）⇒ 子弹自动是白的，绘制零改动。
+// ⚠️ 不另立 `kBulletSymbol` 常量：`'*'` 在本文件只有这一处落点；用例里数 `'*'` 是"读屏幕"，
+//    与 `'@'`/`'E'` 一样直接写字面量 —— 保持同一风格。
+constexpr char kBulletGlyph = '*';
 
 // 面板的行数 = `kAiPanelHeaderLines` 行表头 + 每敌一行；它是**底部对齐**的（见 DrawAiPanel）。
 // ⚠️ **不画在"HUD 的下一行"**，这是实现时才看出来的：
@@ -303,39 +324,89 @@ void Game::DriveEnemyAi(const mini::core::FrameContext& ctx)
     }
 }
 
-void Game::KillNearestEnemy()
+// ------------------------------------------------------------
+// S9：子弹（生成 / 判定）
+// ------------------------------------------------------------
+
+void Game::FireBullet()
 {
     const mini::world::Entity* player = m_world.Find(m_player);
     if (player == nullptr) {
-        return;   // 玩家还没出生：没有"最近"可言
+        return;   // 玩家还没出生（OnStart 之前）
     }
 
-    // ⚠️ 存指针而不是下标：`m_enemies` 在本函数里不会被动过（只读它算距离），
-    //    而且我们**只在循环外**通过这个指针写一次 —— 不违反 E-9。
-    EnemyData*  nearest     = nullptr;
-    float       nearestDist = 0.0f;
+    mini::world::Entity bullet{};
+    bullet.transform.pos      = player->transform.pos;                                       // 从玩家脚下出发
+    bullet.velocity.perSecond = game::FacingToVec2(m_facing) * game::kDefaultBullet.speed;    // 只朝 8 个方向
+    bullet.symbol             = kBulletGlyph;
 
-    for (EnemyData& enemy : m_enemies) {
-        if (enemy.hp <= 0) {
-            continue;   // 已经死了：再按一次 K 不会重复计数，也不会去挑第二近的
-        }
+    // ⚠️ `Spawn` 内部是 `m_entities.push_back`（**可能重新分配**）——
+    //    所以调用点必须在"遍历 `m_entities`"**之外**。帧序保证了这一点：
+    //    ⑤c 之后才轮到 ⑥（积分）与 `DrawEntities`（渲染），此前没有任何遍历。
+    // ⚠️ 子弹**不需要任何额外数据**（分叉 ①）：位置/速度/字符全在 `Entity` 里，
+    //    所以这里只把 id 记进 `m_bullets` —— 那是"哪些实体是子弹"的索引，不是数据的副本。
+    m_bullets.push_back(m_world.Spawn(bullet));
+}
 
-        const mini::world::Entity* entity = m_world.Find(enemy.id);
-        if (entity == nullptr) {
-            continue;   // 悬空 id（分叉 ① 的代价）—— 和 DriveEnemyAi 同一套防御
-        }
-
-        const float dist = (entity->transform.pos - player->transform.pos).Length();
-        if (nearest == nullptr || dist < nearestDist) {
-            nearest     = &enemy;
-            nearestDist = dist;
-        }
+void Game::ResolveBullets(const mini::core::FrameContext& ctx)
+{
+    if (m_bullets.empty()) {
+        return;
     }
 
-    if (nearest != nullptr) {
-        // ⚠️ 只归零 hp：**不**在这里设 `active`、也**不**动容器。
-        //    "怎么死"只有一条路径 —— 交给下一帧（其实是同一帧的 ⑤b）的 `DriveEnemyAi`。
-        nearest->hp = 0;
+    // ⚠️ 遍历的是 `m_bullets`（**不是** `m_entities`）：这一点让 PLAN 点名的
+    //    "遍历中 push_back 导致迭代器失效"这个坑**在架构上消失** ——
+    //    本函数既不 Spawn 也不 erase，手里的 `Entity*` 全程有效。
+    for (const mini::world::EntityId id : m_bullets) {
+        mini::world::Entity* bullet = m_world.Find(id);
+        if (bullet == nullptr) {
+            continue;   // 防御：理论上 ⑨b 的压缩已经清过了（同一帧内的极端情况）
+        }
+
+        const mini::math::Vec2 from = bullet->transform.pos;
+        // **预测线段**：这一帧子弹要走的整段路。判定必须在 ⑥ 之前，理由见 Game.h 的注释。
+        const mini::math::Vec2 to = from + bullet->velocity.perSecond * ctx.deltaSeconds;
+
+        // ① 每次都重新收一遍"活着且 id 有效的敌人位置"（5 个元素，栈上定长数组，不分配）。
+        //    ⚠️ **每发子弹重新收**是刻意的：这一帧前面的子弹可能已经打死了某个敌人，
+        //       那样它就该从表里消失 —— 否则（a）`kills` 会被同一具尸体重复计数，
+        //       （b）后面的子弹会被一具看不见的尸体挡住。
+        std::array<mini::math::Vec2, kEnemyCount> positions{};
+        std::array<std::size_t, kEnemyCount>      which{};   // 第 i 项对应 m_enemies 的哪一个
+        std::size_t aliveCount = 0;
+        for (std::size_t i = 0; i < m_enemies.size() && aliveCount < kEnemyCount; ++i) {
+            const mini::world::Entity* e = m_world.Find(m_enemies[i].id);
+            if (e == nullptr || m_enemies[i].hp <= 0) {
+                continue;   // 悬空 id（分叉 ① 的代价）或已经死了
+            }
+            positions[aliveCount] = e->transform.pos;
+            which[aliveCount]     = i;
+            ++aliveCount;
+        }
+        // 纯函数拿到的只是"一串位置" —— 它不认识 Entity，也不需要认识（所以能离线单测）。
+        const std::span<const mini::math::Vec2> enemyPositions{positions.data(), aliveCount};
+
+        const game::BulletHit hit = game::FirstEnemyOnSegment(m_world.Map(), from, to, enemyPositions);
+
+        // ② 撞墙 或 命中敌人 ⇒ 这发子弹当帧就结束（`MarkForRemoval` 只碰 `m_pendingRemove`，
+        //    在遍历里调用是安全的 —— 真正的移除在 ⑨ 的 `FlushRemovals`）。
+        if (hit.blocked || hit.enemyIndex >= 0) {
+            m_world.MarkForRemoval(id);
+        }
+
+        if (hit.enemyIndex >= 0) {
+            EnemyData& target = m_enemies[which[static_cast<std::size_t>(hit.enemyIndex)]];
+            target.hp -= game::kDefaultBullet.damage;
+
+            // ⚠️ 只在**跨过 0**的那一次计数（不是"打中一次 +1"）。因为上面每发子弹都重收表，
+            //    已经 <= 0 的敌人根本不在表里，所以这里天然只会走到一次。
+            if (target.hp <= 0) {
+                ++m_kills;
+                // ⚠️ 这里**不设** `entity->active = false`：那是 `DriveEnemyAi` 的职责
+                //    （同一帧的 ⑤b 已经跑过了，所以下一帧生效）——"怎么死"只有一条路径。
+                //    真删（`MarkForRemoval` + 移除 `EnemyData`）是 **S9 步骤 4** 的事。
+            }
+        }
     }
 }
 
@@ -381,6 +452,16 @@ void Game::OnUpdate(const mini::core::FrameContext& ctx)
         player->velocity.perSecond = dir * m_moveSpeed;
     }
 
+    // ③b 朝向（S9，分叉 ③）：**移动方向即朝向，停下沿用**。
+    //     ⚠️ 这里用**返回值**判断，而不是"反正它对零向量不写 out" —— 把"停下沿用"这条规则
+    //        摆在**调用点**上：以后有人改 `DirectionToFacing` 的行为，这里不会静默跟着变。
+    //     ⚠️ 例：松开所有方向键时 `dir` 是零向量 ⇒ 返回 false ⇒ `m_facing` 保持上一帧的值，
+    //        所以"站着不动也能朝原方向开火"。
+    Facing8 nextFacing = m_facing;
+    if (game::DirectionToFacing(dir, nextFacing)) {
+        m_facing = nextFacing;
+    }
+
     // ④ Q 退出。Esc 刻意不退出 —— 它从 S10 起要用来关菜单（S2 的决策），
     //    进程级退出（Ctrl+C / 关窗口）由 Application 看 Input::QuitRequested()。
     if (input.Get(Key::Q) == KeyState::Pressed) {
@@ -393,13 +474,10 @@ void Game::OnUpdate(const mini::core::FrameContext& ctx)
         m_showAiPanel = !m_showAiPanel;
     }
 
-    // ④c `kKillKey` 杀掉离玩家最近的敌人（S8 的临时调试键）。
-    //     ⚠️ 两个约束：
-    //       · **只在面板打开时生效** —— 防误触（不然玩着玩着就把敌人点没了）。
-    //       · 放在 **⑤b 之前** —— 于是**同一帧**它就变 `Dead`、面板上当场能看到，没有一帧延迟。
-    if (m_showAiPanel && input.Get(kKillKey) == KeyState::Pressed) {
-        KillNearestEnemy();
-    }
+    // ④c **已删除**（2026-10-10，S9 步骤 3）：S8 的临时杀敌键 `K` 被真入口（子弹）取代，
+    //     `Key::K` 也从 `KeyCode.h` 删了（`TECH_DEBT` C15 到期）。
+    //     ⚠️ 连带影响：S8 的用例 `Game.EnemyDiesAndDisappears` 原来按 `F7`+`K`，
+    //        本步同步改写成"朝敌人开火把它打死"（不然它会因为键没了而变红）。
 
     // ⑤ Σdt：HUD 拿它自证 `pos ≈ v × sum dt`（10.2 的运行时验收；v 就是 m_moveSpeed）
     m_elapsed += ctx.deltaSeconds;
@@ -409,7 +487,19 @@ void Game::OnUpdate(const mini::core::FrameContext& ctx)
     //     反过来的现象：敌人慢一帧，或（若挪到 ⑥ 之后并写了速度）完全不产生位移。
     DriveEnemyAi(ctx);
 
+    // ⑤c 开火（S9）—— **必须在 ⑥ 之前**：子弹当帧就要飞出去（否则慢一帧）。
+    //     ⚠️ `Pressed` 是**边沿触发**（按一下一发）：用 `IsDown` 会按住连射。
+    if (input.Get(kFireKey) == KeyState::Pressed) {
+        FireBullet();
+    }
+
+    // ⑤d 子弹的命中判定 + 标删（S9）—— **也在 ⑥ 之前**，用的是**预测线段**。
+    //     理由写在 `Game.h` 的 `ResolveBullets` 注释里（挪到 ⑥ 之后就要存"上一帧位置"，
+    //     而反推在被墙夹住时是错的）。
+    ResolveBullets(ctx);
+
     // ⑥ 积分（world 唯一的"物理"）。dt 已由 S3 clamp 过，这里**不再夹**（坑 #7）
+    //    ⚠️ 子弹也在这里被积分 —— 它是普通 `Entity`，所以 S7 的碰撞/夹紧**白拿**。
     m_world.Update(ctx.deltaSeconds);
 
     // ⑦ 相机跟随 —— **必须在 ⑥ 之后**（用本帧最新的玩家位置，S6 的帧序硬约束）。
@@ -431,8 +521,18 @@ void Game::OnUpdate(const mini::core::FrameContext& ctx)
         DumpSnapshot(ctx);
     }
 
-    // ⑨ 延迟删除。S5 恒为空 —— 留着是为了让帧序在 S9 之前就是对的
+    // ⑨ 延迟删除。**S9 起第一次真的有东西被删**（子弹撞墙/命中后会进这里）
     m_world.FlushRemovals();
+
+    // ⑨b 子弹成员表**自愈压缩**（S9，分叉 ① 的"只增 + 一处压缩"）。
+    //     放在 `FlushRemovals` **之后**：这样表里**永远只有活着的**子弹，
+    //     `ResolveBullets` 里那次 `Find(id) == nullptr` 就只是防御（不是常规路径）。
+    //     ⚠️ 这是**唯一**一处从 `m_bullets` 里删东西的地方 —— 不存在"两边必须同步"的双向责任。
+    //     ⚠️ 判据是"世界还找得到它吗"，不是"我记得它该死"：即使将来有别的系统删了子弹，
+    //        这里也会自动清掉（这正是不存数据副本换来的好处）。
+    std::erase_if(m_bullets, [this](const mini::world::EntityId id) {
+        return m_world.Find(id) == nullptr;
+    });
 }
 
 // ------------------------------------------------------------
@@ -732,6 +832,19 @@ void Game::DumpSnapshot(const mini::core::FrameContext& ctx)
 int Game::PlayerHp() const noexcept
 {
     return m_playerHp;
+}
+
+// 同上：真相是私有的 `m_kills`（只有 `ResolveBullets` 在"hp 跨过 0"那一次改它）。
+// ⚠️ 它是**击杀数**，不是"命中数"：一发打中但没打死不算（用例 `BulletDamagesEnemy` 钉这一条）。
+int Game::Kills() const noexcept
+{
+    return m_kills;
+}
+
+// 同上：真相是私有的 `m_facing`（`OnUpdate` 的 ③b 每帧更新它）。
+Facing8 Game::Facing() const noexcept
+{
+    return m_facing;
 }
 
 bool Game::ShouldQuit() const
