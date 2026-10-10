@@ -10,7 +10,7 @@
 | 项 | 状态 |
 | --- | --- |
 | 本文件 | ✅ **2026-10-10 定稿**（4 个分叉已由本人拍板） |
-| 代码 | **步骤 1 已完成**（`Collision.h` 采样器 + `Sweep` suite 6 条；本人回报 `152 passed, 0 failed`，R1 反向验证已做）；步骤 2~7 未动 |
+| 代码 | **步骤 1 已完成**（`152 passed, 0 failed` + R1 实测）；**步骤 2 已完成**（本人回报 `160 passed, 0 failed`）；步骤 3~7 未动，下一步 **R3** |
 | 上一阶段 | S8 已全部收口并推送（`ORIGIN/main` = `76eb583`），用例 **146** |
 
 ## 分工约定（沿用 `AGENTS.md` 1.4，S8 已跑通一遍）
@@ -96,7 +96,7 @@
 | --- | --- | --- |
 | 0 | 需求 + 4 个分叉 + 本施工图 | ✅ **2026-10-10 完成** |
 | 1 | `world/Collision.h` 加采样器（2 个纯函数）+ `Sweep` suite（6 用例） | ✅ **2026-10-10 完成**：本人回报 `152 passed, 0 failed`（146 → +6）；**R1 反向验证已做，红集与预判逐行吻合**（见 §10.3.1）；2 条落地偏差见上表 |
-| 2 | `game/Bullet.h`（`Facing8` + 命中判定纯函数 + 常量）+ `Bullet` suite（8 用例） | ⬜ 未开始 |
+| 2 | `game/Bullet.h`（`Facing8` + 命中判定纯函数 + 常量）+ `Bullet` suite（8 用例） | ✅ **2026-10-10 完成**：本人回报 `160 passed, 0 failed`（152 → +8）；偏差 3/4 见上表；⚠️ R3 原方案被推演否掉并改写（见 §10.3.2），顺带发现用例缺口 **B9**（⬜ 待补） |
 | 3 | 接线：`FireBullet` / `ResolveBullets` / `m_bullets` / **`Key::K` 退休** / 改写 `EnemyDiesAndDisappears` | ⬜ 未开始 |
 | 4 | **真删**（`TECH_DEBT` C16 到期）+ `KilledEnemyIsRemovedAndLeavesNoDanglingId` | ⬜ 未开始 |
 | 5 | HUD 两行（`kHudRow` 1→2 + `kills` + `dir` + 提示加 `F7`）+ 修 `PlayerIsDrawnAtItsCell` | ⬜ 未开始 |
@@ -109,6 +109,8 @@
 | --- | --- | --- | --- |
 | **1** | §2/§6.1 写"`Collision.h`（+2 个纯函数 + **1 条 `static_assert`**）" | **不加 `static_assert`** —— 采样段里只有 2 个函数 | 采样要的界是"步长 ≤ 1 格"，而现有那条 `kMaxStepPerTick < 1.0f` **已经更强** ⇒ 再写一条就是它的**推论**，**永远不会红**（`TECH_DEBT` C18 刚教过一次"空断言比没有更坏"）。这条性质的守卫改由**用例** `Sweep.ConsecutiveSamplesNeverSkipATile` 承担，理由写在 `Collision.h` 采样段注释里 |
 | **2** | §6.1 的注释写"步长与 `MoveAndCollide` 的**同一个常量** ⇒ 位移与判定走在**同一套格点**上" | 用的是同一个**常量** ✓，但**步数口径不同**：采样器按**线段长度（欧氏距离）**算步数，`MoveAndCollide` 按**单轴最大位移**算 | 欧氏口径把斜向线段切得**更细**（采样每步欧氏位移 ≤ 0.5 格；位移那边按主轴算，斜向每步可达 0.707 格）⇒ **判定只会比位移更保守**，"两边都 < 1 格 ⇒ 都跳不过一整格"这条**关键性质仍然成立**。⚠️ 原措辞"同一套格点"**说过了头**，已在 `Collision.h` 的注释里改准（写明两个口径的差别与它为什么仍然安全） |
+| **3** | §6.2 只写"`DirectionToFacing`：零向量返回 false"，**没写多分量输入的判据** | 实现成"**最近的 8 向**"（±22.5° 边界，常量 `kOctantBoundary = √2−1`），**不是**"两个分量都非零就算斜向" | 后者对 `(3,1)` 会判成东北（实际离东只有 18.4°）。本游戏的输入只有 {−1,0,+1} 组合，**两种写法结果相同** —— 但纯函数要对**任意**输入成立，而且"最近 8 向"能直接用例钉住（`B1` 里有 `(3,1)→East`、`(1,3)→South` 两条）。代价：多 1 个常量 + 3 行分支 |
+| **4** | §6.2 的接口里**没有**越界枚举的兜底 | `FacingToVec2` 越界 → 退回**东**（**不是**零向量）；`FacingGlyph` 越界 → `"??"`（**保持 2 字符宽**） | 越界只能由强制转换造出来（正常路径不存在），但纯函数要全域安全。⚠️ 两个兜底各有理由：**零向量**会造出一颗"原地不动、永远赖在屏幕上"的子弹；**1 字符**会让 HUD 后面的列左右跳（分叉 ④ 刚定的"定宽 2"）。两条都有用例（`B3`/`B4` 各一条） |
 
 ---
 
@@ -473,6 +475,7 @@ return result                                               // 什么都没碰�
 | 6 | `FirstEnemyOnSegmentIgnoresEnemiesOffTheLine` | 线段外的敌人不中（防"拿距离糊弄"） |
 | 7 | `WallBlocksEnemyBehindIt` | ★墙优先：墙后的敌人**不中**（D8） |
 | 8 | `ReturnsTheFirstEnemyAlongTheSegment` | 多个敌人时返回**线路上第一个**（不是最近的） |
+| **9** | `EnemyStandingInsideWallIsBlockedNotHit` | ⬜ **待补**（2026-10-10 推演 R3 时发现）：**同一个采样点既实心又站着敌人**时，必须报 `blocked` 而不是命中 ⇒ 这才能把"循环内墙优先"这条**顺序**钉住（见 §10.3.2）。⚠️ 游戏里这个状态**不可达**（敌人只出生在空地、且撞不进墙），所以它是**防御分支** —— 但按"实现了的分支必须有用例"这条纪律，它得补 |
 
 **`Game` suite（+8 条，其中 1 条是改写）**
 
@@ -516,7 +519,7 @@ ctest --test-dir build -C Debug --output-on-failure
 | --- | --- | --- |
 | R1 | 采样步长改成 **2 格**：把 `SweepStepCount` 里那**两处** `kMaxStepPerTick` 临时换成**字面量 `2.0f`** | ⚠️ **步骤 1 后就能做**：`Sweep.ConsecutiveSamplesNeverSkipATile`（**只这一条**：S4/S5 的线段长度是 2 的倍数，2 格步长照样落在墙上 ⇒ 仍绿）。⚠️ **不许**改常量 `kMaxStepPerTick` 本身 —— 它有 `static_assert(< 1.0f)`，改成 2.0 **直接编译不过** |
 | R2 | `ResolveBullets` 改用**积分后的位置**做一个点判定（不做采样） | `Game.BulletHitsEnemyEvenAtMaxDelta` |
-| R3 | 采样器里**先判敌人、后判实心**（墙不再优先） | `Bullet.WallBlocksEnemyBehindIt` |
+| R3 | **把 `FirstEnemyOnSegment` 里的墙判定整段删掉**（⚠️ **不是**原来的"对调判定顺序"——理由见下） | `Bullet.WallBlocksEnemyBehindIt`（**2 条断言**：`hit.blocked` 与 `inside.blocked`）；其余 7 条仍绿（`B6` 的线段不碰墙） |
 | R4 | `FireBullet` 改用 `Held` 而不是 `Pressed` | `Game.HoldingSpaceFiresOnlyOnce` |
 | R5 | 真删只删 `Entity`、**不删 `m_enemies`** | `Game.KilledEnemyIsRemovedAndLeavesNoDanglingId` |
 | R6 | 去掉 `m_bullets` 的帧末自愈压缩 | `Game.BulletsDoNotAccumulateForever`（可能不红 → 需如实登记） |
@@ -545,6 +548,22 @@ ctest --test-dir build -C Debug --output-on-failure
 
 **还原**：破坏码已改回 `kMaxStepPerTick`；`git diff --stat` 与破坏前**逐字节相同**（`Collision.h` 仍是 `+67/−2`）；`kR1BrokenStep` 与 🚨 标记各 **0 处**。
 ⚠️ **还原后没有第三次运行**：本步本人的两次回报是「破坏前 **152 passed, 0 failed**」与「破坏后 **1 红**」；还原后的代码与第一次运行的那份**完全相同**（不是推断，是 diff 比对），所以第三次没跑 —— 要跑也行，只是重复。
+
+#### 10.3.2 动手前的推演：**R3 的原方案必须改**（2026-10-10，步骤 2 完成后）
+
+原方案写的是"把 `FirstEnemyOnSegment` 里**先判实心、后判敌人**的顺序**对调**"（墙不再优先）。推演之后发现：**那样一条都不会红。**
+
+**为什么**：`FirstEnemyOnSegment` 是**沿线段逐点**走的。对 `B7` 的主场景（墙在格 7、敌人在格 9），采样点先到达墙那一格（x≈7.5）再到达敌人那一格（x≈9.5）——
+所以**无论循环里两条判定的先后如何**，"先碰到的都是墙"⇒ 结果一样。**顺序只在"同一个采样点既实心、又站着敌人"时才可观察**，
+而那要求**敌人卡在墙里** —— 游戏里不可达（敌人只出生在空地，且撞不进墙）。
+
+⇒ 这正是 S8 学到的第 1 条发现的复发：**参数/顺序级的破坏在期望值不覆盖它时是空转**。
+
+**处置**：
+1. **R3 改成"把墙判定整段删掉"** —— 这测的是"墙规则**存不存在**"（安全相关的那一半），一条也不会空转：`B7` 的两条 `blocked` 断言会红；
+2. **发现一个用例缺口** → `§10.1` 补记 **B9**（`EnemyStandingInsideWallIsBlockedNotHit`，⬜ 待补）：把"循环内墙优先"这条顺序钉住。
+   ⚠️ 它测的是**不可达状态下的防御分支**，属于"实现了的分支必须有用例"那条纪律，**不是**功能需求；
+3. **诚实登记**：B9 补齐之前，"循环内两条判定的先后"**没有机器守卫** —— 靠的是这条"墙在敌人前面"的推理 + `B7` 的两条断言（它们守住的是**规则本身**，不是**顺序**）。
 
 ### 10.4 交付后的自检
 

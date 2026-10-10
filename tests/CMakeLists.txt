@@ -16,6 +16,8 @@
 #   test_camera.cpp      —— S6 的用例（不需要终端：Camera 是纯函数，不认识 TileMap/FrameBuffer）
 #   test_collision.cpp   —— S7 的用例（不需要终端：Collision 只碰 TileMap + Vec2，无状态）
 #   test_enemy.cpp       —— S8 的用例（不需要终端：EnemyBrain 只碰 Vec2 + 枚举，纯函数）
+#   test_bullet.cpp      —— S9 的用例（不需要终端：Bullet 只碰 Vec2 + Collision + TileMap，
+#                             纯函数；命中判定收的是"敌人位置"而不是实体指针，所以不需要世界）
 # 新加用例文件必须在这里手写进源文件列表（S0 明确禁用 file(GLOB)）。
 # ============================================================
 
@@ -32,6 +34,7 @@ add_executable(mini_tests
     test_camera.cpp
     test_collision.cpp
     test_enemy.cpp
+    test_bullet.cpp
 )
 
 target_include_directories(mini_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
