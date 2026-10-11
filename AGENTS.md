@@ -96,6 +96,7 @@ AI 替我跑了，我就丢掉了第一手的反馈。
 | `doc/S6_CHECKLIST.md` | S6 施工图：`render/Camera.h`（snap 跟随 + 边界夹取）、整数原点消掉 E-8、与 PLAN 的 6 条差异、正/反向验收 |
 | `doc/S7_CHECKLIST.md` | S7 施工图：`world/Collision.h`（分轴 + 夹紧 + 子步进）、"越界 = 墙"、与 PLAN 的 7 条差异、18 个用例 |
 | `doc/S8_CHECKLIST.md` | S8 施工图：`ai/EnemyBrain.h`（五态 FSM 纯函数）+ `game/` 侧 `EnemyData`、迟滞与抖动的坑、23 个用例、10 条落地偏差 |
+| `doc/S9_CHECKLIST.md` | S9 施工图：`game/Bullet.h`（纯函数命中判定）+ `world/Collision.h` 采样器、子弹接线与**真删**、HUD 两行、12 条落地偏差、**8 场反向验证的实测记录** |
 | `doc/TECH_DEBT.md` | **技术债清单与执行计划**：A/B/C/D 四组（A 只跑命令、B 要改代码、C 明确推迟附触发条件、D 已关闭留档）。**每阶段收口时更新它** |
 | `doc/MINITEST_SPEC.md` | 要手写的测试框架 MiniTest 的规格（接口、注册机制、runner 行为、坑） |
 | `doc/CTEST_NOTES.md` | CTest 入门：与 GoogleTest 的分工、命令速查、PowerShell 差异 |
