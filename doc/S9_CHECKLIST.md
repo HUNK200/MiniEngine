@@ -10,7 +10,7 @@
 | 项 | 状态 |
 | --- | --- |
 | 本文件 | ✅ **2026-10-10 定稿**（4 个分叉已由本人拍板） |
-| 代码 | **步骤 1 / 2 / 3 / 4 已验证**（152 / 160 / **167** / **168** 绿；R1、R3′ 已做）；**步骤 5（HUD 两行）已写完、待构建** → 期望 **169 绿**。⚠️ 工作区**尚未提交**（步骤 3 收尾 + 步骤 4 + 步骤 5 都在里面） |
+| 代码 | ✅ **步骤 1~5 全部已验证**（152 / 160 / 167 / 168 / **169** 绿）· ✅ **反向验证 R1 / R2 / R3′ / R4 / R5 / R5′ / R6 / R7 全部做完**（R6 全绿 = 无守卫，已登记 `TECH_DEBT` **C23**）· ✅ **人眼验收通过**（§10.2 八条 + R7 观察点）。⚠️ 提交状态见下行 |
 | 上一阶段 | S8 已全部收口并推送（`ORIGIN/main` = `76eb583`），用例 **146** |
 
 ## 分工约定（沿用 `AGENTS.md` 1.4，S8 已跑通一遍）
@@ -99,9 +99,9 @@
 | 2 | `game/Bullet.h`（`Facing8` + 命中判定纯函数 + 常量）+ `Bullet` suite（8 用例） | ✅ **2026-10-10 完成**：本人回报 `160 passed, 0 failed`（152 → +8）；偏差 3/4 见上表；⚠️ R3 原方案被推演否掉并改写（见 §10.3.2），顺带发现用例缺口 **B9**（⬜ 待补） |
 | 3 | 接线：`FireBullet` / `ResolveBullets` / `m_bullets` / **`Key::K` 退休** / 改写 `EnemyDiesAndDisappears` | ✅ **2026-10-10 完成**：`Key::K` 从枚举+映射+用例删净；新增 7 条 `Game` 用例（160 → **167**）。<br>过程：第一次实测 **166 passed, 1 failed**（`Game.BulletHitsEnemyEvenAtMaxDelta`，`lhs=3 rhs=4`）→ 定案为**用例判据的假前提**（偏差 9，本人跑 exe + `F7` 人眼确认了"两只敌人叠在同一格"）→ 判据改写成"与面板真值比"；同时修掉 `Key::K` 漏扫的第三处（偏差 10）。<br>**本人回报最终 `167 passed, 0 failed`** |
 | 4 | **真删**（`TECH_DEBT` C16 到期）+ `KilledEnemyIsRemovedAndLeavesNoDanglingId` | ✅ **2026-10-10 完成**：`ResolveBullets` 收"待删 id 名单"（循环内）→ MarkForRemoval + `erase_if(m_enemies)`（循环外，两边一起删）；`PanelSummary` 的 `deadCount` 换成表头的 `enemyCount` + 新增 `hasIdGone`；新用例 `Game.KilledEnemyIsRemovedAndLeavesNoDanglingId`（167 → **168**）。**本人回报 `168 passed, 0 failed`**。<br>⚠️ 反向验证 **R5 / R5′** 与人眼 1 条**还没做**（排进步骤 7）|
-| 5 | HUD 两行（`kHudRow` 1→2 + `kills` + `dir` + 提示加 `F7`）+ 修 `PlayerIsDrawnAtItsCell` | ⚠️ **代码已写完，未构建/未运行**（2026-10-10 家机）：`kHudRow` 1→2 并**顺带把语义在注释里写准**（它是"HUD 占的行数"= "世界视口第一行"）；`DrawHud` 拆两行（行 1 位置类 / 行 2 状态类）；涟漪三处（用例的 `kTestHudRow` 镜像 + 两个扫描起点）+ 新用例 `Game.HudFitsInTwoLinesWithoutOverflow`（168 → **169**）<br>👉 **待构建**：`cmake --build build --config Debug` + `mini_tests.exe`（期望 **169 绿**）|
-| 6 | 收口：同步第 11 节的文档 + `TECH_DEBT`（C11/C15/C16 到期 + 新增项） | ⬜ 未开始 |
-| 7 | 验收：正向（10.2）+ 反向验证（10.3）+ 人眼 | ⬜ 未开始 |
+| 5 | HUD 两行（`kHudRow` 1→2 + `kills` + `dir` + 提示加 `F7`）+ 修 `PlayerIsDrawnAtItsCell` | ✅ **2026-10-11 完成**：`kHudRow` 1→2 并**顺带把语义在注释里写准**（它是"HUD 占的行数"= "世界视口第一行"）；`DrawHud` 拆两行（行 1 位置类 / 行 2 状态类）；涟漪**五处**（用例的 `kTestHudRow` 镜像 + 两个扫描起点 + `startRow` + 两处注释，见偏差 12）+ 新用例 `Game.HudFitsInTwoLinesWithoutOverflow`（168 → **169**）。**本人回报 `169 passed, 0 failed`**。⚠️ 分两批提交：步骤 3 收尾+4+5 → `5126869` |
+| 6 | 收口：同步第 11 节的文档 + `TECH_DEBT`（C11/C15/C16 到期 + 新增项） | 🟡 **进行中**：`TECH_DEBT` 已关 **C16**、新增 **C22 / C23**、补记 **C15** 的漏扫；**还欠**：`PLAN` 的 `A.2`/`G`/`H` 全量回填 + 本文件 §11 同步 |
+| 7 | 验收：正向（10.2）+ 反向验证（10.3）+ 人眼 | ✅ **基本完成**：反向 **R1/R2/R3′/R4/R5/R5′/R6/R7 八场全做完**（总账见 §10.3.0）· 人眼 §10.2 八条 + R7 观察点**本人回报通过**。⚠️ **还欠两项**：① 偏差 13 的两条断言待补（补完要**重跑 R4** 反证）② `Bullet` suite 的 **B9** 缺口（`EnemyStandingInsideWallIsBlockedNotHit`）|
 
 ## 落地偏差（实现时发现的问题，逐步追加）
 
@@ -119,6 +119,7 @@
 | **10** | §9 坑 6/7 与 `TECH_DEBT` C15 都把 `Key::K` 的落点列全了（枚举 / VK 映射 / `test_input_state` 断言 / `kKillKey` / `KillNearestEnemy` / 那条用例） | ⚠️ **漏了第三处**：`DrawAiPanel` 的表头字符串 **`"F7 AI  n=%d   K=kill nearest"`**（`Game.cpp:681`）—— 一直教人去按一个已经不存在的键 | **假提示比缺提示更坏**（用户按了没反应，会以为是输入坏了）。C15 原话就写着"删的时候**三处一起**：`kAiPanelKey`/`kKillKey` 常量、**面板表头里那个字母**、`KeyCode.h` 的两条映射"。<br>⚠️ **教训（我的扫描方式也有同一个盲区）**：`grep 'Key::K\|kKillKey\|KillNearestEnemy'` 扫不到它 —— 那里写的是**提示文本里的一个字母** `K=`。删键/改键时除了 grep **标识符**，还要 grep **提示文本里的那个字母**（`grep -rn 'K=\|kill'`）。已写进 `Game.cpp` 那一处的注释 |
 | **11** | 分叉 ④ 给的 HUD 行布局示例：行 1 = `pos` + `tile`（34 列）· 行 2 = `hp` + `kills` + `dir` + 提示（44 列） | **`sumdt` 与 `v` 留在行 1**（行 1 实际 **58 列**、行 2 **44 列**，合计仍远低于 160 列预算） | ⚠️ 示例布局**漏了两个栏目**，而同一段话又写着"现有字段**一个不用砍**（`pos`/`tile`/`sumdt`/`v`/`hp` 全留）"—— 两句冲突时按后者。<br>**为什么 `sumdt` 必须和 `pos` 同行**：10.2 的运行时自证是 `pos ≈ v × sumdt`，**一行之内**才能一眼核对；拆到第二行也能看，但跨行对照更费眼。<br>代价：行 1 从示例的 34 列变 58 列 —— 仍然 < 80，**没有溢出风险**（新用例 `Game.HudFitsInTwoLinesWithoutOverflow` 钉着） |
 | **12** | 施工图 §坑 11 只列了涟漪两处：`PlayerIsDrawnAtItsCell` 的 `startRow` + 两个辅助函数的扫描起点 | 还多出**两处**：① 用例侧新增 **`kTestHudRow = 2` 镜像常量**（`Game::kHudRow` 是 `Game.cpp` 的**文件内**常量、刻意没开公开接口 ⇒ 测试只能照抄）；② `tests/test_game.cpp` 顶部那句"画布要 ≥ **201**×201（视口高 = 画布高 − 1）"要改成 **202**（视口高 = 画布高 − **2**）；③ `Camera.h` 与 `test_camera.cpp` 里两处把它说成"Game::kHudRow"的注释要改准 | ⚠️ ①的失效方向是**安全**的（不同步 ⇒ `PlayerIsDrawnAtItsCell` 直接红，不是静默错位）。<br>②的取值 256 仍然满足 202 ⇒ **代码不用改，只有注释要改**。<br>③`tests/test_camera.cpp` 的 `kViewH = 23` **不受影响**（那是 Camera 单测自己的入参；数值 23 与 game 的 `25 − 2` 相同纯属巧合，已写进注释免得后人误判耦合）。<br>⚠️ 这次的教训同偏差 9：**凡是"拿屏幕行号/列号当期望值"的地方都要过一遍**，不能只 grep 常量名 |
+| **13** | §10.1 里 `BulletDiesOnWall` / `BulletsDoNotAccumulateForever` 的判据写成"屏幕上 `'*'` **== 0**" | **判据方向对，但不够**：还要补一条"这一枪**真的出膛了**"（`FireOnce` 之后先 `MINI_CHECK(CountChar(fb,'*') >= 1)` 再等它消失）。⏳ **待改（1 行/条）** | ⚠️⚠️ **反向验证 R4 暴露出来的**（§10.3.4）：把开火判定改成 `Held` 之后**一发子弹都发不出来**，而这两条却**照样绿** —— `== 0` 无法区分"子弹消失了"与"子弹没生出来"。<br>⚠️ 与偏差 9 是同一族问题（**判据的隐含前提**），但方向相反：偏差 9 是"绿得诈胡"，这条是"**绿得没信息**"。<br>⚠️ `G1` 有 `MINI_CHECK(bullet.found)` 兜着，所以这个缺口只在这两条上；`G4`（`BulletDamagesEnemy`）断的是"没有变化"，天然偏静，**不补**（补了也是恒真）。<br>⚠️ **补完必须重跑 R4** —— 那时这两条**也该红**，那才是补对了的证明 |
 
 ---
 
@@ -459,7 +460,7 @@ return result                                               // 什么都没碰�
 
 ## 10. 验收
 
-### 10.1 用例清单（实测：S8 收口 146 → 步骤 1 **152** → 步骤 2 **160** → 步骤 3 **167** → 步骤 4 **168** → 步骤 5 **169**（⬜ 步骤 5 待实测））
+### 10.1 用例清单（实测：S8 收口 146 → 步骤 1 **152** → 步骤 2 **160** → 步骤 3 **167** → 步骤 4 **168** → 步骤 5 **169** ✅）
 
 **`Sweep` suite（`tests/test_collision.cpp`，离线纯函数，6 条）**
 
@@ -528,15 +529,31 @@ ctest --test-dir build -C Debug --output-on-failure
 | # | 破坏方式 | 应变红的用例 |
 | --- | --- | --- |
 | R1 | 采样步长改成 **2 格**：把 `SweepStepCount` 里那**两处** `kMaxStepPerTick` 临时换成**字面量 `2.0f`** | ⚠️ **步骤 1 后就能做**：`Sweep.ConsecutiveSamplesNeverSkipATile`（**只这一条**：S4/S5 的线段长度是 2 的倍数，2 格步长照样落在墙上 ⇒ 仍绿）。⚠️ **不许**改常量 `kMaxStepPerTick` 本身 —— 它有 `static_assert(< 1.0f)`，改成 2.0 **直接编译不过** |
-| R2 | `ResolveBullets` 改用**积分后的位置**做一个点判定（不做采样） | `Game.BulletHitsEnemyEvenAtMaxDelta` |
+| R2 | `ResolveBullets` 把 `FirstEnemyOnSegment`（采样）换成**只判终点那一格**的点判定 | ⚠️⚠️ **实测红 4 条**（不是原预判的 1 条）：`EnemyDiesAndDisappears` · `ThreeHitsKillAnEnemy` · `BulletHitsEnemyEvenAtMaxDelta` · `KilledEnemyIsRemovedAndLeavesNoDanglingId`，**全是"打不死"**（`Kills()==0` + `enemyCount` 停在 5）。⇒ **点判定的危害不止于 `dt` 最大时**（0.75 格/帧 也一发都打不中）。⚠️ 因此 R2 证的是"**点判定整体不成立**"，**不是**"只有 max-delta 会穿靶"—— 详见 §10.3.5 |
 | R3 | **把 `FirstEnemyOnSegment` 里的墙判定整段删掉**（⚠️ **不是**原来的"对调判定顺序"——理由见下） | `Bullet.WallBlocksEnemyBehindIt`（**2 条断言**：`hit.blocked` 与 `inside.blocked`）；其余 7 条仍绿（`B6` 的线段不碰墙） |
-| R4 | `FireBullet` 改用 `Held` 而不是 `Pressed` | `Game.HoldingSpaceFiresOnlyOnce` |
-| R5 | 真删**只 `MarkForRemoval(Entity)`、不 erase `m_enemies`** | `Game.KilledEnemyIsRemovedAndLeavesNoDanglingId`：面板会印 `<id gone>` ⇒ `!hasIdGone` **红**，且 `enemyCount == nBefore-1` 也红（两个方向都钉住） |
-| R5′ | **反向的那一半**（2026-10-10 步骤 4 加）：只 erase `m_enemies`、**不 `MarkForRemoval(Entity)`** | 同一条用例：实体还留在世界里、**没人驱动它** ⇒ 面板 `n=` 是 4 但屏幕上多画一个 `'E'` ⇒ `nAfter == panel.aliveTiles` **红** |
-| R6 | 去掉 `m_bullets` 的帧末自愈压缩 | `Game.BulletsDoNotAccumulateForever`（可能不红 → 需如实登记） |
-| R7 | 加**第二行 HUD** 但不改 `kHudRow`（叠加式） | 人眼：贴地图上边缘时玩家被文字盖住（**这条只有人眼能验**） |
+| R4 | `OnUpdate` ⑤c 把开火判定 `Pressed` 改成 **`Held`** | ⚠️⚠️ **原预判"只红 `Game.HoldingSpaceFiresOnlyOnce`"是错的** —— 2026-10-11 实测红 **6 条**（见 §10.3.4）。原因：`Held` 只在 `was && now` 时返回（`InputState.h:88`），**按下那一帧拿到的是 `Pressed`** ⇒ `FireOnce`（按一帧就松）在破坏码下**一发都发不出来**，所有依赖它的用例一起红 |
+| R5 | 真删**只 `MarkForRemoval(Entity)`、不 erase `m_enemies`** | ✅ **实测红 4 条 / 7 行、逐条与预判吻合**：`EnemyDiesAndDisappears` · `ThreeHitsKillAnEnemy` · `KilledEnemyIsRemovedAndLeavesNoDanglingId`（各 2 行 = `enemyCount` + `!hasIdGone`）+ `BulletHitsEnemyEvenAtMaxDelta`（1 行 = `enemyCount`，它没有 `hasIdGone` 断言）。⚠️ **`Kills()` 那几行是绿的**（击杀正常 ⇒ 只砍掉了一半）⇒ 签名与 R2 明显不同，见 §10.3.6 |
+| R5′ | **反向的那一半**（2026-10-10 步骤 4 加）：只 erase `m_enemies`、**不 `MarkForRemoval(Entity)`** | ✅ **实测红 4 条 / 4 行，全部落在 `nAfter == panel.aliveTiles`**（预判的就是这一条）：`EnemyDiesAndDisappears` `:878` · `ThreeHitsKillAnEnemy` `:1060` · `KilledEnemyIsRemovedAndLeavesNoDanglingId` `:1196` 都是 `lhs=5 rhs=4`；`BulletHitsEnemyEvenAtMaxDelta` `:1134` 是 `lhs=4 rhs=3`（那一帧有两只**活**敌人叠格 ⇒ 两侧各少 1，**差值 +1 才是不变式**）。⚠️ 我动手前担心的"僵尸与活敌人叠格 ⇒ 假绿"**没有发生**。见 §10.3.7 |
+| R6 | 去掉 `m_bullets` 的帧末自愈压缩（把 ⑨b 整段注释掉） | ⚠️ **实测全绿（`169 passed, 0 failed`）—— "可能不红"应验 ⇒ 如实登记"自愈压缩目前没有机器守卫"**，见 §10.3.8 与 `TECH_DEBT` **C23**。⚠️ 这才是"绿了不代表通过"的标准例子 |
+| R7 | 加**第二行 HUD** 但不改 `kHudRow`（叠加式），并把 `static_assert` 注掉 | ✅ **实测：机器红 1 条 / 2 行**（`PlayerIsDrawnAtItsCell`：`fb.At(startCol, startRow).ch=='@'` + `end.y` `lhs=3 rhs=4`）+ **人眼：贴地图上边缘时 `@` 被第二行 HUD 盖住**。⚠️ 原设计说"只有人眼能验"—— 实测**有一半被机器抓住了**（`kTestHudRow` 镜像常量把"玩家该在第几行"变成了可断言的）。⚠️ **`static_assert(kHudRow >= 2)` 不注掉直接编译不过 ⇒ 它不是空断言**。见 §10.3.9 |
 
 > ⚠️ **R6 我预判可能不红**（过期 id 只是"多发一次 `Find`"）→ 若真不红，**如实登记**为"自愈压缩目前没有机器守卫"，别写成"通过"。
+
+#### 10.3.0 反向验证总账（2026-10-11 全部做完）
+
+| # | 结论 | 强度 |
+| --- | --- | --- |
+| R1 | ✅ 红（1 条 / 15 行，逐条吻合） | 强 |
+| R3′ | ✅ 红（1 条 / 4 行，4/4 吻合） | 强 |
+| R4 | ✅ 红（**6 条 / 12 行**；原预判 1 条 ⇒ 预判被实测纠正） | 强（但**不精准**：一红一片） |
+| R2 | ✅ 红（**4 条 / 8 行**；原预判 1 条、我的预判 ⊆1 条 ⇒ 两个预判都被纠正） | 强（但**不精准**：证的是"点判定整体不成立"） |
+| R5 | ✅ 红（4 条 / 7 行，逐条吻合；`Kills()` 不红 ⇒ 与 R2 签名不同） | **强且精准** |
+| R5′ | ✅ 红（4 条 / 4 行，全部落在同一条断言上） | **强且精准** |
+| R6 | ⚠️ **全绿** ⇒ 如实登记"**没有机器守卫**"→ `TECH_DEBT` **C23** | **无守卫（已知并接受）** |
+| R7 | ✅ 机器红 1 条 / 2 行 + **人眼看到 `@` 被盖住** | 强（人眼那半条不可替代） |
+
+⇒ **7 场里 6 场真的红了、1 场是"绿出来的欠账"**。三处被测出来的**新缺口**：偏差 13（`G3`/`G6` 的 `== 0` 断言）、`TECH_DEBT` **C23**（自愈压缩无守卫）、`TECH_DEBT` **C22**（不可达的 `Dead` 分支，步骤 4 拍板保留时登记）。
+⚠️ **最大的方法论收获**：**"预判"本身会被反向验证纠正**（R4 与 R2 都是"预判写窄了"）—— 所以 §10.3 表格里那些"应变红的用例"**只是动手前的假设，不是结论**；结论在这 8 份实测记录里。
 
 #### 10.3.1 实测记录 —— R1（2026-10-10；**AI 改破坏码，本人跑**）
 
@@ -596,6 +613,184 @@ ctest --test-dir build -C Debug --output-on-failure
 ⇒ **4/4 行逐条吻合**，而且失败信息本身说明了性质：`lhs=0 rhs=-1` = "墙后的敌人**被命中了**" —— 正是墙判定存在的理由。
 
 **还原**：`git checkout -- game/include/game/Bullet.h` 一行回到提交状态（🚨 标记 0 处、`(void)map` 0 处、`IsSolidAt` 回到 2 处）。**未再运行**（还原后与 `2d364ac` 逐字节相同）。
+
+#### 10.3.4 实测记录 —— R4（2026-10-11；**AI 改破坏码，本人跑**）
+
+**破坏方式**：`Game.cpp` 的 `OnUpdate` ⑤c 把 `input.Get(kFireKey) == KeyState::Pressed` 改成 `== KeyState::Held`（只这一处，+4/−1，带 🚨 标记）。
+
+**动手前改了一次预判**：§10.3 原写"只红 `HoldingSpaceFiresOnlyOnce`"。读 `InputState::Get`（`InputState.h:76-98`）后判定那条**是错的** —— `Held` 要求 `was && now`（上一帧末就已按着），而**按下那一帧返回的是 `Pressed`** ⇒ 破坏码下"按一帧就松"的 `FireOnce` **一发都发不出来**。预判改为 **6 条**，实测**逐条吻合**：
+
+| 用例 | 实际红行 | 预判 | 一致 |
+| --- | --- | --- | --- |
+| `Game.EnemyDiesAndDisappears` | `:881` `Kills()==1`（`lhs=0`）+ `:886` `enemyCount==nBefore-1`（`lhs=5 rhs=4`） | 同 2 行 | ✅ |
+| `Game.FiringSpawnsBulletAlongFacing` | `:930` `MINI_CHECK(bullet.found)` | 同 1 行 | ✅ |
+| `Game.HoldingSpaceFiresOnlyOnce` | `:956` `CountChar(fb,'*')==1`（**`lhs=2 rhs=1`**） | `lhs=2 rhs=1` | ✅ |
+| `Game.ThreeHitsKillAnEnemy` | `:1058` + `:1061` | 同 2 行 | ✅ |
+| `Game.BulletHitsEnemyEvenAtMaxDelta` | `:1133` + `:1139` | 同 2 行 | ✅ |
+| `Game.KilledEnemyIsRemovedAndLeavesNoDanglingId` | `:1191` + `:1198` | 同 2 行 | ✅ |
+
+⇒ **红集 6/6、行号 12/12、连 `lhs/rhs` 三个值都对上**（尾行本人没贴，按注册表推为 `163 passed, 6 failed`）。
+
+**⚠️⚠️ 反向验证的真正收获：3 条"预判仍绿"的用例，实测确实全绿 —— 这就是一条守卫缺口**
+
+| 用例 | 为什么绿 | 性质 |
+| --- | --- | --- |
+| `Game.BulletDiesOnWall` | 只断"屏幕上 `*` **== 0**" —— **根本没开火也满足** | ⚠️ **区分不了"子弹消失了"与"子弹没生出来"** |
+| `Game.BulletsDoNotAccumulateForever` | 同上（`== 0`） | 同上 |
+| `Game.BulletDamagesEnemy`（G4） | 断的是"**没有变化**"（`n=` 不变 + `Kills()==0` + 屏幕==真值）—— 不开火当然没变化 | 判据方向天然偏"静"，偏不出一条错 |
+
+⇒ **登记为偏差 13**：`G3`/`G6` 这两条"`== 0`"的断言**各自不能自证"子弹真的生出来过"**（`G1` 有 `bullet.found` 兜着，它们没有）。
+**处置（待做，1 行/条）**：在 `FireOnce` 之后、等待之前补一条 `MINI_CHECK(CountChar(fb, '*') >= 1)`（"这一枪真的出了膛"），让"生出来 → 消失"变成**两段可分辨**的判据。⚠️ 补完之后 **R4 的破坏码正好是它的反证**（那时这两条也该红）—— 所以补完要**重跑一次 R4**。
+
+**还原**：`git checkout -- game/src/Game.cpp` 一行回到 `5126869`。核对：🚨 标记 **0**、`KeyState::Held` **0**、`input.Get(kFireKey) == KeyState::Pressed` **1**、`git status` **空**。**未再运行**（还原后与 `5126869` 逐字节相同）。
+
+#### 10.3.5 实测记录 —— R2（2026-10-11；**AI 改破坏码，本人跑**）
+
+**破坏方式**：`ResolveBullets` 里把 `game::FirstEnemyOnSegment(map, from, to, enemyPositions)` 换成**"只判 `to` 那一格"的点判定**（撞墙/命中各一次 `ToIndex` 比较）。⚠️ **帧序没动、`Bullet.h` 一字未改**（`sweep` 纯函数与它的 8 条用例原地不动 ⇒ `Bullet.*` 全套仍绿）。只这一处，`Game.cpp` **+20/−2**，带 🚨 标记。
+
+**实测红集：4 条，每条的失败内容**完全一致**（都是"打不死"）**：
+
+| 用例 | 实际红行 | 内容 |
+| --- | --- | --- |
+| `Game.EnemyDiesAndDisappears` | `:881` + `:886` | `Kills()==1` → `lhs=0` · `enemyCount==nBefore-1` → `lhs=5 rhs=4` |
+| `Game.ThreeHitsKillAnEnemy` | `:1058` + `:1061` | 同上 |
+| `Game.BulletHitsEnemyEvenAtMaxDelta` | `:1133` + `:1139` | 同上 |
+| `Game.KilledEnemyIsRemovedAndLeavesNoDanglingId` | `:1191` + `:1198` | 同上 |
+| **绿** | — | `G1`/`G2`/`G3`/`G4`/`G6` + 其余全套（尾行未贴，按注册表推 `165 passed, 4 failed`） |
+
+**⚠️ 两个预判都错了，而且错的方向相反于 R4 那次**：
+
+| | §10.3 原预判 | 动手前我的预判 | 实测 |
+| --- | --- | --- | --- |
+| 红集 | 只 `BulletHitsEnemyEvenAtMaxDelta` | **⊆ {G7}**（还明确写"1/60 的那几条预判仍绿"） | **4 条**，其中 **3 条是 1/60 的** |
+
+⇒ **点判定的危害不止于 `dt` 最大时**：在真实交战几何下 **0.75 格/帧也一发都打不中**。
+
+**结论（写法要准，别让它去替别的东西背书）**：
+
+1. ✅ **守卫成立**：把采样换成点判定 ⇒ 用例**确实红**（4 条）。分叉 ②（沿线段采样）拿到了**比预期更硬的证据**。
+2. ⚠️ **但这个反证不"精准"**：它一下红 4 条，**无法把"2.25 格/帧穿靶"这一因单独隔离出来**。⇒ R2 证明的是"**点判定整体不成立**"，**不是**"只有 max-delta 会穿靶"。想单独证后者，得设计一个**只**在 max-delta 下失效的几何（例如让敌人静止、且把 dt 当唯一变量）。
+3. ⚠️ 顺带**第二次**印证了偏差 13：`G3`/`G6` 在 R2 下**照样绿**（仍然是"没生出来"与"生出来又消失"分不清）。
+
+**机制：未定（不判定，如实登记）**。`Kills()==0` + `enemyCount==5` 只说明"三发加起来没打死"，至少兼容三种：
+
+| 候选 | 依据 / 疑点 |
+| --- | --- |
+| (a) 终点落进墙/柱子格 ⇒ 判 `blocked`，子弹在敌人**面前**被吃掉 | 需要"敌人正好停在墙/柱子前面"这个额外条件 |
+| (b) 经典穿靶（终点跨过敌人那一格） | ⚠️ 但 0.75 格 < 1 格宽，理论上**跳不过** 1 格目标 ⇒ 与算术矛盾 |
+| (c) **部分命中**（3 发里只中 1~2 发）⇒ 没打死 | 与 `G4`（`BulletDamagesEnemy`）绿**完全兼容**，且不需要额外假设 ⇒ **最省事** |
+
+⇒ 现有断言里**没有**能分开三者的观察面（`F7` 面板不显示敌人 hp）。**未做**额外诊断（10 秒的 exe 观察或一行打印都能定案，但 R2 的结论不依赖机制 ⇒ 不值得再花一轮；要查随时可以，见下面"留给以后"）。
+
+**还原**：`git checkout -- game/src/Game.cpp` 回到 `5126869`。核对：🚨 标记 **0**、`只判终点那一格` **0**、`FirstEnemyOnSegment` **2**（1 处调用 + 1 处 include 注释）、`git status` 只剩 `doc/S9_CHECKLIST.md`（本文档的记录）。**未再运行**（还原后与 `5126869` 逐字节相同）。
+
+**留给以后**：真出现"擦着敌人边角飞过去没打中"的手感问题时（`TECH_DEBT` **C21** 那条），可以顺手把这次的三候选分清 —— 行级打印"每帧终点 tile vs 敌人 tile"是最快的一条路。
+
+#### 10.3.6 实测记录 —— R5（2026-10-11；**AI 改破坏码，本人跑**）
+
+**破坏方式**：`ResolveBullets` 的真删循环里把 `std::erase_if(m_enemies, …)` **注释掉** ⇒ 只 `MarkForRemoval(Entity)`、`m_enemies` 一条不动（`EnemyData` 变**悬空 id**）。只这一处，`Game.cpp` **+4/−1**，带 🚨 标记。
+
+**预判与实测：4 条用例 / 7 行，逐条吻合（连行号都对上）**
+
+| 用例 | 实测红行 | 预判 | 一致 |
+| --- | --- | --- | --- |
+| `Game.EnemyDiesAndDisappears` | `:886` `enemyCount==nBefore-1`（`lhs=5 rhs=4`）+ `:887` `!hasIdGone` | 同 2 行 | ✅ |
+| `Game.ThreeHitsKillAnEnemy` | `:1058`（`lhs=5 rhs=4`）+ `:1059` `!hasIdGone` | 同 2 行 | ✅ |
+| `Game.KilledEnemyIsRemovedAndLeavesNoDanglingId` | `:1191`（`lhs=5 rhs=4`）+ `:1193` `!hasIdGone` | 同 2 行 | ✅ |
+| `Game.BulletHitsEnemyEvenAtMaxDelta` | `:1133`（`lhs=5 rhs=4`）**只这一行** | 同 1 行（该用例没有 `hasIdGone` 断言） | ✅ |
+| `Game.BulletDamagesEnemy`(G4) · 其余全套 | **绿** | 绿（无人死） | ✅ |
+
+⇒ **红集 4/4、行号 7/7**（尾行未贴，按注册表推 `165 passed, 4 failed`）。
+
+**⚠️ 这次最有价值的一点：`Kills()` 那几行**没有**红**（击杀是正常的 —— 只砍了"两边同步"的一半）⇒ **R5 的签名与 R2 明显不同**：
+
+| | `Kills()`（打没打死） | `enemyCount` / `hasIdGone`（删干净没） |
+| --- | --- | --- |
+| R2（点判定） | **红**（`lhs=0`） | 红（连带，因为没死） |
+| **R5**（只删 Entity） | **绿** | **红** |
+
+⇒ **两个方向不是"一起红"的** ⇒ 这两组守卫**各自独立**：一组守"命中/击杀"，一组守"两套真相同步"。这正是步骤 4 把判据拆成"真值 vs 真值"想要的效果（对比 S8 时代那种"一红一大片、看不出原因"的情况）。
+
+**另一个确认**：`hasIdGone`（新加的 `<id gone>` 观察面）**真的抓到了悬空 id** —— 它在 R5 下按设计红了 3 次。这是"`F7` 面板是唯一能把 `EnemyData` 写出来的面"这条推理的实证。
+
+**还原**：`git checkout -- game/src/Game.cpp` 回到 `5126869`。核对：🚨 标记 **0**、生效的 `std::erase_if(m_enemies, …)` **1** 处、`git status` 只剩 `doc/S9_CHECKLIST.md`。**未再运行**（还原后与 `5126869` 逐字节相同）。
+
+#### 10.3.7 实测记录 —— R5′（2026-10-11；**AI 改破坏码，本人跑**）
+
+**破坏方式**：同一个真删循环里把 `m_world.MarkForRemoval(pending[i]);` **注释掉**、保留 `std::erase_if(m_enemies, …)` ⇒ 实体留在世界里、`active` 仍是 true、**再没人驱动它** ⇒ 原地当活靶子**而且照样被画出来**。`Game.cpp` **+4/−1**，带 🚨 标记。
+
+**实测红集：4 条用例 / 4 行，全部落在 `nAfter == panel.aliveTiles` 这一条断言上**（正是预判的那一条）：
+
+| 用例 | 实测 | 预判 | 一致 |
+| --- | --- | --- | --- |
+| `Game.EnemyDiesAndDisappears` | `:878` **`lhs=5 rhs=4`** | `lhs=5 rhs=4` | ✅ |
+| `Game.ThreeHitsKillAnEnemy` | `:1060` **`lhs=5 rhs=4`** | `lhs=5 rhs=4` | ✅ |
+| `Game.KilledEnemyIsRemovedAndLeavesNoDanglingId` | `:1196` **`lhs=5 rhs=4`** | `lhs=5 rhs=4` | ✅ |
+| `Game.BulletHitsEnemyEvenAtMaxDelta` | `:1134` **`lhs=4 rhs=3`** | `lhs=5 rhs=4` | ⚠️ 见下 |
+| 预判"仍绿"的那些（`enemyCount` · `!hasIdGone` · `Kills()` · `G3`/`G4`/`G6`） | **全绿** | 全绿 | ✅ |
+
+**⚠️ `G7` 那个 `lhs=4 rhs=3` 不是异常，是偏差 9 的机制又出现了 —— 而且它把"差值"这条不变式暴露得更清楚**：
+
+```text
+预判的模型（无叠格）：僵尸 1 格 + 活敌人 4 格       ⇒ 屏幕 5，真值 4   （差 +1）
+实测的模型（有叠格）：僵尸 1 格 + 活敌人 4 只占 3 格 ⇒ 屏幕 4，真值 3   （差 +1）
+                       ↑                      ↑
+                  僵尸贡献的那一格         两只活敌人**叠在同一格**（偏差 9 的同一机制）
+```
+
+⇒ **真正的不变式是"屏幕比真值**多 1**"（僵尸那一格），而不是我写的那两个绝对值**。两侧同时少 1 只是因为那一帧恰好有两只活敌人叠格（`G7` 用 `dt=0.05`，追兵走得快 ⇒ 最容易叠）。
+⇒ **顺带白拿一条独立旁证**：`aliveTiles=3` 而面板有 **4 行** ⇒ **"一个敌人 ≠ 屏幕上一格"这件事在破坏码里被数据直接证实了**（此前只有人眼确认 + 那次假红）。
+
+**结论**：✅ **R5′ 的守卫成立** —— "只删 `m_enemies`、不删 `Entity`"会被**"屏幕多画一个没人驱动的 `E`"**抓住。并且这次的"可能假绿"（我动手前担心的"僵尸和活敌人叠在一格"）**没有发生**：叠格发生在那 4 只活敌人**彼此之间**，僵尸仍独占一格 ⇒ 照样红。
+
+**还原**：`git checkout -- game/src/Game.cpp` 回到 `5126869`。核对：🚨 标记 **0**、生效的 `m_world.MarkForRemoval(pending[i])` **1** 处、生效的 `std::erase_if(m_enemies, …)` **1** 处（两半都回来了）、`git status` 只剩 `doc/S9_CHECKLIST.md`。**未再运行**（还原后与 `5126869` 逐字节相同）。
+
+#### 10.3.8 实测记录 —— R6（2026-10-11；**AI 改破坏码，本人跑**）
+
+**破坏方式**：`OnUpdate` 末尾的 **⑨b** 整段注释掉 ⇒ `m_bullets` **只增不减**，里面留下"世界早就不认识它"的过期 id。`Game.cpp` **+5/−3**，带 🚨 标记。
+
+**结果：全绿 —— `169 passed, 0 failed`（本人回报）。⚠️ 这次"绿"就是结论本身，不是通过。**
+
+**为什么必然不红**（破坏前就写下来过，实测按预期）：
+
+| 为什么不红 | 说明 |
+| --- | --- |
+| 过期 id 的**唯一**后果 | `ResolveBullets` 里那句 `Find(id) == nullptr → continue` —— 多发一次 `Find`，**没有可观察行为**（它本来是"防御"，在这个破坏下变成了常规路径） |
+| `BulletsDoNotAccumulateForever` 断的是 | 屏幕上 `'*'` **== 0**；而子弹**实体**的真删走 `MarkForRemoval` + ⑨ `FlushRemovals`，**与 `m_bullets` 无关** ⇒ 照样 0 ⇒ 绿 |
+| 会不会"指错实体" | 不会：`EntityId` **永不复用** ⇒ 过期 id 只会"找不到" |
+| 有没有公开面能看到 `m_bullets` | **没有**（私有、无访问器、面板也不印它） |
+
+⇒ ✅ **如实登记：`m_bullets` 的帧末自愈压缩目前"没有机器守卫"** —— 已登记 `TECH_DEBT` **C23**（写法抄 **C17**：现状 + 触发条件 + 出路/代价）。
+
+⚠️ **一句话记住这个结果**：这条不是"守卫坏了"，而是"**从来就没有守卫**"；而它的失效模式在**今天的量级下无害**（过期 id 只是多一次 `Find`），要等子弹数量真的变大（S10）才会变成实打实的开销 —— 所以它是**可接受的欠账**，不是 bug。
+
+**还原**：`git checkout -- game/src/Game.cpp` 回到 `5126869`。核对：🚨 标记 **0**、生效的 `std::erase_if(m_bullets, …)` **1** 处、`git status` 只剩 `doc/S9_CHECKLIST.md`。**未再运行**（还原后与 `5126869` 逐字节相同）。
+
+#### 10.3.9 实测记录 —— R7（2026-10-11；**AI 改破坏码，本人跑 + 本人眼看**）
+
+**破坏方式**（三处一起，缺一处都做不成"叠加式"）：
+
+| # | 改动 | 说明 |
+| --- | --- | --- |
+| ① | `kHudRow` **2 → 1** | 视口回到 `25 − 1 = 24` 行（B 案原样） |
+| ② | `DrawHud` 里两行行号**写死** `kHudPosRow = 1` / `kHudStateRow = 2` | 不再由 `kHudRow` 派生 —— 否则第二行会跑到**行 0**（引擎顶栏）去，那就不是"叠加"了 |
+| ③ | 那条 `static_assert(kHudRow >= 2)` **注掉** | ⚠️ **不注掉直接编译不过** ⇒ **这条 `static_assert` 不是空断言**，它挡的正是这一手（步骤 5 写它时的判断被反向验证证实） |
+
+**结果（机器）**：`168 passed, 1 failed` —— 只有 `Game.PlayerIsDrawnAtItsCell` 红，**2 行**：
+
+| 断言 | 实测 |
+| --- | --- |
+| `MINI_CHECK(fb.At(startCol, startRow).ch == '@')` | 红（`startRow` 由镜像常量算 = **4**，实际玩家在**行 3**） |
+| `MINI_CHECK_EQ(end.y, startRow)` | 红，**`lhs=3 rhs=4`** |
+
+**结果（人眼，才是 R7 的本体）**：贴地图上边缘时 **`@` 被第二行 HUD 盖住、"看不见"** ⇒ 与合格版的对照（合格版：`@` 停在**行 3**、清楚可见）形成完整证据链 ⇒ ✅ **R7 成立**。
+
+**⚠️ 本次的一个意外收获**：R7 原设计号称"**只有人眼能验**"，实测**有一半被机器抓住了** —— 因为步骤 5 新加的 `kTestHudRow` 镜像常量把"玩家该在第几行"变成了可断言的东西。
+⇒ **记账**：这条守卫是**顺带**得来的（步骤 5 做涟漪扫描时才发现"用例侧要有一份行号真相"），不是刻意设计 —— **正好印证 `AGENTS.md` 第 7 节第 3 条**（"接线前先扫全部调用点"）能捡到便宜。
+
+**还原**：`git checkout -- game/src/Game.cpp` 回到 `5126869`。核对：🚨 标记 **0**、`constexpr int kHudRow = 2;` **1** 处、两个派生式行号 **2** 处、`static_assert(kHudRow >= 2,` **1** 处（四处全部复原）、`git status` 只剩两个 docs。**未再运行**（还原后与 `5126869` 逐字节相同）。
+
+> ⚠️ **过程自记**：R7 的第一刀只替换到 `static_assert(kHudRow >= 2,`，把**续行字符串**留成了孤儿语句。`git diff` 里一眼看到、当场删掉。⇒ 教训很小但通用：**多行语句的替换要把整条语句一起框进 `old_string`**，否则孤儿会被编译器当成合法表达式语句（**不报错**，静默污染）。
 
 ### 10.4 交付后的自检
 
