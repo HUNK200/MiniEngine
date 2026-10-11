@@ -171,6 +171,9 @@ private:
     // 渲染。S6 起**有相机**：屏幕格 ↔ 世界格的对应关系是
     //     世界列 = 相机整数原点 + 屏幕列
     //     世界行 = 相机整数原点 + (屏幕行 − kHudRow)
+    // ⚠️ `kHudRow`（`Game.cpp` 顶部的**文件内**常量）= 游戏 HUD 占的行数，**同时**是世界视口的
+    //    第一个屏幕行。S9 步骤 5 起 = **2**（两行 HUD）⇒ 视口高 = 画布高 − 2 = 23。
+    //    它是文件内的：别处（包括测试）要用只能"照抄"，`Game` 刻意不为它开公开接口。
     // 相机的接口全是 const（`OriginCol/OriginRow`）→ 三个绘制函数仍然全是 const，
     // 于是它们用的是 `World` 的 **const 版** Find()/Entities()/Map()
     //（"Find 为什么要有两版"在这里第一次有了真实生产调用者）。
@@ -208,8 +211,14 @@ private:
     // 真正的死亡/重开是 S10 的 `GameState`。
     int m_playerHp = kPlayerMaxHp;
 
-    // S8：敌人。⚠️ **只增不减**（`Dead` 只把 Entity 的 active 置 false，见 S8_CHECKLIST 6.6），
-    // 所以它不会在遍历中被改；真删留到 S9（届时用 std::erase_if，且必须在遍历之外）。
+    // S8：敌人。⚠️ **S9 步骤 4 起会真删了**（原先写"只增不减"）：
+    // `ResolveBullets`（⑤d）在 hp 跨过 0 时把 id 记进名单，**循环之外**做
+    // `m_world.MarkForRemoval(id)` + `std::erase_if(m_enemies, 按 id 匹配)` 两件事
+    // （只删一边都是 bug：悬空 id / 没人驱动的活靶子 —— 见 `game/Enemy.h` 文件头）。
+    // ⚠️ 因此 **遍历 `m_enemies` 时不许在循环内 erase**（`erase_if` 是 swap-erase，
+    //    会让同帧"当前下标"静默指错别人）；`DriveEnemyAi` 的遍历只读 + 写速度，安全。
+    // ⚠️ 真删之后 `F7` 面板的 `n=` 才是"还活着几个"；S8 那套"留着看 `state=Dead`"的
+    //    取证手段**没有了**（面板的行数本身就是结果）。
     std::vector<EnemyData> m_enemies;
 
     // ── S9：子弹 ────────────────────────────────────────────────────────

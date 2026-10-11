@@ -38,7 +38,10 @@ namespace mini::render {
 // 漏调一次 setter）都会变成"画面错位"，而三处单看都像是对的 —— 很难查。
 struct CameraLimits {
     int viewW = 0;   // 可用视口宽（列）
-    int viewH = 0;   // 可用视口高（行，**不含引擎顶栏那一行** —— 那是 game 的 kHudRow）
+    int viewH = 0;   // 可用视口高（行）—— **由调用方减掉自己那些 HUD/顶栏占的行**，Camera 不猜
+                     //（`game` 传的是 `画布高 − Game::kHudRow`；S9 步骤 5 起 kHudRow = 2）
+                     // ⚠️ S6 起这句话原本写的是"不含引擎顶栏那一行"，S9 步骤 5 改成两行 HUD 之后
+                     //    已经不准：Camera 只管"多少行"，具体被谁占了是**调用方的事**。
     int mapW  = 0;   // 世界宽（格）
     int mapH  = 0;   // 世界高（格）
 };

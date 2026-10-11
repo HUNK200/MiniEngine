@@ -21,7 +21,10 @@
 //       · 只删 Entity → 悬空 id：`Find` 返回 nullptr（**静默**，靠 DriveEnemyAi 里那句 continue 兜住）
 //       · 只删 EnemyData → 实体还在容器里、但再也**没人驱动它**（原地当活靶子）
 //     本文件与 `Game.cpp` 的注释只负责把它说清楚；真正的守卫是
-//     `Game.RemovingEnemyLeavesNoDanglingId`（S8 步骤 5）。
+//     `Game.KilledEnemyIsRemovedAndLeavesNoDanglingId`（**S9 步骤 4 落地**，2026-10-10）。
+//     ⚠️ S8 当时拟的名字是 `RemovingEnemyLeavesNoDanglingId`，但 S8 **写不了**（没有删除
+//        路径 ⇒ 会是空用例，见 `S8_CHECKLIST` 偏差 8）；落地时改成了现在这个名字。
+//        历史文档里的旧名字**不改**（S8 的档案留原样），以**代码里的名字**为准。
 //
 // 依赖谁：mini/world/Entity.h（`EntityId`）+ mini/ai/EnemyBrain.h（`EnemyState`）。
 // 被谁用：`game/Game.h` 的 `std::vector<EnemyData> m_enemies`（**唯一**持有者）。

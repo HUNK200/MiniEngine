@@ -30,7 +30,11 @@ using mini::render::CameraLimits;
 constexpr int kMapW  = 200;   // Game::kWorldW
 constexpr int kMapH  = 200;   // Game::kWorldH
 constexpr int kViewW = 80;    // 画布 80 列
-constexpr int kViewH = 23;    // 画布 24 行 − 顶栏 1 行（Game::kHudRow）
+// ⚠️ 这是**本文件自己的入参**，与 `Game::kHudRow` **没有依赖关系** —— Camera 不认识 HUD，
+//    它只知道"能用多少行"。这里固定用 24 行画布减掉 1 行顶栏（S6 起的历史取值）。
+// ⚠️ 数值上它现在**正好**等于 game 的 `25 − 2 = 23`（S9 步骤 5 起 kHudRow = 2），
+//    纯属巧合 —— **别据此认为两边耦合**：game 改 HUD 行数时，这个常量不该跟着动。
+constexpr int kViewH = 23;
 
 CameraLimits Limits80x23()
 {

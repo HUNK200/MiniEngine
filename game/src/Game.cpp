@@ -53,14 +53,29 @@ namespace game {
 
 namespace {
 
-// 游戏 HUD 占第 1 行（第 0 行是引擎顶栏）。
+// 游戏 HUD 占的**行数** —— ⚠️ 它同时也是**世界视口的第一个屏幕行**（这两件事是同一个数）。
 //
-// ⚠️ 代价说清（S6 起措辞改准）：HUD 压在**视口第 0 行**上 —— 也就是相机原点那一行
-//    （`OriginRow()` 对应的世界行）。地图照画、HUD 后画会盖掉它，所以**垂直方向真正
-//    可见的世界只有 22 行**（可用视口 23 行减去这一行）。
-//    ⚠️ 因此"可用视口高 = 画布高 − kHudRow"这条不能写错：写成整屏高会让底部多露一行，
-//       并让 HUD 压错行（S6 坑 8）。
-constexpr int kHudRow = 1;
+// ⚠️ 名字叫 `Row` 容易被读成"HUD 画在第几行"，但真正的语义是**行数**，三条公式一起看：
+//     行 0             = 引擎顶栏（`Application` 画，`game` 不管）
+//     行 1 .. kHudRow  = 游戏 HUD（`DrawHud` 画，每占一行就少一行可见世界）
+//     行 kHudRow ..    = 世界视口（`viewH = 画布高 − kHudRow`；`DrawMap`/`DrawEntities` 都从这里开始）
+//   ⇒ **第 `kHudRow` 行既是最后一行 HUD、又是世界的第一个逻辑行**：地图照画、HUD 后画会盖掉它。
+//   ⚠️ 把 `kHudRow = 1` 代进上面三条，结果与 S6~S9 的旧行为**逐字一致** —— 所以 1→2 是一次
+//      **泛化**而不是改语义（旧注释写的"HUD 占第 1 行"，说的正是 `kHudRow = 1` 这个特例）。
+//
+// ⚠️ **2026-10-10（S9 步骤 5）：1 → 2** —— HUD 变两行（行 1 位置类 / 行 2 状态类）。
+//    代价 = **垂直可见世界再少 1 行**（22 → 21 行）；换来的是**一个栏目都不用砍**：
+//    单行已经 78/80 列没有余量，而 `kills` 与 `dir` 两个新栏目必须显示（分叉 ③/④）。
+//    ⚠️ 为什么**必须"占行"而不是"叠加"**：叠加（视口不变、多画一行盖住）会让玩家消失 ——
+//      玩家最小 `y = 1.5`（tile 行 1）⇒ 屏幕行 = `1 − originRow + kHudRow`，相机夹到 `originRow = 0`
+//      ⇒ 正好落在**第 3 行**；而两行 HUD 占的是第 1、2 行 ⇒ 安全。叠加时那一格会落到第 2 行、
+//      正被第二行 HUD 盖住。人眼验收 R7 专门盯这条（它只有人眼能验）。
+//
+// ⚠️ 因此"可用视口高 = 画布高 − kHudRow"这条不能写错：写成整屏高会让底部多露一行，
+//    并让 HUD 压错行（S6 坑 8）。
+// ⚠️ 名字**保留** `kHudRow`（不改成 `kHudLines`）：它同时也是"世界视口第一行"，
+//    改名反而丢掉这一层信息 —— 语义靠这段注释说准，代码里处处用它，别再造第二个常量。
+constexpr int kHudRow = 2;
 
 // 调试快照的**按键**与**落盘文件名**。
 //
@@ -313,11 +328,26 @@ void Game::DriveEnemyAi(const mini::core::FrameContext& ctx)
             m_playerHp = std::max(0, m_playerHp - out.damage);
         }
 
-        // Dead 的**唯一后果**就在这里（S8_CHECKLIST 6.6）：把实体"停更"，**不是删掉**。
-        //   · `World::Update` 会因为 `!active` 跳过它 → 不再移动；
-        //   · `DrawEntities` 也会跳过它 → **从屏幕上消失**（"被击杀"的观感）；
-        //   · 但 `EnemyData` 留在 `m_enemies` 里 → **面板仍然能显示 `state=Dead`**（取证）。
-        // ⚠️ 真删（MarkForRemoval + 两边同步移除）留到 S9。
+        // ── `Dead` 的后果（S8 加的；**S9 步骤 4 起它在正常路径上不可达**）────────────
+        //  S8 时代它是"敌人死亡"的**唯一**后果：把实体停更（`World::Update` 因 `!active`
+        //  跳过它）+ 不绘制（`DrawEntities` 跳过它 → 从屏幕上消失），但 `EnemyData` 留在
+        //  `m_enemies` 里 ⇒ `F7` 面板仍然能显示 `state=Dead`（那是 S8 的取证手段）。
+        //
+        //  ⚠️ **2026-10-10（S9 步骤 4）：真删落地之后这里不可达了。**
+        //     hp 只在 `ResolveBullets`（⑤d）里跨过 0，而它**当场**就把那条 `EnemyData` 从
+        //     `m_enemies` 里 erase 掉、并把实体登记进 `pendingRemove`（⑨ 一起真删）
+        //     ⇒ 本循环（⑤b）再也不会看到 `hp <= 0` 的条目。
+        //
+        //  ⚠️ **为什么选"留着"而不是删掉**（本人 2026-10-10 拍板，取法 A）：
+        //     · `ai::Decide` 的 `Dead` 语义与那 18 条纯函数用例都还在 —— 删这里只是删掉
+        //       `game` 侧的接线，不是删掉状态机的能力；
+        //     · 它是**最后一道**防御：将来若出现第二条伤害路径（近战 / 陷阱 / S10 的怪），
+        //       谁漏走了 ⑤d 的名单，这里至少还能把实体停掉，而不是留下一具会动的尸体。
+        //     代价是"一个正常路径不可达的分支"，已按纪律登记 `TECH_DEBT`（触发条件：
+        //     第二条伤害路径落地时复核它该删还是该接上）。
+        //
+        //  ⚠️ **下游别动**：`DrawEntities` 里那句 `if (!entity.active) continue;` 是 `active`
+        //     唯一的**读取点**（玩家路径也靠它）。删了它，`active` 就彻底没人看。
         if (enemy.hp <= 0) {
             entity->active = false;
         }
@@ -354,9 +384,18 @@ void Game::ResolveBullets(const mini::core::FrameContext& ctx)
         return;
     }
 
+    // 本帧"hp 跨过 0"的敌人（**存 id，不存下标** —— 理由见下面的名单写入处）。
+    // 定长数组：最多 `kEnemyCount` 个跨过 0，不分配。
+    std::array<mini::world::EntityId, kEnemyCount> pending{};
+    std::size_t pendingCount = 0;
+
     // ⚠️ 遍历的是 `m_bullets`（**不是** `m_entities`）：这一点让 PLAN 点名的
-    //    "遍历中 push_back 导致迭代器失效"这个坑**在架构上消失** ——
-    //    本函数既不 Spawn 也不 erase，手里的 `Entity*` 全程有效。
+    //    "遍历中 push_back 导致迭代器失效"这个坑**在架构上消失**。
+    //    ⚠️ S9 步骤 4 起本函数**确实会 erase 了 —— 但只 erase `m_enemies`**（真删，在循环之后），
+    //       与脚下的 `m_bullets` / `m_entities` 无关 ⇒ "不许在遍历中改动脚下的容器"这条仍然成立。
+    //       `m_entities` 上唯一的改动点是 ⑤c 的 `Spawn`（`FireBullet`），那时还没有任何遍历。
+    //       手里的 `bullet` 指针在本帧也不会失效（`m_entities` 只增不减，且 `Find` 返回的指针
+    //       只在本次调用内有效 —— 这里每次循环都重新 `Find`）。
     for (const mini::world::EntityId id : m_bullets) {
         mini::world::Entity* bullet = m_world.Find(id);
         if (bullet == nullptr) {
@@ -371,6 +410,8 @@ void Game::ResolveBullets(const mini::core::FrameContext& ctx)
         //    ⚠️ **每发子弹重新收**是刻意的：这一帧前面的子弹可能已经打死了某个敌人，
         //       那样它就该从表里消失 —— 否则（a）`kills` 会被同一具尸体重复计数，
         //       （b）后面的子弹会被一具看不见的尸体挡住。
+        //    ⚠️ S9 步骤 4 起"真删"发生在**整个循环之后** ⇒ 循环内就靠下面这个 `hp <= 0`
+        //       过滤器让"已经死了的"从表里消失（两者是同一件事的两半，缺一不可）。
         std::array<mini::math::Vec2, kEnemyCount> positions{};
         std::array<std::size_t, kEnemyCount>      which{};   // 第 i 项对应 m_enemies 的哪一个
         std::size_t aliveCount = 0;
@@ -402,11 +443,34 @@ void Game::ResolveBullets(const mini::core::FrameContext& ctx)
             //    已经 <= 0 的敌人根本不在表里，所以这里天然只会走到一次。
             if (target.hp <= 0) {
                 ++m_kills;
-                // ⚠️ 这里**不设** `entity->active = false`：那是 `DriveEnemyAi` 的职责
-                //    （同一帧的 ⑤b 已经跑过了，所以下一帧生效）——"怎么死"只有一条路径。
-                //    真删（`MarkForRemoval` + 移除 `EnemyData`）是 **S9 步骤 4** 的事。
+
+                // ★ 只记进"待真删"名单，**既不设 `active`、也不在这里 erase**。★
+                //   · 不设 `active`：那是 `DriveEnemyAi` 的职责（S8 定的"怎么死只有一条路径"）；
+                //   · 不在循环内 erase：`which[]` 给的是**下标**，而 `erase_if` 是 **swap-erase**
+                //     ⇒ 下标会在同一帧内**静默指错**另一个敌人。所以推迟到循环之后，按 id 删。
+                //   ⚠️ 存 id 而不是下标：`EntityId` 永不复用 ⇒ 最坏只是"找不到"，**不是"找错"**。
+                if (pendingCount < pending.size()) {
+                    pending[pendingCount] = target.id;
+                    ++pendingCount;
+                }
             }
         }
+    }
+
+    // ── 真删（S9 步骤 4，`TECH_DEBT` **C16** 到期）────────────────────────────
+    // ⚠️ **必须在遍历 `m_bullets` 之外**：名单里的 id 是"这一帧跨过 0 的敌人"，
+    //    而在循环内 erase `m_enemies` 会让**同一帧后面的子弹**的 `which[]` 下标失效。
+    // ⚠️ **两边一起删**（S8 分叉 ① 的"两套真相"代价，`game/Enemy.h` 的文件头讲了这两种症状）：
+    //    · 只 `MarkForRemoval(Entity)` → `EnemyData` 变成**悬空 id**（面板会印 `<id gone>`）；
+    //    · 只 erase `EnemyData`        → 实体还在容器里、但**再没人驱动它**（原地当活靶子）。
+    //    这两条各有反向验证（R5 / R5′），守卫是新用例
+    //    `Game.KilledEnemyIsRemovedAndLeavesNoDanglingId`。
+    // ⚠️ `MarkForRemoval` **只登记、不失效**（`World.h:73`）⇒ 这具实体在 ⑥ 会被**多积分一帧**，
+    //    ⑨ `FlushRemovals` 才真删。因为 `OnRender` 排在 `OnUpdate` **之后**，所以它**当帧就不画了**
+    //    ——屏幕上的 `'E'` 与 `F7` 面板的 `n=` 在同帧一起变。
+    for (std::size_t i = 0; i < pendingCount; ++i) {
+        m_world.MarkForRemoval(pending[i]);
+        std::erase_if(m_enemies, [id = pending[i]](const EnemyData& enemy) { return enemy.id == id; });
     }
 }
 
@@ -608,34 +672,56 @@ void Game::DrawHud(mini::render::FrameBuffer& fb) const
     const float px = player->transform.pos.x;
     const float py = player->transform.pos.y;
 
-    // 先把这一行铺满空格，再写字：否则 HUD 右边会露出地图在**视口第 0 行**的内容
-    //（= 相机原点那一行），看着像"画面坏了"（S3 的顶栏也是这样独占一行的）
-    for (int col = 0; col < fb.Width(); ++col) {
-        fb.Set(col, kHudRow, ' ');
+    // ── HUD 两行（S9 步骤 5）───────────────────────────────────────────────
+    // 行 1 = **位置类**（`pos` / `tile` / `sumdt` / `v`），行 2 = **状态类**（`hp` / `kills` / `dir` / 提示）。
+    // ⚠️ 行号不是写死的 1/2，而是从 `kHudRow` 派生 —— 它同时是"HUD 占的行数"与"世界视口第一行"
+    //    （见本文件顶部那三条公式）。`kHudRow = 2` 时：行 1 = `kHudRow − 1`、行 2 = `kHudRow`。
+    // ⚠️ 下面这条 `static_assert` **不是空断言**：它挡的是"有人把 `kHudRow` 改回 1"
+    //    —— 那时第二行 HUD 会画到**引擎顶栏（行 0）**上，把 FPS/Frame 顶掉。
+    constexpr int kHudPosRow   = kHudRow - 1;   // 位置类那一行（= 1）
+    constexpr int kHudStateRow = kHudRow;       // 状态类那一行（= 2）；**同时**是世界的第一个逻辑行
+    static_assert(kHudRow >= 2,
+                  "两行 HUD 需要 kHudRow >= 2；退回单行时请把 DrawHud 也一起改回单行");
+
+    // 先把**两行都**铺满空格，再写字：否则 HUD 右边会露出地图的内容（地图照画、HUD 后画），
+    // 看着像"画面坏了"（S3 的顶栏也是这样独占一行的）。
+    // ⚠️ 只铺其中一行会让另一行**整行漏出世界** —— 这是本步最容易漏的一处。
+    for (int row = kHudPosRow; row <= kHudStateRow; ++row) {
+        for (int col = 0; col < fb.Width(); ++col) {
+            fb.Set(col, row, ' ');
+        }
     }
 
     // tile 坐标用**同一个 floor**（`ToIndex`）—— HUD 说的第几格必须和画面上的一致。
     //
     // `v` 这一格是**速度**（格/秒）：看起来是调试信息，其实是 10.2 那条自证的**必需项** ——
     // 屏幕上要能一眼核对 `pos ≈ v × sum dt`。速度现在可用 argv[2] 覆盖，所以必须显示出来。
-    // 提示文字压缩过，否则这一行会超过 80 列（终端宽度）。
-    // ⚠️ 2026-10-08 加了调试快照键（`kDumpKey`，见本文件顶部常量）：加之前约 71 列，加之后 **73 列**。
-    // ⚠️ 2026-10-09（S8 步骤 3）这一行**改窄过一次**：要加 `hp`，而 73 列已没有余量，
-    //    所以同时砍掉了两个纯粹的冗余（`S8_CHECKLIST` 坑 8 预判的"要么砍栏目、要么简写"）：
-    //      · `sum dt %6.2fs` → `sumdt %6.2f`（少一个空格、去掉单位 's'）
-    //      · `WASD  Q` → `WASD Q`（双空格合并）
-    //    现在是 **78 列**。⚠️ 想再加栏目必须先砍掉别的 —— 这条预算从 S6 决策 5 起就没松过
-    //    （当时为了它没显示 `cam`）。
-    char text[96];
-    std::snprintf(text, sizeof(text),
-                  "pos %6.2f,%6.2f | tile %4d,%4d | sumdt %6.2f | v %4.1f | hp %2d | WASD Q F4",
+    // ⚠️ 所以 `sumdt` 与 `v` **必须和 `pos` 留在同一行**（自证是"一行之内"的核对），
+    //    分到第二行去也能看，但跨行对照更费眼 —— S9 分叉 ④ 的示例布局里把它们漏了，
+    //    落地时按"一个栏目都不砍"补回行 1（见 `S9_CHECKLIST` 偏差 11）。
+    //
+    // 行 1（位置类）：**58 列**。
+    char posText[96];
+    std::snprintf(posText, sizeof(posText),
+                  "pos %6.2f,%6.2f | tile %4d,%4d | sumdt %6.2f | v %4.1f",
                   static_cast<double>(px), static_cast<double>(py),
                   mini::world::TileMap::ToIndex(px),
                   mini::world::TileMap::ToIndex(py),
                   static_cast<double>(m_elapsed),
-                  static_cast<double>(m_moveSpeed),
-                  m_playerHp);
-    fb.Draw(0, kHudRow, text);
+                  static_cast<double>(m_moveSpeed));
+    fb.Draw(0, kHudPosRow, posText);
+
+    // 行 2（状态类）：**44 列**（`kills` 与 `dir` 是 S9 新增的；`F7` 提示顺带解掉 S8 偏差 6）。
+    // ⚠️ `dir` 的字形来自 `Bullet.h` 的 `FacingGlyph`（**定宽 2 字符**、全 ASCII，用例 B4 钉着）
+    //    ⇒ HUD 后面的列不会左右跳。分叉 ③ 把它列为"**必要配套**"：朝向是"移动方向 + 停下沿用"，
+    //    看不见朝向玩家就不知道该往哪打。
+    // ⚠️ 提示行里的键名与代码里的常量是**同一个键的两个落点**（同 `kDumpKey`/`kFireKey` 的纪律）：
+    //    换键时这一行要一起改。⚠️ 这里是 `F7` 的唯一提示落点（面板表头那句是另一处）。
+    char stateText[96];
+    std::snprintf(stateText, sizeof(stateText),
+                  "hp %2d | kills %2d | dir %s | WASD SPC Q F4 F7",
+                  m_playerHp, m_kills, game::FacingGlyph(m_facing));
+    fb.Draw(0, kHudStateRow, stateText);
 }
 
 // ------------------------------------------------------------
@@ -678,8 +764,13 @@ void Game::DrawAiPanel(mini::render::FrameBuffer& fb) const
     // ⚠️ 表头里那个键名与 `kAiPanelKey` 是**同一个字母的两个落点**（同 `kDumpKey` 的纪律）：
     //    换键时要一起改这两处，别的注释一律写 `kAiPanelKey`、不抄字母。
     // ⚠️ 面板键**不进 HUD 提示行**：那一行已经 78/80 列，塞不下第三个键（偏差 4 / 坑 8）。
-    std::snprintf(line, sizeof(line), "F7 AI  n=%d   K=kill nearest",
-                  static_cast<int>(m_enemies.size()));
+    // ⚠️ **2026-10-10（S9 步骤 3 收尾）：表头里的 `K=kill nearest` 删掉了。**
+    //    `Key::K` 连同 `kKillKey` / `KillNearestEnemy` 已在步骤 3 一起删（`TECH_DEBT` C15 到期），
+    //    但这一处**漏扫**了 —— 表头一直在教人去按一个已经不存在的键，属于**假提示**
+    //    （`TECH_DEBT` C15 原话就是"删的时候三处一起：常量 / **面板表头里那个字母** / `KeyCode.h` 的映射"）。
+    //    ⚠️ 教训：按 `Key::K` 这种**标识符**去 grep 是扫不到这里的（它写成了中文提示里的 `K=`）。
+    //       接线/删键时除了 grep 标识符，还要 grep **提示文本里的那个字母**。
+    std::snprintf(line, sizeof(line), "F7 AI  n=%d", static_cast<int>(m_enemies.size()));
     fb.Draw(0, firstRow, line);
 
     int row = firstRow + kAiPanelHeaderLines;
