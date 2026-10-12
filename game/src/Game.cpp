@@ -956,15 +956,40 @@ void Game::DrawHud(mini::render::FrameBuffer& fb) const
                   static_cast<double>(m_moveSpeed));
     fb.Draw(0, kHudPosRow, posText);
 
-    // 行 2（状态类）：**44 列**（`kills` 与 `dir` 是 S9 新增的；`F7` 提示顺带解掉 S8 偏差 6）。
+    // 行 2（状态类）：**64 列**（S10 步骤 6 **定稿并实测**；`S10_CHECKLIST` 前置事实 9 预测 ~67 ⇒ 差 3，见下面那条约束）。
+    //    逐段：`hp 10` 5 + ` | ammo 18` 10 + ` | kills  0` 11 + ` | wave  1` 10 + ` | dir ->` 9
+    //          + ` | WASD SPC Q F4 F7` 19 = **64**。
+    //    ⚠️ 距 80 还有 16 列余量 —— `kScreenW = 80` 是终端的一屏，超了会**静默截断**
+    //       （`fb.Draw` 逐格裁掉），屏幕上看不出错 ⇒ 宁可贵在"没写完"上。
     // ⚠️ `dir` 的字形来自 `Bullet.h` 的 `FacingGlyph`（**定宽 2 字符**、全 ASCII，用例 B4 钉着）
     //    ⇒ HUD 后面的列不会左右跳。分叉 ③ 把它列为"**必要配套**"：朝向是"移动方向 + 停下沿用"，
     //    看不见朝向玩家就不知道该往哪打。
+    // ⚠️ 所有数字栏都用 `%2d`（而不是 `%d`）：**定宽才不会让后面的列左右跳**
+    //    （`HudFitsInTwoLinesWithoutOverflow` 有一条用例专门核"数值跨过位数边界时各栏偏移不变"）。
+    //
+    // ★★ **HUD 两行里禁止出现 `@` / `E` / `*`**（这三条是玩家 / 敌人 / 子弹的**字形**）：
+    //    屏幕是**唯一**的观察面，用例靠 `FindChar('@')`、`CountChar('E')`、`CountChar('*')` 数它。
+    //    ⚠️ **2026-10-12（S10 步骤 6）实测踩过这个坑**：给提示段加 `ESC` 之后，"`E`" 多了一个
+    //    ⇒ `CountChar(fb,'E')` 数出 **4** 而面板真值是 **3** ⇒ `RestartThreeTimesDoesNotAccumulate`
+    //    红（`drawn=4 rhs=3`）。`HudFitsInTwoLinesWithoutOverflow` 里那条"不含 `@`/`E`/`*`"
+    //    的断言**当场就抓住了**它（那条断言存在的唯一理由就是这个）。
+    //    ⇒ 结论：**键名里带 `E` 的（`ESC` / `ENTER`）一个字都不能写进 HUD**，只能放横幅
+    //      （横幅画在世界行上，`CollectEnemies` 从 `kTestFirstWorldRow` 起扫、只做"前后对比"，
+    //       不会拿它跟面板真值比 ⇒ 安全）。
+    //
+    // ★ **提示段 = 在 `Playing` 下真的有用、且不含 `E` 的键**（两条约束的交集）：
+    //    · `WASD` 移动 / `SPC` 开火 / `Q` 退出 / `F4` 快照 / `F7` 面板 —— 五个都在 `Playing` 有效 ✓
+    //    · ⛔ **不列 `ENTER` / `R`**：那两个键在 `Playing` 下是 **no-op**（`NextState` 的 ⓪b 只在
+    //      `Title` / `GameOver` 收它们）⇒ 列在这里就是**假提示**（它的**真落点**是横幅：
+    //      `ENTER` 在 `DrawTitle` 的 "PRESS ENTER TO START"、`R` 在 `DrawGameOver` 的 "R restart"）。
+    //      这条纪律的来源是 S9 偏差 10（"面板一直在教人按一个已经不存在的键"）。
+    //    · ⛔ **不列 `ESC`**：它虽然**在 `Playing` 下确实有用**（暂停），但**含 `E`** ⇒ 见上面那条禁令。
+    //      `ESC` 的提示落在**横幅**：`DrawTitle` 的 `in game:` 那行（教学）+ `DrawPausedBanner`
+    //      的 `ESC to resume`（当时当刻）。**代价**：`Playing` 里看不到"怎么暂停"，
+    //      但这比"把敌人的字形弄脏"划算得多。
+    //    ⚠️ 用例里有**反向断言**：提示段**必须恰好**是这五个键（含则红）—— 防止后来人"顺手统一"。
     // ⚠️ 提示行里的键名与代码里的常量是**同一个键的两个落点**（同 `kDumpKey`/`kFireKey` 的纪律）：
     //    换键时这一行要一起改。⚠️ 这里是 `F7` 的唯一提示落点（面板表头那句是另一处）。
-    // ⚠️ S10 步骤 5 加了 `ammo` 一栏（53 → ~65 列，插在 `hp` 与 `kills` 之间 ——
-    //    与 §10.2 那条人眼清单的字段顺序 `hp / ammo / kills / wave / dir` 一致）。
-    //    步骤 6 再补 `ENTER/ESC/R` 三个键位提示并**重新数 80 列**（`S10_CHECKLIST` D14：**仍是两行**）。
     char stateText[96];
     std::snprintf(stateText, sizeof(stateText),
                   "hp %2d | ammo %2d | kills %2d | wave %2d | dir %s | WASD SPC Q F4 F7",
@@ -1062,13 +1087,22 @@ void Game::DrawTitle(mini::render::FrameBuffer& fb) const
     //    换键时这里要一起改。⚠️ 这里也是 `kStartKey` 唯一的提示落点。
     // ⚠️ **刻意不写"5 个敌人"这类会随波次变的话** —— 波次在步骤 4 才落地，
     //    写死数字就会变成"假提示"（同 S9 偏差 10 的 `K=kill nearest` 那个教训）。
+    //
+    // ⚠️⚠️ **2026-10-12（S10 步骤 6，"各状态横幅过一遍"）改了最后一行**：
+    //    原来是 `WASD move   SPACE fire   ESC pause   Q quit` —— 但那三个键在 `Title` 下
+    //    **全是 no-op**（`Title` 的 `StatePolicy` 五项全 false；`NextState(Title, PauseToggled) → Title`）
+    //    ⇒ 那是**假提示**（S9 偏差 10 的同一个毛病：提示里的每个键都必须**在这个状态下**真的有用）。
+    //    改成加前缀 **`in game:`** —— 把它从"现在按这个"明确降级为"**进去之后**能干什么"，
+    //    于是这一行不再声称任何 `Title` 下能做的事；`Title` 下唯一真有用的键（`ENTER`）
+    //    仍然由上一行 `PRESS ENTER TO START` 单独承担。
+    //    ⚠️ 别把前缀删回去 —— 删了它这一行又开始"教人按 ESC"。
     const int top = fb.Height() / 2 - 2;
     DrawCenteredBlock(fb,
                       {"MiniEngine",
                        "",
                        "PRESS ENTER TO START",
                        "",
-                       "WASD move   SPACE fire   ESC pause   Q quit"},
+                       "in game:   WASD move   SPACE fire   ESC pause   Q quit"},
                       top > 0 ? top : 0);
 }
 

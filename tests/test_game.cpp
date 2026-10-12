@@ -1273,7 +1273,7 @@ MINI_TEST(Game, KilledEnemyIsRemovedAndLeavesNoDanglingId)
 }
 
 // ------------------------------------------------------------
-// G9. HUD **两行**（S9 步骤 5）：两行都不溢出、第二行有 `kills` 与 `dir`
+// G9. HUD **两行**（S9 步骤 5 加；**S10 步骤 6 改写成本步的布局守卫**）
 //
 //     ⚠️ 它把"人眼验收第 4 条（两行都不溢出、不折行）"变成机器守卫。溢出在终端里的
 //        表现是**折行**（会把下面一行世界顶掉），肉眼可见，但机器看不见"折行"本身。
@@ -1284,6 +1284,18 @@ MINI_TEST(Game, KilledEnemyIsRemovedAndLeavesNoDanglingId)
 //     ⚠️ 断"含子串"而不是"第几列是什么"（`ScreenText` 的注释里的纪律）。
 //     ⚠️ 顺带钉住 `sumdt` / `v` 没被挤掉 —— 它们是 10.2 的自证项（`pos ≈ v × sumdt`），
 //        不许为了让新栏目进来而砍掉。
+//
+//     【S10 步骤 6 加了四条新的（原来只有"含不含某子串"）】
+//       ★ ① **两行的真实宽度各是多少**（58 / 64）—— 这就是"重新数 80 列"那件事的机器化：
+//            以后谁往 HUD 里加东西、或者把某个 `%2d` 改成 `%d`，这里会**立刻**告诉他还剩几列。
+//       ★ ② **各栏的先后顺序**（偏移递增）：防止"栏都在、但顺序被打乱"。
+//       ★ ③ **提示段恰好是那五个键**（`WASD SPC Q F4 F7`）+ 三条**反向断言**，
+//            两条不同的原因（见 `Game.cpp` 里那段设计说明）：
+//            · `ENTER` / `R` 在 `Playing` 下是 **no-op** ⇒ 列进 HUD 是**假提示**（S9 偏差 10）；
+//            · `ESC` **含字母 `E`**，而 `E` 是敌人字形、不许进 HUD（下面 ⑤ 有实测记录）。
+//            留着反向断言是为了让人"顺手统一"时**红得有原因**。
+//       ★ ④ **数值跨位数边界时各栏偏移不变**：`%2d` 与 `FacingGlyph` 的"定宽 2 字符"
+//            存在的**唯一理由**就是这个（否则 `ammo 18` → `ammo 8` 会让后面整行左移一格）。
 // ------------------------------------------------------------
 MINI_TEST(Game, HudFitsInTwoLinesWithoutOverflow)
 {
@@ -1291,6 +1303,13 @@ MINI_TEST(Game, HudFitsInTwoLinesWithoutOverflow)
 
     constexpr int kProbeW = 200;   // 比终端宽得多：**为了让 HUD 文本不被裁掉**
     constexpr int kProbeH = 40;    // 高也要够（`kHudRow` 是行号，不改也行，留余量）
+
+    // ⚠️ 这两行就是**实测值**（`S10_CHECKLIST` 前置事实 9 预测 58 / ~67 ⇒ 实测 58 / **64**；
+    //    差 3 是因为"提示段不许含字母 `E`"这条约束，见下面 ⑤ 与 `Game.cpp` 的说明）。
+    //    它们是**这条用例的靶子**，不是"可调参数" ⇒ 谁改 HUD 布局，就该来看这两个数
+    //    （这正是"重新数 80 列"想要的提醒）。
+    constexpr std::size_t kPosLineWidth   = 58;
+    constexpr std::size_t kStateLineWidth = 64;
 
     FakeInput   input;
     Game        game;
@@ -1302,47 +1321,107 @@ MINI_TEST(Game, HudFitsInTwoLinesWithoutOverflow)
     const int posRow   = kTestHudRow - 1;   // 行 1：位置类
     const int stateRow = kTestHudRow;       // 行 2：状态类（**同时**是世界视口的第一个逻辑行）
 
-    std::string posLine;
-    std::string stateLine;
-    for (int x = 0; x < kProbeW; ++x) {
-        posLine.push_back(probe.At(x, posRow).ch);
-        stateLine.push_back(probe.At(x, stateRow).ch);
-    }
+    // 读一整行并**掐掉尾部空格**（宽画布的右边全是空格 ⇒ 不去掉就量不出真实宽度）
+    const auto readLine = [&probe](int row) {
+        std::string line;
+        for (int x = 0; x < kProbeW; ++x) {
+            line.push_back(probe.At(x, row).ch);
+        }
+        const std::size_t end = line.find_last_not_of(' ');
+        return (end == std::string::npos) ? std::string{} : line.substr(0, end + 1);
+    };
+
+    const std::string posLine   = readLine(posRow);
+    const std::string stateLine = readLine(stateRow);
 
     // ① 两行都真的画了，而且**真实长度都在终端宽度之内**（80 列 ⇒ 不折行）
-    const std::size_t posEnd   = posLine.find_last_not_of(' ');
-    const std::size_t stateEnd = stateLine.find_last_not_of(' ');
-    MINI_CHECK(posEnd != std::string::npos);        // 行 1 不是空的（HUD 真的画了）
-    MINI_CHECK(stateEnd != std::string::npos);      // 行 2 不是空的
-    MINI_CHECK(posEnd != std::string::npos && posEnd < static_cast<std::size_t>(kScreenW));
-    MINI_CHECK(stateEnd != std::string::npos && stateEnd < static_cast<std::size_t>(kScreenW));
+    MINI_CHECK(!posLine.empty());      // 行 1 不是空的（HUD 真的画了）
+    MINI_CHECK(!stateLine.empty());    // 行 2 不是空的
+    MINI_CHECK(posLine.size() < static_cast<std::size_t>(kScreenW));
+    MINI_CHECK(stateLine.size() < static_cast<std::size_t>(kScreenW));
+    // ★ ① 精确定宽（先断"不超 80"再断"正好多少" —— 红的时候能分辨"溢出"和"改窄了"）
+    MINI_CHECK_EQ(posLine.size(), kPosLineWidth);
+    MINI_CHECK_EQ(stateLine.size(), kStateLineWidth);
 
-    // ② 行 1（位置类）四栏都在 —— 特别是 `sumdt` / `v`（10.2 的自证项）
-    MINI_CHECK(posLine.find("pos") != std::string::npos);
-    MINI_CHECK(posLine.find("tile") != std::string::npos);
-    MINI_CHECK(posLine.find("sumdt") != std::string::npos);
-    MINI_CHECK(posLine.find("v ") != std::string::npos);
+    // ② 行 1（位置类）四栏都在、**且顺序不变** —— 特别是 `sumdt` / `v`（10.2 的自证项）
+    const std::size_t posAt   = posLine.find("pos");
+    const std::size_t tileAt  = posLine.find("tile");
+    const std::size_t sumdtAt = posLine.find("sumdt");
+    const std::size_t vAt     = posLine.find(" v ");
+    MINI_CHECK(posAt == 0u);                    // `pos` 在最前
+    MINI_CHECK(tileAt  != std::string::npos && tileAt  > posAt);
+    MINI_CHECK(sumdtAt != std::string::npos && sumdtAt > tileAt);
+    MINI_CHECK(vAt     != std::string::npos && vAt     > sumdtAt);
 
-    // ③ 行 2（状态类）各栏都在。`dir ->` 是**确定性**的：`m_facing` 初值就是东
+    // ③ 行 2（状态类）五栏都在、**且顺序是 `hp / ammo / kills / wave / dir`**
+    //    （与 §10.2 那条人眼清单里写的顺序一致）
+    //    `dir ->` 是**确定性**的：`m_facing` 初值就是东
     //    ⚠️ 这条同时钉住分叉 ③ 的"必要配套"：朝向必须**看得见**，否则玩家不知道该往哪打。
-    //    ⚠️ S10 补的两栏：`wave`（步骤 4 加的）与 `ammo`（步骤 5 加）—— 加它们的原因是
-    //      **当时没有任何机器守卫**：`Ammo()` / `Wave()` 的用例读的是**访问器**，
-    //      格式串里漏写一栏它们照样全绿（只有人眼能看出来）⇒ 这两行把那次缺口堵上。
-    MINI_CHECK(stateLine.find("hp ") != std::string::npos);
-    MINI_CHECK(stateLine.find("ammo") != std::string::npos);
-    MINI_CHECK(stateLine.find("kills") != std::string::npos);
-    MINI_CHECK(stateLine.find("wave") != std::string::npos);
-    MINI_CHECK(stateLine.find("dir ->") != std::string::npos);
-    // ④ `F7` 提示终于进了提示行（S8 偏差 6：单行时 78/80 列，塞不下第三个键）
-    MINI_CHECK(stateLine.find("F7") != std::string::npos);
+    const std::size_t hpAt    = stateLine.find("hp ");
+    const std::size_t ammoAt  = stateLine.find("ammo");
+    const std::size_t killsAt = stateLine.find("kills");
+    const std::size_t waveAt  = stateLine.find("wave");
+    const std::size_t dirAt   = stateLine.find("dir ");
+    MINI_CHECK(hpAt == 0u);                     // `hp` 在最前
+    MINI_CHECK(ammoAt  != std::string::npos && ammoAt  > hpAt);
+    MINI_CHECK(killsAt != std::string::npos && killsAt > ammoAt);
+    MINI_CHECK(waveAt  != std::string::npos && waveAt  > killsAt);
+    MINI_CHECK(dirAt   != std::string::npos && dirAt   > waveAt);
+    MINI_CHECK(stateLine.find("dir ->") != std::string::npos);   // 朝向字形是 `->`（初值 = 东）
 
-    // ⑤ ⚠️ HUD 文本里**不能**出现 `@` / `E` / `*`：`FindChar` / `CountChar` 是**全屏扫描**的，
-    //    HUD 上一旦出现同名字符，那些"数画面上有几个"的用例会**静默失真**（不是红，是算错）。
+    // ④ ★ 提示段（最后一个 `|` 之后）**恰好**是那五个键
+    //    （理由见上面那段说明与 `Game.cpp` 里 `DrawHud` 的注释：
+    //      `ENTER`/`R` 在 `Playing` 下是 no-op；`ESC` 含字母 `E`，而 `E` 是敌人字形、不许进 HUD）
+    const std::size_t lastBar = stateLine.rfind('|');
+    MINI_CHECK(lastBar != std::string::npos);
+    std::string hint = stateLine.substr(lastBar + 1);
+    const std::size_t hintBegin = hint.find_first_not_of(' ');
+    MINI_CHECK(hintBegin != std::string::npos);
+    hint.erase(0, hintBegin);
+    MINI_CHECK(hint == "WASD SPC Q F4 F7");
+    // ⚠️ 这几条是**反向断言**（值就在上面那条里，留着是为了让红的时候**直接说出原因**）：
+    MINI_CHECK(stateLine.find("ENTER") == std::string::npos);   // ⛔ `Playing` 下 no-op + 含 `E`
+    MINI_CHECK(hint.find('R') == std::string::npos);            // ⛔ `R` 只在 `GameOver` 有用
+    MINI_CHECK(hint.find("ESC") == std::string::npos);          // ⛔ 含 `E`（见下面 ⑤ 的实测记录）
+
+    // ⑤ ⚠️ HUD 文本里**不能**出现 `@` / `E` / `*`（玩家 / 敌人 / 子弹的**字形**）：
+    //    `FindChar` / `CountChar(fb, 'E')` 是**全屏扫描**的，HUD 上一旦出现同名字符，
+    //    那些"数画面上有几个"的用例会**静默失真**（不是红，是算错）。
+    //    ★★ **2026-10-12（S10 步骤 6）实测踩过**：给提示段加了 `ESC` ⇒ 屏幕上多一个 `E`
+    //    ⇒ `CountChar(fb,'E')` 数出 4（3 个敌人 + 1 个 `ESC`），而面板真值是 3
+    //    ⇒ `RestartThreeTimesDoesNotAccumulate` 红在 `drawn=4 rhs=3`。
+    //    ⚠️ **就是下面这三行当场抓住的** —— 这条断言的唯一价值就是这个（它是"HUD 与字形
+    //       命名空间冲突"的唯一机器守卫）。
+    //    ⇒ 推论：**键名里带 `E` 的（`ESC` / `ENTER`）一个字都不能写进 HUD**，只能放横幅。
     for (const std::string* line : {&posLine, &stateLine}) {
         MINI_CHECK(line->find('@') == std::string::npos);
         MINI_CHECK(line->find('E') == std::string::npos);
         MINI_CHECK(line->find('*') == std::string::npos);
     }
+
+    // ⑥ ★ **数值跨过位数边界时各栏偏移不变**（`%2d` 与定宽字形的意义所在）
+    //    造一个"`ammo` 从 2 位变 1 位"的局面：面朝北对墙打 10 发 ⇒ 18 → 8（一位数）
+    //    ⚠️ 朝**北**是因为上墙只有 2 格远、而且北边没有敌人 ⇒ 不会有击杀返还掺进来。
+    input.Press(Key::W);
+    StepFrame(game, input, probe, kDt);
+    input.Release(Key::W);
+    for (int i = 0; i < 10; ++i) {
+        FireOnce(game, input, probe, kDt);
+        StepFrames(game, input, probe, kDt, 10);
+    }
+    MINI_CHECK_EQ(game.Ammo(), Game::kStartAmmo - 10);   // = 8：**一位数**（没有击杀返还）
+    MINI_CHECK_EQ(game.Kills(), 0);
+
+    const std::string afterLine = readLine(stateRow);
+    MINI_CHECK(afterLine.find("hp ")   == hpAt);      // ★ 每一栏的偏移都**一点没动**
+    MINI_CHECK(afterLine.find("ammo")  == ammoAt);
+    MINI_CHECK(afterLine.find("kills") == killsAt);
+    MINI_CHECK(afterLine.find("wave")  == waveAt);
+    MINI_CHECK(afterLine.find("dir ")  == dirAt);
+    // ★ 连提示段的起点都不动 —— 这一条同时钉住"`dir` 的字形是**定宽 2 字符**"：
+    //   朝向已经变成北（字形与 `->` 不同），若字形宽度会变，这半行就整体平移了。
+    MINI_CHECK(afterLine.find("WASD") == stateLine.find("WASD"));
+    MINI_CHECK_EQ(afterLine.size(), kStateLineWidth);   // 总宽也不变
 }
 
 // ══════════════════════════════════════════════════════════════════════════
