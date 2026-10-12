@@ -23,7 +23,8 @@
 // Game 实现（S5）—— 引擎与游戏分家之后的**唯一**游戏侧文件
 //
 // 这里做六件事，别的一件都不做：
-//   1. 开局：铺地图、Spawn 玩家、铺敌人（BuildDemoMap / SpawnEnemies / OnStart）
+//   1. **一局的初始状态**：铺地图、Spawn 玩家、铺敌人 —— 全是 `StartNewRun()`（S10 步骤 3）
+//      ⚠️ 开局与重开**走同一个入口**；`OnStart()` 现在是空的（它曾经做这三件事）
 //   2. 每帧：输入 → 速度 → 交给 World 积分（OnUpdate，帧序是硬约束，见下）
 //   3. 每帧：世界 → 屏幕（OnRender，S6 起走相机）
 //   4. 每帧：相机跟随（OnUpdate 末尾，**必须在 Update 之后**）—— S6 加的
@@ -126,8 +127,8 @@ constexpr mini::platform::Key kFireKey = mini::platform::Key::Space;
 //    · `Enter` = 开始（只在 `Title` 有效）
 //    · `Esc`   = 切换（`Playing ↔ Paused`，**以及** `GameOver → Title` —— 一个键三种去向，
 //                去向由 `NextState` 决定，不是这里）
-//    · `R`     = 重开（只在 `GameOver` 有效；⚠️ **世界重建是步骤 3 的 `StartNewRun()`**，
-//                本步它只切状态 ⇒ "按 R 不重开"是已知的中间态）
+//    · `R`     = 重开（只在 `GameOver` 有效）。⚠️ 它经 ①b 调 `StartNewRun()` ——
+//                **状态回 `Playing` 且世界重铺**（S10 步骤 3 起；步骤 2 时它只是"闪一帧"）
 // ⚠️ 键名在代码里**只有两处**（同 `kDumpKey`/`kFireKey` 那条纪律）：常量 + 相应状态画面里的提示字。
 // ⚠️ 三个都用 `Pressed`（**边沿**）：用 `Held` 会每帧触发一次转移 ——
 //    `R` 变成"每帧重开"、`Esc` 让 Paused/Playing 每帧来回翻（画面疯狂闪）。反向验证 R7 打这一条。
@@ -262,29 +263,84 @@ void Game::BuildDemoMap()
     }
 }
 
-void Game::OnStart()
+// ------------------------------------------------------------
+// S10 步骤 3：`StartNewRun` —— **一局的唯一入口**（开局与重开走同一条路）
+//
+// 重开清单（**顺序即依赖**；`S10_CHECKLIST` §4 的 6 步 + 第 5 步是本步补的，共 7 步）：
+//   1. 遍历 `Entities()` 逐个 `MarkForRemoval`  ← ★ 只 push `m_pendingRemove`，**遍历中调是安全的**
+//   2. **一次** `FlushRemovals()`               ← ★ 此刻实体表为空，而 `m_nextId` **保持不变**
+//   3. `m_enemies.clear()` / `m_bullets.clear()` （两张表存的都是**上一局的 id**）
+//   4. 标量归位：HP / kills / Σdt / 朝向
+//   5. `BuildDemoMap()`                          ← 见下面的取舍说明
+//   6. `Spawn` 玩家（拿到一个**新** id）
+//   7. `SpawnEnemies()`                          ← 步骤 4 会把它换成 `BeginWave(1)`
+//
+// ⚠️ 1 与 2 **必须连贯**（先全部登记、再一次 flush）：⛔ 在 `Entities()` 的循环里调
+//    `FlushRemovals` 才会真的让手里的 span 失效 —— `MarkForRemoval` 之所以安全，正因为
+//    它只碰另一个 vector（坑表 3）。
+// ⚠️ 6 必须在 2 **之后**：`Spawn` 往刚清空的表里推；顺序反了会把新玩家一起删掉。
+// ⚠️ **不重建 `m_world`** ⇒ `m_nextId` 单调递增 ⇒ 本局 id 与上一局**永不撞车**（分叉 ② 取丙）。
+//    ⛔ 改成 `m_world = World{w, h}` 会把 `m_nextId` 重置回 1 ⇒ 坑表 1 那张对照表立刻成真。
+// ⚠️ 不清 `m_state` / `m_showAiPanel` / `m_dumpCount` / `m_quit`：它们**不属于"一局"**（坑表 9）。
+// ------------------------------------------------------------
+void Game::StartNewRun()
 {
+    // 1) + 2) 清空实体表。⚠️ 这两步不许拆开，也不许换别的办法（理由见 `Game.h` 的注释）。
+    for (const mini::world::Entity& entity : m_world.Entities()) {
+        m_world.MarkForRemoval(entity.id);
+    }
+    m_world.FlushRemovals();
+
+    // 3) 两张成员表 —— 里面全是**上一局的 id**，不清就是悬空 id。
+    m_enemies.clear();
+    m_bullets.clear();
+
+    // 4) 标量归位。⚠️ 步骤 4/5 会在这里补 `m_wave = 0;` 与 `m_ammo = kStartAmmo;`
+    m_playerHp = kPlayerMaxHp;
+    m_kills    = 0;
+    m_elapsed  = 0.0f;
+    m_facing   = Facing8::East;   // 与玩家的初始朝向一致（HUD 的 `dir ->` 开局恒为东）
+
+    // 5) 地图**每次重铺一遍**。
+    //    ⚠️ 这一条与 `S10_CHECKLIST` §4 末尾那句"m_map 不动"**不一致**，是本步的落地偏差：
+    //       §4 的分叉 ② 条件 2 是**假设**"地图在整局之间不变"，靠的是"整局中没人改地图"；
+    //       §0 前置事实 13 与 §5 步骤 3 则明确要求"把 `OnStart` 里的**铺地图**搬进来"。
+    //       取后者：`BuildDemoMap` 是确定性的、且只重写 `m_map`（不动实体表），
+    //       重铺的结果与上一次**逐格相同** ⇒ 把一条**假设**降级成**可验证的事实**，
+    //       "将来地图可变（可破坏的墙 / 从文件加载关卡）"那个触发条件也提前关闭。
     BuildDemoMap();
 
-    // 玩家：出生在 (kSpawnX, kSpawnY) —— 格中心，所以 floor 之后是第 2 格。
-    // 速度留空（{0,0}）：松开键就停，不需要额外"刹车"逻辑。
+    // 6) 玩家：出生在 (kSpawnX, kSpawnY) —— 格中心，所以 floor 之后是第 2 格。
+    //    速度留空（{0,0}）：松开键就停，不需要额外"刹车"逻辑。
     mini::world::Entity player{};
-    player.transform.pos    = mini::math::Vec2{kSpawnX, kSpawnY};
+    player.transform.pos      = mini::math::Vec2{kSpawnX, kSpawnY};
     player.velocity.perSecond = mini::math::Vec2{};
-    player.symbol           = '@';
-
+    player.symbol             = '@';
     m_player = m_world.Spawn(player);
 
-    // S8：铺敌人。放在**玩家之后**是刻意的 —— 渲染顺序 = `Entities()` 的顺序，
-    // 玩家先画、敌人后画；两者位置刻意隔开（见 `kPatrolPaths` 的注释），不会互相盖掉。
+    // 7) 铺敌人。放在**玩家之后**是刻意的 —— 渲染顺序 = `Entities()` 的顺序，
+    //    玩家先画、敌人后画；两者位置刻意隔开（见 `kPatrolPaths` 的注释），不会互相盖掉。
     SpawnEnemies();
+}
+
+void Game::OnStart()
+{
+    // ⚠️ **S10 步骤 3 起这里是空的**（原来做"铺地图 + Spawn 玩家 + 铺敌人"，
+    //    那三件事全部搬进了 `StartNewRun()`）。
+    //    理由：`PLAN` 的可运行效果是"**开局提示** → 按 Enter → 刷怪" ⇒ 第一次按 `Enter`
+    //    才该铺世界；这里再铺一遍就是"两个入口"，而且那次铺的东西会被 `Enter` 触发的
+    //    重开当场覆盖掉（纯白做）。
+    // ⚠️ 保留空实现而**不是删掉虚函数**：`IGame::OnStart` 是引擎钩子，
+    //    `Application::Run` 第 ① 步无条件调它（前置事实 7/13）。
+    // ⛔ **别再往这里加东西** —— "一局的初始状态"只能有 `StartNewRun()` 一个入口。
 }
 
 // ------------------------------------------------------------
 // 敌人（S8）
 //
 // 三个函数的分工：
-//   SpawnEnemies   开局铺 5 个：一个 `Entity`（`symbol = 'E'`）+ 一条 `EnemyData`
+//   SpawnEnemies   每局开始时铺 5 个：一个 `Entity`（`symbol = 'E'`）+ 一条 `EnemyData`
+//                  （S10 步骤 3 起由 `StartNewRun()` 调；步骤 4 会换成 `BeginWave(1)`）
 //   DriveEnemyAi   每帧：对每个敌人跑一次 `ai::Decide`，**只写速度**（不碰位置）
 //   IsEnemyId      只给绘制上色用
 // ------------------------------------------------------------
@@ -559,10 +615,17 @@ void Game::OnUpdate(const mini::core::FrameContext& ctx)
 
     // ① 转移 —— **全项目唯一的 `m_state` 写入点**（纯函数，非法边自动返回原状态）
     m_state = game::NextState(m_state, event);
-    // ⚠️ **S10 步骤 3 会在这里插一句**：`StartPressed`/`RestartPressed` → `StartNewRun()`。
-    //    本步先只切状态 ⇒ "按 `R` 不重开"（世界没被清空，下一帧 ⓪ 又会判出 `PlayerDied`
-    //    ⇒ 状态在 `GameOver`/`Playing` 之间闪一帧）是**已知的中间态**，不是 bug
-    //    （`S10_CHECKLIST` §5 步骤 2 与 §进度板 都记着）。
+
+    // ①b 开始 / 重开 ⇒ **世界重建**（S10 步骤 3）。`Title` 的 `Enter` 与 `GameOver` 的 `R`
+    //     走**同一条路**（`S10_CHECKLIST` §5 步骤 3 的要求："开局与重开一个入口"）。
+    //     ⚠️ 位置必须在 **①之后、②③之前**：
+    //       · 在 ① 之后 —— 转移决定了"这一帧要不要重开"；
+    //       · 在 ②③ 之前 —— 否则本帧的"读方向键 / 写速度"会作用在**已经被删掉的旧玩家**上
+    //         （`Find(m_player)` 返回 nullptr ⇒ 白写），而且清空/重铺必须发生在**任何别的遍历之前**
+    //         （它是 `StartNewRun` 唯一被允许的时机：帧首，坑表 3）。
+    if (event == game::StateEvent::StartPressed || event == game::StateEvent::RestartPressed) {
+        StartNewRun();
+    }
 
     // ② 本帧跑哪些系统（纯数据表；越界兜底 = 全 false）
     const game::StatePolicy policy = game::PolicyOf(m_state);
@@ -929,12 +992,13 @@ void Game::DrawPausedBanner(mini::render::FrameBuffer& fb) const
 void Game::DrawGameOver(mini::render::FrameBuffer& fb) const
 {
     // 结算：叠在世界与 HUD 之上（要看得见自己死在哪、打了多少击杀 —— 击杀数在 HUD 第 2 行）。
-    // ⚠️ **这里刻意只写 `ESC back to title`，不写 `R restart`**：`R` 的世界重建是**步骤 3** 的
-    //    `StartNewRun()`；本步按 `R` 只会让状态闪一帧。**写了就是假提示**
-    //    （S9 偏差 10 的教训：面板一直在教人按一个已经不存在的键）。
-    //    → 步骤 3 落地 `StartNewRun` 之后，**这里要补上 `R restart`**。
+    // ⚠️ **2026-10-12（S10 步骤 3）补回了 `R restart`**：`StartNewRun()` 到位之后它不再是假提示。
+    //    （步骤 2 时这里只写 `ESC back to title`，因为那时按 `R` 只会让状态闪一帧 ——
+    //     那半天的"缺一行提示"就是 S9 偏差 10 那条教训的现场应用：**提示里的每个键都必须真的有用**。）
+    // ⚠️ 提示里的键名与 `kRestartKey`/`kPauseKey` 是**同一个键的两个落点**（同 `kDumpKey` 的纪律）：
+    //    换键时这里要一起改。
     const int top = fb.Height() / 2;
-    DrawCenteredBlock(fb, {"GAME OVER", "", "ESC back to title"}, top > 0 ? top : 0);
+    DrawCenteredBlock(fb, {"GAME OVER", "", "R restart     ESC back to title"}, top > 0 ? top : 0);
 }
 
 void Game::OnRender(mini::render::FrameBuffer& fb)

@@ -1635,3 +1635,141 @@ MINI_TEST(Game, GameOverFreezesWorld)
         MINI_CHECK_EQ(after[i].y, before[i].y);
     }
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// S10 步骤 3：`StartNewRun()` —— 一局的唯一入口（开局与重开同一条路）
+//
+// 【这 2 条在测什么】
+//   `StartNewRun` 的要害是**一份 7 步清单**（清实体 → 清两张 id 表 → 标量归位 → 重铺地图
+//   → Spawn 玩家 → 铺敌人）。清单这种东西**漏一行不会报错**，只会让上一局的东西活到下一局
+//   —— 所以必须由用例把"清干净了"变成**可断言**的。
+//
+// 【观察面】
+//   ① 公开接口：`Kills()` / `PlayerHp()` / `State()`
+//   ② 屏幕：`CountChar(fb,'*')`（上一局的子弹）、`CountChar(fb,'E')`（敌人画出来了吗）、
+//      `CountChar(fb,'@')`（玩家在新 run 里是**新 id**、还被画得出来）
+//   ③ **F7 面板**：`n=`（= `m_enemies.size()` 的真值）+ `<id gone>`（悬空 id 唯一能被看见的地方）
+//   ⚠️ ②与③要**一起**用（坑表 14）：屏幕上少画一个 `E` 可能是"真少了"也可能是"两只叠在一格"（C12），
+//      只有面板真值能区分。反过来面板也会说谎（它读的是 `m_enemies`，不看渲染）—— 两边都得对。
+// ══════════════════════════════════════════════════════════════════════════
+
+// G8（§10.1 用例 8）：重开之后**不留上一局的任何东西**。
+//   ⚠️ 每一条断言对应重开清单里的一步 —— 红了就能直接指出**哪一步漏了**（见断言后的括注）。
+MINI_TEST(Game, RestartLeavesNoStaleState)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+
+    // ── ① 先把这一局**弄脏**：每一处脏都对应清单里的一条 ────────────────────
+    //   · 开枪      → `m_bullets` 进过东西（→ 第 3 步）
+    //   · 打死一个  → `Kills() > 0`、`m_enemies` 少一个、**那个 id 永久消失**（→ 第 3 步）
+    //   · 一路往东走 → `m_facing` 过程里变过（→ 第 4 步）
+    //   · 被打 + 推帧 → `m_playerHp < kPlayerMaxHp`、`m_elapsed > 0`（→ 第 4 步）
+    MINI_CHECK(WalkPlayerNextToEnemy(game, input, fb) > 0);
+
+    // ⚠️ 发数由公开常量算（不写死 3）：`kEnemyMaxHp` 3 ÷ `kDefaultBullet.damage` 1 = 3
+    constexpr int kShotsToKill = Game::kEnemyMaxHp / game::kDefaultBullet.damage;
+    for (int i = 0; i < kShotsToKill; ++i) {
+        FireOnce(game, input, fb, kDt);
+        StepFrames(game, input, fb, kDt, 30);
+    }
+    MINI_CHECK_EQ(game.Kills(), 1);          // ← "弄脏"成功；下面要看到它回 0
+
+    // ── ② 站着被打到死 → `GameOver`（**重开的前提**：`R` 只在 `GameOver` 有效）──────
+    // ⚠️ 这里**不用 `KillPlayer`**：它内部会再走一次 `WalkPlayerNextToEnemy`，而此刻敌人已经贴上来了，
+    //    "最近距离平方"可能正好是 0（`WalkPlayerNextToEnemy` 把 0 当失败返回）⇒ 会假红。
+    for (int i = 0; i < 720 && game.PlayerHp() > 0; ++i) {
+        StepFrame(game, input, fb, kDt);
+    }
+    MINI_CHECK_EQ(game.PlayerHp(), 0);
+    for (int i = 0; i < 3 && game.State() != GameState::GameOver; ++i) {
+        StepFrame(game, input, fb, kDt);
+    }
+    MINI_CHECK(game.State() == GameState::GameOver);
+
+    // ── ③ 按 `R` 重开（与 `Title` 按 `Enter` 走的是**同一条路**）────────────────
+    input.Press(Key::R);
+    StepFrame(game, input, fb, kDt);
+    input.Release(Key::R);
+    StepFrame(game, input, fb, kDt);
+    MINI_CHECK(game.State() == GameState::Playing);   // R 之后**没有再闪回** GameOver
+
+    // ── ④ 断言"清干净了"（逐条对 §10.1 用例 8）
+    MINI_CHECK_EQ(game.Kills(), 0);                            // ← 第 4 步：击杀数归 0
+    MINI_CHECK_EQ(game.PlayerHp(), Game::kPlayerMaxHp);        // ← 第 4 步：HP 回满（期望值由公开常量算）
+    MINI_CHECK_EQ(CountChar(fb, '*'), 0);                      // ← 第 3 步：上一局的子弹一发不剩
+
+    // ← 第 1/2/3 步：实体清空后重铺 + `m_enemies` 清空 ⇒ 个数对、且**没有悬空 id**
+    const PanelSummary panel = OpenPanelAndSummarize(game, input, fb, kDt);
+    // ⚠️ 这个 5 是**写死**的：`kEnemyCount` 是私有的，而且它由 `PLAN:572` 的验收钉着
+    //    （同 `EnemiesPatrolUntilPlayerIsNear` 的那条注释）。步骤 4 会换成 `kWaveBase`。
+    MINI_CHECK_EQ(panel.enemyCount, 5);
+    // ★ "上一局的 id 一个都查不到"在公开面上的直接体现：若 `m_enemies` 没清，
+    //   那些残留 `EnemyData` 会指向**已经删掉的**实体 ⇒ 面板立刻印出 `<id gone>`
+    MINI_CHECK(!panel.hasIdGone);
+    MINI_CHECK_EQ(panel.aliveTiles, panel.enemyCount);   // 屏幕画出来的与面板真值一致（渲染没漏）
+
+    // ★ 另一半：`m_player` 必须指向**新**那个实体。旧 id 已经删了，若 `m_player` 没跟着换，
+    //   `Find(m_player)` 就是 nullptr ⇒ 玩家不画、`DrawHud` 早退 ⇒ 屏幕上根本没有 '@'。
+    //   （⚠️ "碰巧对"最危险：若重开**重建**了 `World`，旧的 id 1 会被新玩家重新用上，
+    //    这一条照样绿 —— 所以它只守"玩家换了"，不守"id 不复用"；后者由**构造**保证，见分叉 ②）
+    MINI_CHECK_EQ(CountChar(fb, '@'), 1);
+}
+
+// G9（§10.1 用例 9 · `PLAN` 的验收原话"**循环 3 次**"）：重开 3 次不累积。
+MINI_TEST(Game, RestartThreeTimesDoesNotAccumulate)
+{
+    constexpr float kDt      = 1.0f / 60.0f;
+    constexpr int   kRestarts = 3;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+    StartPlaying(game, input, fb);
+
+    // 面板**一次打开到底**：`StartNewRun` 刻意不清 `m_showAiPanel`（坑表 9）
+    // ⇒ 之后每轮直接读，不必来回按 F7（`OpenPanelAndSummarize` 每次都会**翻转**，按第二次就关了，
+    //   那时读到的 `n=0` 会变成假红）。
+    input.Press(Key::F7);
+    StepFrame(game, input, fb, kDt);
+    input.Release(Key::F7);
+
+    int enemiesAfterFirstRun = -1;
+
+    for (int run = 0; run < kRestarts; ++run) {
+        MINI_CHECK(KillPlayer(game, input, fb));      // 打死 → 停在 GameOver
+
+        input.Press(Key::R);
+        StepFrame(game, input, fb, kDt);
+        input.Release(Key::R);
+        StepFrame(game, input, fb, kDt);
+        MINI_CHECK(game.State() == GameState::Playing);
+
+        // 判据成对出现（坑表 14）：屏幕"画了几个 E" + 面板"真值几个 / 有没有悬空 id"
+        const int           drawn = CountChar(fb, 'E');
+        const PanelSummary  panel = SummarizeEnemyPanel(ScreenText(fb));
+
+        MINI_CHECK(!panel.hasIdGone);
+        MINI_CHECK_EQ(drawn, panel.enemyCount);
+        MINI_CHECK_EQ(panel.aliveTiles, panel.enemyCount);
+
+        if (run == 0) {
+            enemiesAfterFirstRun = panel.enemyCount;
+            // ⚠️ 写死的 5 同上（`kEnemyCount` 私有）；步骤 4 会换成 `kWaveBase`
+            MINI_CHECK_EQ(enemiesAfterFirstRun, 5);
+        } else {
+            // ★ 核心：第 2、3 次重开之后，场上敌人个数与**第 1 次完全相同**（不累积）
+            MINI_CHECK_EQ(panel.enemyCount, enemiesAfterFirstRun);
+        }
+    }
+
+    // 三次重开之后，数值状态仍是"一局刚开始"的样子
+    MINI_CHECK_EQ(game.Kills(), 0);
+    MINI_CHECK_EQ(game.PlayerHp(), Game::kPlayerMaxHp);
+    MINI_CHECK_EQ(CountChar(fb, '*'), 0);
+}
