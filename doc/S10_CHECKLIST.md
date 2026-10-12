@@ -216,7 +216,7 @@ StartNewRun()：                      // ★ 唯一入口
 | # | 施工图写的 | 实际落地 | 为什么 |
 | --- | --- | --- | --- |
 | **1** | §6.1 的接口清单是 **6 项**（`GameState` / `StateEvent` / `StatePolicy` / `kStatePolicies` / `PolicyOf` / `NextState`） | **多加了 7 行**：`detail::SimulatingStateCount()`（6 行）+ **3 条 `static_assert`** | 分叉 ① 说这张表存在的理由是"把矩阵从读代码变成**断言**" ⇒ 那就让最要命的那条性质（**只有 `Playing` 会模拟**）**在编译期**成立。"会模拟的状态恰好 1 个" + "那一个必须是 `Playing`" **两条合起来才等价**（只写 `== 1` 时，"关掉 `Playing`、同时打开 `Paused`"也能过）—— 这正是 `TECH_DEBT` C18"恒真断言比没有更坏"的反面案例。⚠️ 代价：改坏这张表会**编译不过**（见偏差 2） |
-| **2** | §10.3 的 **R1** 写"把 `Paused` 的 `simulate` 改成 `true` ⇒ 应红：`GameState.OnlyPlayingSimulates`" | **实际会先在偏差 1 那条 `static_assert` 上编译不过**，根本跑不到用例 | 反向验证的"红"有很多种，**编译期红比用例红更早、也更省事**。⇒ R1 的考察方式要重定：**(a)** 接受"编译期红"并照实记录；或 **(b)** 临时把那条 `static_assert` 一起去掉，才能看到用例红。**待做反向验证时由本人定**（施工图 §10.3 的 R1 那一行按此修正） |
+| **2** | §10.3 的 **R1** 写"把 `Paused` 的 `simulate` 改成 `true` ⇒ 应红：`GameState.OnlyPlayingSimulates`" | **实际会先在偏差 1 那条 `static_assert` 上编译不过**，根本跑不到用例 | 反向验证的"红"有很多种，**编译期红比用例红更早、也更省事**。⇒ R1 的考察方式要重定：**(a)** 接受"编译期红"并照实记录；或 **(b)** 临时把那条 `static_assert` 一起去掉，才能看到用例红。<br>✅ **2026-10-12 本人拍板：取 (a) 接受"编译期红"** —— 理由：不变量被**编译器**守住，比"被用例守住"更强（用例可能漏写，`static_assert` 不会）。⇒ R1 的判据改成"**`cmake --build` 报错、且报错点就是 `GameState.h` 那条 `static_assert`**"，而且 `mini_tests` 也一起编不出来（它也 include 了 `GameState.h`）。**偏差 2 到此关闭** |
 | **3** | §5 步骤 2 只写了"'按 `R` 不重开'是已知的中间态"，**没提既有用例** | **18 条既有 `Game` 用例全部受影响**：`m_state` 初值改成 `Title` 后，`OnStart()` 之后**世界不会自己动**（`Title` 的策略五项全 false）⇒ 不先按一次 `Enter`，`@` 一格都不会动、`WalkPlayerNextToEnemy` 会走满上限返回 -1、`HudFitsInTwoLinesWithoutOverflow` 量到的会是标题屏 | ⚠️ **这正是 `AGENTS.md` 第 7 节第三条要抓的东西**（"接线前按'谁假设了它不存在'扫一遍全部调用点"）：那 18 条的**隐含前提**是"游戏一开局就在 `Playing`"。做法：加 `StartPlaying`（按一次 `Enter`）辅助，**摆在调用点上**（不藏进 `StepFrame` —— 藏着的话"`Title` 下什么都不许变"那几条新用例就没法推帧了）。覆盖：`RunHolding` 内 2 条 · `WalkPlayerNextToEnemy` 内 8 条 · 显式 8 条 = **18/18** |
 | **4** | §7.2 的 `DrawGameOver` 提示行 | 只写 `ESC back to title`，**暂时不写 `R restart`** | `R` 的世界重建是**步骤 3** 的 `StartNewRun()`；本步按 `R` 只会让状态闪一帧。**写了就是假提示**（S9 偏差 10 的教训：面板一直在教人按一个已经不存在的键）。⇒ **步骤 3 落地 `StartNewRun` 之后必须回来补上 `R restart`**（`Game.cpp` 的 `DrawGameOver` 里留了 TODO 注释） |
 | **5** | §10.1 用例 1 写"按 `Enter` → `Playing` **且第 1 波已刷**（敌人 = `kWaveBase`）" | 前半条（`Title` → `Playing`）已实现；**"第 1 波已刷"那半条要等步骤 4** | 本步还没有波次：敌人仍是 `OnStart()` 里铺的 5 个，`kWaveBase = 3` 是步骤 4 的事。⇒ 用例 1 的波次断言**在步骤 4 补**（现在先用"`Playing` 下 `@` 真的会动"当正向对照） |
@@ -753,6 +753,27 @@ ctest --test-dir build -C Debug --output-on-failure
 
 > ⚠️ **R8 / R9 / R6b 三条我都预判可能不红** —— 记录在此，跑完按实际结果回填（同 S9 的 R6 那种"绿出来的欠账"）。
 > ⚠️ R9 属于**UB**（不是逻辑错），跑之前先想清楚"它崩了也不算意外"；**别把它当功能验证用**。
+
+#### 10.3.1 执行协议（✅ **2026-10-12 本人拍板：5 轮批量**）
+
+逐条做要 **13 次构建**（12 场 + 最后还原验证），所以改成**按"预期红集两两不重合"分组**：
+每组一次构建，本人把**实际红集**回报，AI 按上表的**预期红集**逐条比对；不吻合就**单独重跑那一场**。
+
+| 轮 | 破坏项 | 分组理由（预期红集） | 构建次数 |
+| --- | --- | --- | --- |
+| **1** | **R1** 单独 | 它红在**编译期**（偏差 2 取 (a)）⇒ 别的破坏项也编不出来，必须单独走 | 1（只需 `cmake --build`） |
+| **2** | **R2 + R2b + R7** | `RestartOnlyFromGameOver` / `EscapeFromGameOverReturnsToTitle` / `StartsInTitleAndEnterBeginsPlay` —— **两两不重合** | 1 |
+| **3** | **R3 + R5 + R8** | `RestartLeavesNoStaleState` / `WaveAdvancesWhenAllEnemiesDie` / `GameOverIgnoresMoveInput`（可能不红）—— 不重合 | 1 |
+| **4** | **R4 + R6 + R6b + R6c** | `RestartThreeTimesDoesNotAccumulate`（+`RestartLeaves…`）/ `AmmoDrops…`+`AmmoEmpty…` / `AmmoIsCapped…`（可能不红）/ `AmmoRefundHappensOnlyOnKill` —— 不重合<br>⚠️ **R3 与 R4 不能同轮**（两者都会打 `RestartLeavesNoStaleState`） | 1 |
+| **5** | **R9** 单独 | **UB**（span 失效）⇒ 可能崩、也可能全绿；单独走免得把别的结论搅浑 | 1 |
+| — | **还原后干净重建** | 确认回到 `197 passed / 0 failed`（**这一步不能省**：它是"改动已全部还原"的证据） | 1 |
+
+⇒ **共 6 次构建**。每轮的**归因纪律**：实际红集 **⊇** 预期红集里那些"应当红"的项 ⇒ 该场**通过**；
+**多红**（预期外）要单独查（可能是组内交互，那就拆开重跑）；**少红**（预期要红却没红）⇒
+**如实登记**（同 S9 的 R6 那种"绿出来的欠账"，并回填 `TECH_DEBT` 的 **C28 / C30**）。
+
+⚠️ 每轮的破坏由 **AI 改文件**（分工约定），**本人在每轮之后必须等 AI 还原再进下一轮** ——
+不然破坏会叠加，红集就没法归因了。
 
 ### 10.4 交付后的自检
 
