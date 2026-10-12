@@ -469,7 +469,7 @@ struct PanelSummary {
 //   · 含 `n=`         → 表头
 //   · 含 `<id gone>`  → 悬空 id 行
 //
-// ⚠️ 隐含前提：**所有还活着的敌人都在视口内**（`nBefore == 5` 已经在每条用例里钉过了）。
+// ⚠️ 隐含前提：**所有还活着的敌人都在视口内**（`nBefore == kWaveBase` 已经在每条用例里钉过了）。
 //    不在视口里的敌人也占一格、但屏幕上看不见 ⇒ 两边不等。当前的场景满足：敌人都在
 //    `x = 44.5..72.5 / y = 2.5..6.5`，而相机的 80 列覆盖了整片交战区。
 PanelSummary SummarizeEnemyPanel(const std::string& panelText)
@@ -751,16 +751,16 @@ MINI_TEST(Game, EnemiesPatrolUntilPlayerIsNear)
 
     StepFrame(game, input, fb, kDt);   // 第 0 帧：先看一眼
 
-    constexpr int kMaxEnemies = 8;     // 比 kEnemyCount(5) 宽裕，够放下所有敌人
+    constexpr int kMaxEnemies = 8;     // = `kWaveMax`：封顶那一波也放得下
     Pos       before[kMaxEnemies] = {};
     const int nBefore  = CollectEnemies(fb, before, kMaxEnemies);
     const Pos player0  = FindChar(fb, '@');
     const int dist0Sq  = MinEnemyDistanceSq(fb);
 
     MINI_CHECK(player0.found);
-    // ⚠️ 这个 5 是**写死**的：`kEnemyCount` 是私有的，而且它由 `PLAN:572` 的验收
-    //    （"5 个敌人同时追"）钉着 —— 改敌人数量本来就该让这条红。
-    MINI_CHECK_EQ(nBefore, 5);
+    // ⚠️ 期望值 = **第 1 波有几个**（S10 步骤 4 起由 `kWaveBase` 决定，不再是写死的 5）。
+    //    它由公开常量算出来 ⇒ 调波次数值不会让这条红（`S5_CHECKLIST` 10.4 的纪律）。
+    MINI_CHECK_EQ(nBefore, Game::kWaveBase);
     MINI_CHECK(dist0Sq > 0);
 
     // 跑 1 秒。玩家一个键都不按 → 他一步都不会动，所有位移都只能来自敌人。
@@ -924,7 +924,7 @@ MINI_TEST(Game, EnemyDiesAndDisappears)
     constexpr int kMaxEnemies = 8;
     Pos       before[kMaxEnemies] = {};
     const int nBefore = CollectEnemies(fb, before, kMaxEnemies);
-    MINI_CHECK_EQ(nBefore, 5);   // 5 个（PLAN:572）；同 `EnemiesPatrolUntilPlayerIsNear`
+    MINI_CHECK_EQ(nBefore, Game::kWaveBase);   // 第 1 波几个；同 `EnemiesPatrolUntilPlayerIsNear`
 
     // ⚠️ **2026-10-10（S9 步骤 3）改写过**：原来这里是"按 `F7` 开面板 + 按 `K` 杀敌"。
     //    `K` 连同它的枚举都删了（`TECH_DEBT` C15 到期）—— 真入口是子弹，所以改成**真的开枪**。
@@ -1072,10 +1072,10 @@ MINI_TEST(Game, BulletDamagesEnemy)
 
     MINI_CHECK(WalkPlayerNextToEnemy(game, input, fb) > 0);   // 走过去 = 朝东 = 正对着最东边那个敌人
 
-    constexpr int kMaxEnemies = 8;
+    constexpr int kMaxEnemies = 8;   // = `kWaveMax`（封顶那一波的个数；够放下任何一波）
     Pos       before[kMaxEnemies] = {};
     const int nBefore = CollectEnemies(fb, before, kMaxEnemies);
-    MINI_CHECK_EQ(nBefore, 5);
+    MINI_CHECK_EQ(nBefore, Game::kWaveBase);   // ★ 第 1 波几个（S10 步骤 4 起由波次决定）
 
     constexpr int kShotsToKill = Game::kEnemyMaxHp / game::kDefaultBullet.damage;
     for (int i = 0; i < kShotsToKill - 1; ++i) {   // 差一发
@@ -1110,10 +1110,10 @@ MINI_TEST(Game, ThreeHitsKillAnEnemy)
 
     MINI_CHECK(WalkPlayerNextToEnemy(game, input, fb) > 0);
 
-    constexpr int kMaxEnemies = 8;
+    constexpr int kMaxEnemies = 8;   // = `kWaveMax`（封顶那一波的个数；够放下任何一波）
     Pos       before[kMaxEnemies] = {};
     const int nBefore = CollectEnemies(fb, before, kMaxEnemies);
-    MINI_CHECK_EQ(nBefore, 5);
+    MINI_CHECK_EQ(nBefore, Game::kWaveBase);   // ★ 第 1 波几个（S10 步骤 4 起由波次决定）
 
     // ⚠️ 发数由公开常量算（不写死 3）：`kEnemyMaxHp` 3 ÷ `kDefaultBullet.damage` 1 = 3
     constexpr int kShotsToKill = Game::kEnemyMaxHp / game::kDefaultBullet.damage;
@@ -1187,10 +1187,10 @@ MINI_TEST(Game, BulletHitsEnemyEvenAtMaxDelta)
 
     MINI_CHECK(WalkPlayerNextToEnemy(game, input, fb) > 0);
 
-    constexpr int kMaxEnemies = 8;
+    constexpr int kMaxEnemies = 8;   // = `kWaveMax`（封顶那一波的个数；够放下任何一波）
     Pos       before[kMaxEnemies] = {};
     const int nBefore = CollectEnemies(fb, before, kMaxEnemies);
-    MINI_CHECK_EQ(nBefore, 5);
+    MINI_CHECK_EQ(nBefore, Game::kWaveBase);   // ★ 第 1 波几个（S10 步骤 4 起由波次决定）
 
     constexpr int kShotsToKill = Game::kEnemyMaxHp / game::kDefaultBullet.damage;
     for (int i = 0; i < kShotsToKill; ++i) {
@@ -1240,10 +1240,10 @@ MINI_TEST(Game, KilledEnemyIsRemovedAndLeavesNoDanglingId)
 
     MINI_CHECK(WalkPlayerNextToEnemy(game, input, fb) > 0);
 
-    constexpr int kMaxEnemies = 8;
+    constexpr int kMaxEnemies = 8;   // = `kWaveMax`（封顶那一波的个数；够放下任何一波）
     Pos       before[kMaxEnemies] = {};
     const int nBefore = CollectEnemies(fb, before, kMaxEnemies);
-    MINI_CHECK_EQ(nBefore, 5);
+    MINI_CHECK_EQ(nBefore, Game::kWaveBase);   // ★ 第 1 波几个（S10 步骤 4 起由波次决定）
 
     constexpr int kShotsToKill = Game::kEnemyMaxHp / game::kDefaultBullet.damage;
     for (int i = 0; i < kShotsToKill; ++i) {
@@ -1323,10 +1323,15 @@ MINI_TEST(Game, HudFitsInTwoLinesWithoutOverflow)
     MINI_CHECK(posLine.find("sumdt") != std::string::npos);
     MINI_CHECK(posLine.find("v ") != std::string::npos);
 
-    // ③ 行 2（状态类）四栏都在。`dir ->` 是**确定性**的：`m_facing` 初值就是东
+    // ③ 行 2（状态类）各栏都在。`dir ->` 是**确定性**的：`m_facing` 初值就是东
     //    ⚠️ 这条同时钉住分叉 ③ 的"必要配套"：朝向必须**看得见**，否则玩家不知道该往哪打。
+    //    ⚠️ S10 补的两栏：`wave`（步骤 4 加的）与 `ammo`（步骤 5 加）—— 加它们的原因是
+    //      **当时没有任何机器守卫**：`Ammo()` / `Wave()` 的用例读的是**访问器**，
+    //      格式串里漏写一栏它们照样全绿（只有人眼能看出来）⇒ 这两行把那次缺口堵上。
     MINI_CHECK(stateLine.find("hp ") != std::string::npos);
+    MINI_CHECK(stateLine.find("ammo") != std::string::npos);
     MINI_CHECK(stateLine.find("kills") != std::string::npos);
+    MINI_CHECK(stateLine.find("wave") != std::string::npos);
     MINI_CHECK(stateLine.find("dir ->") != std::string::npos);
     // ④ `F7` 提示终于进了提示行（S8 偏差 6：单行时 78/80 列，塞不下第三个键）
     MINI_CHECK(stateLine.find("F7") != std::string::npos);
@@ -1388,6 +1393,18 @@ MINI_TEST(Game, StartsInTitleAndEnterBeginsPlay)
     StepFrame(game, input, fb, kDt);
     input.Release(Key::Enter);
     MINI_CHECK(game.State() == GameState::Playing);
+
+    // ③b ★ **第 1 波已经刷出来了**（`S10_CHECKLIST` 落地偏差 5：这条断言原来是"留给步骤 4"的）
+    //     ⚠️ 期望值由公开常量算（`kWaveBase`），不写死数字。
+    //     ⚠️ 判据用**面板的 `n=`**（= `m_enemies.size()` 真值）而不是屏幕上的 `'E'` 个数：
+    //        敌人**会叠格**（没有推挤，`TECH_DEBT` C12）⇒ 数屏幕字符会少（`SummarizeEnemyPanel`）。
+    MINI_CHECK_EQ(game.Wave(), 1);
+    input.Press(Key::F7);                                  // 开面板（这一步之后一直开着）
+    StepFrame(game, input, fb, kDt);
+    input.Release(Key::F7);
+    const PanelSummary panel = SummarizeEnemyPanel(ScreenText(fb));
+    MINI_CHECK_EQ(panel.enemyCount, Game::kWaveBase);
+    MINI_CHECK(!panel.hasIdGone);
 
     // ④ **正向对照**：`Playing` 下世界真的会动
     //    （少了这条，"接上了但五个开关一个都没打开"也会全绿）
@@ -1701,13 +1718,16 @@ MINI_TEST(Game, RestartLeavesNoStaleState)
     // ── ④ 断言"清干净了"（逐条对 §10.1 用例 8）
     MINI_CHECK_EQ(game.Kills(), 0);                            // ← 第 4 步：击杀数归 0
     MINI_CHECK_EQ(game.PlayerHp(), Game::kPlayerMaxHp);        // ← 第 4 步：HP 回满（期望值由公开常量算）
+    // ← S10 步骤 4/5 补的两条（用例 8 的清单里写着 `Wave == 1` / `Ammo == kStartAmmo`，
+    //    但那时这两个成员还不存在 ⇒ 到本步才补上）
+    MINI_CHECK_EQ(game.Wave(), 1);                             // 第 7 步 `BeginWave(1)` 设的
+    MINI_CHECK_EQ(game.Ammo(), Game::kStartAmmo);              // `BeginWave` 的"每波回满"（含重开那一波）
     MINI_CHECK_EQ(CountChar(fb, '*'), 0);                      // ← 第 3 步：上一局的子弹一发不剩
 
     // ← 第 1/2/3 步：实体清空后重铺 + `m_enemies` 清空 ⇒ 个数对、且**没有悬空 id**
     const PanelSummary panel = OpenPanelAndSummarize(game, input, fb, kDt);
-    // ⚠️ 这个 5 是**写死**的：`kEnemyCount` 是私有的，而且它由 `PLAN:572` 的验收钉着
-    //    （同 `EnemiesPatrolUntilPlayerIsNear` 的那条注释）。步骤 4 会换成 `kWaveBase`。
-    MINI_CHECK_EQ(panel.enemyCount, 5);
+    // ⚠️ 第 1 波几个（S10 步骤 4 起由波次决定）；同 `EnemiesPatrolUntilPlayerIsNear` 那条注释。
+    MINI_CHECK_EQ(panel.enemyCount, Game::kWaveBase);
     // ★ "上一局的 id 一个都查不到"在公开面上的直接体现：若 `m_enemies` 没清，
     //   那些残留 `EnemyData` 会指向**已经删掉的**实体 ⇒ 面板立刻印出 `<id gone>`
     MINI_CHECK(!panel.hasIdGone);
@@ -1760,8 +1780,8 @@ MINI_TEST(Game, RestartThreeTimesDoesNotAccumulate)
 
         if (run == 0) {
             enemiesAfterFirstRun = panel.enemyCount;
-            // ⚠️ 写死的 5 同上（`kEnemyCount` 私有）；步骤 4 会换成 `kWaveBase`
-            MINI_CHECK_EQ(enemiesAfterFirstRun, 5);
+            // 第 1 波几个（同上；S10 步骤 4 起由波次决定）
+            MINI_CHECK_EQ(enemiesAfterFirstRun, Game::kWaveBase);
         } else {
             // ★ 核心：第 2、3 次重开之后，场上敌人个数与**第 1 次完全相同**（不累积）
             MINI_CHECK_EQ(panel.enemyCount, enemiesAfterFirstRun);
@@ -1772,4 +1792,286 @@ MINI_TEST(Game, RestartThreeTimesDoesNotAccumulate)
     MINI_CHECK_EQ(game.Kills(), 0);
     MINI_CHECK_EQ(game.PlayerHp(), Game::kPlayerMaxHp);
     MINI_CHECK_EQ(CountChar(fb, '*'), 0);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// S10 步骤 4：波次（分叉 ③ 取甲：固定模板 + 数量递增 + 封顶）
+//
+// 【两条用例的分工（**这是本步最重要的设计决定**）】
+//   · `WaveEnemyCountGrowsAndIsCapped` —— 管**公式**：逐 n 核"每波 +growth、到 max 封顶"，
+//     覆盖到远超封顶（n = 1..20）。⚠️ 它是**纯函数测试**：`WaveEnemyCount` 是
+//     `static constexpr` ⇒ 不用造 `Game`、不用推帧。
+//   · `WaveAdvancesWhenAllEnemiesDie` —— 管**接线**：真的清完一波、真的过了喘息、
+//     真的刷出下一波（第 1 波 3 个 → 第 2 波 4 个）。
+//
+//   ⚠️ **为什么不把"封顶"也交给接线那条测**：那要连打 6 波、杀掉 3+4+5+6+7 = 25 个敌人
+//      （约 75 发子弹、5000+ 帧），而且第 3 波起玩家几乎必死（最多 8 个敌人贴脸，
+//      而且**没有推挤**，`TECH_DEBT` C12）⇒ 那种用例**又慢又脆**，红了还分不清是
+//      "公式错了"还是"玩家死了"。⇒ 把可判定的那半（公式）拆成纯函数，是本项目
+//      "决策与接线分家"的第 5 次实践。
+// ══════════════════════════════════════════════════════════════════════════
+
+// G10（§10.1 用例 10）：清完一波 → 喘息 → 下一波。
+MINI_TEST(Game, WaveAdvancesWhenAllEnemiesDie)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+    StartPlaying(game, input, fb);
+
+    // 面板开一次**一直开着**（`StartNewRun`/`BeginWave` 都不清 `m_showAiPanel`，坑表 9）
+    // ⇒ 全程用 `n=` 读真值。⚠️ 不数屏幕上的 `'E'`：敌人会叠格（C12）。
+    input.Press(Key::F7);
+    StepFrame(game, input, fb, kDt);
+    input.Release(Key::F7);
+
+    MINI_CHECK_EQ(game.Wave(), 1);
+    MINI_CHECK_EQ(SummarizeEnemyPanel(ScreenText(fb)).enemyCount, Game::kWaveBase);
+
+    // ── ① 站到"最近敌人 8 格"处 ─────────────────────────────────────────────
+    //    停下来的那一行 = 前两个敌人的巡逻线（都是 y = 2.5）⇒ 向东开火必中。
+    MINI_CHECK(WalkPlayerNextToEnemy(game, input, fb) > 0);
+
+    // ── ② 一直向东开枪，直到面板说敌人全没了 ─────────────────────────────────
+    //   ⚠️ 为什么"向东开火"能清完（三条几何事实，落地时逐条核过）：
+    //     · 第 1 波 3 个出生在 `kPatrolPaths` 第 0/1/2 行 = (44.5,2.5) (60.5,2.5) (44.5,4.5)；
+    //     · 前两个的 y 与玩家相同 ⇒ 占**同一格行** ⇒ 向东的子弹必中
+    //       （命中判定是**按格**的：采样点所在格 == 敌人所在格，见 `Bullet.h`）；
+    //     · 第三个从 8 格以外沿直线追过来、停在离玩家 1.5 格处 ⇒ 纵向只偏
+    //       2 × (1.5/8.25) ≈ 0.36 格 ⇒ **格行不变**（还是同一行）⇒ 照样中。
+    //   ⚠️ 逐帧推进而不是"固定推 40 帧"：**倒计时的起点要尽量准**（下面 ③ 要用它）。
+    //   ⚠️ 上限 = `kStartAmmo`（S10 步骤 5 起"开火要花弹药"）：3 个敌人要 9 发、
+    //      每次击杀返还 1 ⇒ 预算 **18 + 3 = 21** 发 ⇒ 上限取 18 与弹药**同源**
+    //      （避免把"清不完"和"打光了"两种失败混成同一个症状）。
+    constexpr int kMaxShots = Game::kStartAmmo;
+    int shots = 0;
+    while (shots < kMaxShots && SummarizeEnemyPanel(ScreenText(fb)).enemyCount > 0) {
+        FireOnce(game, input, fb, kDt);
+        ++shots;
+        // 最多等 45 帧（够子弹飞到最远那个：24 格 ÷ 45 格/秒 ≈ 32 帧），一清空就立刻停
+        for (int f = 0; f < 45 && SummarizeEnemyPanel(ScreenText(fb)).enemyCount > 0; ++f) {
+            StepFrame(game, input, fb, kDt);
+        }
+    }
+    MINI_CHECK(shots < kMaxShots);                                     // 没打光上限就打完了
+    MINI_CHECK_EQ(SummarizeEnemyPanel(ScreenText(fb)).enemyCount, 0);
+    MINI_CHECK_EQ(game.Kills(), Game::kWaveBase);                      // 全清 ⇒ 击杀数 = 第 1 波个数
+    MINI_CHECK(game.State() == GameState::Playing);                    // ⚠️ 玩家还活着（不然下面没意义）
+
+    // ── ③ 喘息期：**还没到点之前不许刷下一波** ────────────────────────────────
+    //   ⚠️ 波次只在"新一波真的刷出来"时才 +1 ⇒ 喘息期间 `Wave()` 仍是 1（这是可观察的"喘息"）。
+    //   ⚠️ 倒计时起点 = **清完那一帧**（`TickWave` 在 ⑤x，而真删在 ⑤d 当帧就完成了）。
+    const int breakFrames = static_cast<int>(Game::kWaveBreakSeconds * 60.0f);
+    MINI_CHECK_EQ(game.Wave(), 1);
+    StepFrames(game, input, fb, kDt, breakFrames - 6);      // 留 6 帧余量（浮点累减 + 帧边界）
+    MINI_CHECK_EQ(game.Wave(), 1);                          // ★ 喘息中：还没刷
+    MINI_CHECK_EQ(SummarizeEnemyPanel(ScreenText(fb)).enemyCount, 0);
+
+    // ── ④ 到点 → 第 2 波：`Wave()` +1 **且**敌人重新出现（数量 = 第 2 波该有的）────────
+    StepFrames(game, input, fb, kDt, 12);
+    MINI_CHECK_EQ(game.Wave(), 2);
+    MINI_CHECK_EQ(SummarizeEnemyPanel(ScreenText(fb)).enemyCount,
+                  Game::kWaveBase + Game::kWaveGrowth);
+    MINI_CHECK(!SummarizeEnemyPanel(ScreenText(fb)).hasIdGone);        // 新一波没有悬空 id
+}
+
+// G11（§10.1 用例 11）：第 n 波数量 = 每波 +`kWaveGrowth`、到 `kWaveMax` 封顶。
+//   ⚠️ **纯函数测试**（`WaveEnemyCount` 是 `static constexpr`，不用造 `Game`、不用推帧）——
+//      理由见上面那段"两条用例的分工"。
+MINI_TEST(Game, WaveEnemyCountGrowsAndIsCapped)
+{
+    // ⚠️ 不拿 `WaveEnemyCount(n)` 自己算期望值（那是空断言）。这里核的是**性质**：
+    //    相邻波的差 == `kWaveGrowth`（未封顶时），封顶后恒 == `kWaveMax`。
+    constexpr int kLastWave = 20;   // 远超封顶该出现的那一波（覆盖"涨上去 + 停住"两段）
+
+    int prev = Game::WaveEnemyCount(1);
+    MINI_CHECK_EQ(prev, Game::kWaveBase);          // 第 1 波 = 基数
+
+    for (int n = 2; n <= kLastWave; ++n) {
+        const int now = Game::WaveEnemyCount(n);
+
+        if (prev < Game::kWaveMax) {
+            MINI_CHECK_EQ(now, prev + Game::kWaveGrowth);   // 还没封顶：每波涨固定值
+        } else {
+            MINI_CHECK_EQ(now, Game::kWaveMax);             // 已封顶：不再涨
+        }
+
+        MINI_CHECK(now <= Game::kWaveMax);   // ★ 任何一波都不许超过封顶（越界 = 读表越界）
+        MINI_CHECK(now >= 1);                // 也不许变成 0 / 负数（否则波次会自激）
+
+        prev = now;
+    }
+
+    // 封顶**确实发生**（若有人把 `kWaveGrowth` 改成 0，上面每条都会"遵守不变式"却永远不封顶
+    // ⇒ 这条把它钉住：到第 20 波必须已经贴着封顶了）
+    MINI_CHECK_EQ(Game::WaveEnemyCount(kLastWave), Game::kWaveMax);
+
+    // 巡逻表长必须 ≥ 封顶值 —— ⚠️ **这条耦合不在这里核**：它是**编译期**的
+    // （`Game.h` 里那句 `static_assert(kWaveMax <= kPatrolPathRows)`），而 `kPatrolPathRows`
+    // 是 private ⇒ 用例只能拿字面量去比，那是**比 `static_assert` 更弱**的重复守卫。
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// S10 步骤 5：弹药（分叉 ④ 定稿 = 乙+丁：**每波回满** 且 **每击杀 +kAmmoPerKill**，cap = 初值）
+//
+// 【这四条的分工】
+//   · `AmmoDropsByOnePerShot`   扣减：**对墙**打 —— 没有击杀 ⇒ 与"返还"完全解耦；
+//   · `AmmoEmptyBlocksFiring`   打光：`== 0` 之后**屏幕上不再出新 `*`**，且**不为负**；
+//   · `AmmoRefundHappensOnlyOnKill` 返还：★ 差**恰好**是 `kAmmoPerKill`（不是"打中一次 +1"）；
+//   · `AmmoIsCappedAtMax`       夹取：任何时刻 `Ammo() <= kMaxAmmo` 且 `>= 0`。
+//
+//   ⚠️ **为什么扣减那条一定要"对墙"**：拿敌人测就分不清"扣了 3 发"和"扣了 3 发又还了 1 发"。
+//      对墙开火是**唯一**能把两条通路拆开的动线（墙上没有敌人 ⇒ 不可能有击杀）。
+// ══════════════════════════════════════════════════════════════════════════
+
+// G12（§10.1 用例 12）：每开一枪扣 1 发（对墙 ⇒ 不掺返还）。
+MINI_TEST(Game, AmmoDropsByOnePerShot)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+    StartPlaying(game, input, fb);
+
+    MINI_CHECK_EQ(game.Ammo(), Game::kStartAmmo);   // 开局满弹（`BeginWave(1)` 里回的）
+    MINI_CHECK_EQ(game.Kills(), 0);
+
+    // 面朝北：上墙只有 2 格远 ⇒ 每发都在几帧内撞墙消失（屏幕上不会越积越多）
+    input.Press(Key::W);
+    StepFrame(game, input, fb, kDt);
+    input.Release(Key::W);
+
+    // 打 `kShots` 发（不发敌人 ⇒ **一定**没有击杀返还）
+    constexpr int kShots = 5;
+    for (int i = 0; i < kShots; ++i) {
+        FireOnce(game, input, fb, kDt);
+        StepFrames(game, input, fb, kDt, 10);
+    }
+
+    MINI_CHECK_EQ(game.Kills(), 0);                             // 确认"没有返还"这个前提
+    MINI_CHECK_EQ(game.Ammo(), Game::kStartAmmo - kShots);      // ★ 期望值由公开常量算
+}
+
+// G13（§10.1 用例 13）：打光之后**开不了火**（屏幕不出新 `*`），且弹药不为负。
+MINI_TEST(Game, AmmoEmptyBlocksFiring)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+    StartPlaying(game, input, fb);
+
+    // 面朝北（同 G12）
+    input.Press(Key::W);
+    StepFrame(game, input, fb, kDt);
+    input.Release(Key::W);
+
+    // ① 把弹药**打到正好 0**（打 `kStartAmmo` 发，一发都不打敌人 ⇒ 无返还）
+    for (int i = 0; i < Game::kStartAmmo; ++i) {
+        FireOnce(game, input, fb, kDt);
+        StepFrames(game, input, fb, kDt, 10);
+    }
+    MINI_CHECK_EQ(game.Ammo(), 0);
+    MINI_CHECK_EQ(game.Kills(), 0);
+
+    // 等所有子弹撞墙消失（上墙 2 格远 ⇒ 10 帧足够；留足余量）
+    StepFrames(game, input, fb, kDt, 30);
+    MINI_CHECK_EQ(CountChar(fb, '*'), 0);   // ← 清干净了，下面"不出新 `*`"才有意义
+
+    // ② 再按一次 `SPACE`：**什么都不该发生**
+    FireOnce(game, input, fb, kDt);
+    MINI_CHECK_EQ(CountChar(fb, '*'), 0);   // ★ 打光了就是"屏幕上不出新子弹"
+    MINI_CHECK_EQ(game.Ammo(), 0);          // ★ 也不许变成负数
+    MINI_CHECK_EQ(game.Kills(), 0);
+
+    // ③ 再多按两下也一样（不是"只在第 1 次挡住"）
+    FireOnce(game, input, fb, kDt);
+    FireOnce(game, input, fb, kDt);
+    StepFrames(game, input, fb, kDt, 5);
+    MINI_CHECK_EQ(CountChar(fb, '*'), 0);
+    MINI_CHECK_EQ(game.Ammo(), 0);
+}
+
+// G14（§10.1 用例 14）：★ 返还在"**击杀**"那一次，**不是**"打中一次"。
+//     即：打死一个（3 发）⇒ 净扣 3、返还 `kAmmoPerKill` **1** 发（不是 3 发）。
+MINI_TEST(Game, AmmoRefundHappensOnlyOnKill)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+    StartPlaying(game, input, fb);
+
+    MINI_CHECK(WalkPlayerNextToEnemy(game, input, fb) > 0);
+
+    constexpr int kShotsToKill = Game::kEnemyMaxHp / game::kDefaultBullet.damage;
+    for (int i = 0; i < kShotsToKill; ++i) {
+        FireOnce(game, input, fb, kDt);
+        StepFrames(game, input, fb, kDt, 30);
+    }
+
+    MINI_CHECK_EQ(game.Kills(), 1);   // 确认"恰好发生了一次击杀"
+
+    // 没击杀时该剩 `kStartAmmo - kShotsToKill`（同 G12 的算式）；实际多出来的就是返还量。
+    constexpr int kNoKillAmmo = Game::kStartAmmo - kShotsToKill;
+    MINI_CHECK_EQ(game.Ammo() - kNoKillAmmo, Game::kAmmoPerKill);
+
+    // ★ **这才是这条用例的靶子**：实现若写成"打中一次 +1"，上面的差值会 = `kShotsToKill`（3）
+    //   ⇒ 红。⚠️ 所以判据必须是"差值 == `kAmmoPerKill`"，而不是"Ammo() 变大了"。
+    MINI_CHECK(Game::kAmmoPerKill < kShotsToKill);   // 前提：两种实现的差值本来就不相等
+    MINI_CHECK_EQ(game.Ammo(), kNoKillAmmo + Game::kAmmoPerKill);
+}
+
+// G15（§10.1 用例 15）：夹取守卫 —— **任何时刻 `0 <= Ammo() <= kMaxAmmo`**。
+//
+// ⚠️ **诚实说明（别把它写成"刚好顶到 cap"）**：在**本步的常量**下
+//    （`kMaxAmmo == kStartAmmo == 18`、`kAmmoPerKill == 1`、打死一个至少要 3 发），
+//    "刚好把 cap 顶满"这个**边界打不到**：击杀之前必然已经打掉 ≥ 3 发 ⇒ `m_ammo ≤ 15`
+//    ⇒ `+1` 之后 ≤ 16 < 18。⇒ 所以这条核的是**不变量**（"永远不超上限、不为负"），
+//    而不是"在某一点被夹住"。
+//    ⚠️ 一旦有人把 `kAmmoPerKill` 调到 ≥ 3（或让 `kMaxAmmo` 小于起手值），
+//      这条会立刻变成真正的边界用例 —— 而它守的还是同一件事。
+MINI_TEST(Game, AmmoIsCappedAtMax)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+    StartPlaying(game, input, fb);
+
+    // ① 开局：满弹，但**不超上限**
+    MINI_CHECK_EQ(game.Ammo(), Game::kStartAmmo);
+    MINI_CHECK(game.Ammo() <= Game::kMaxAmmo);
+    MINI_CHECK(game.Ammo() >= 0);
+
+    // ② 走过去打死一个：**每一发之后**都核一遍（不变量要在每个中间状态成立）
+    MINI_CHECK(WalkPlayerNextToEnemy(game, input, fb) > 0);
+
+    constexpr int kShotsToKill = Game::kEnemyMaxHp / game::kDefaultBullet.damage;
+    for (int i = 0; i < kShotsToKill; ++i) {
+        FireOnce(game, input, fb, kDt);
+        StepFrames(game, input, fb, kDt, 30);
+        MINI_CHECK(game.Ammo() >= 0);
+        MINI_CHECK(game.Ammo() <= Game::kMaxAmmo);
+    }
+    MINI_CHECK_EQ(game.Kills(), 1);
+
+    // ③ 击杀返还**之后**那一瞬间（最接近上限的时刻）再核一次
+    MINI_CHECK(game.Ammo() <= Game::kMaxAmmo);
+
+    // ④ "每波回满"那个写入点也不可能超上限 —— 这是编译期成立的
+    //    （`Game.h` 里 `static_assert(kMaxAmmo >= kStartAmmo)`）；
+    //    这里用运行时再说一遍语义，免得以后有人把静态断言删了还不知道少了什么。
+    MINI_CHECK(Game::kStartAmmo <= Game::kMaxAmmo);
 }

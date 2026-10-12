@@ -10,7 +10,7 @@
 #include "mini/world/TileMap.h"
 
 #include <algorithm>    // std::max（S8：HP 夹到 0）；std::erase_if（S9：子弹表自愈压缩）
-#include <array>        // S9：定长暂存（kEnemyCount 是编译期常量 ⇒ 判定时不分配）
+#include <array>        // S9：定长暂存（`kWaveMax` 是编译期常量 ⇒ 判定时不分配）
 #include <cstddef>      // std::size_t（S8：reserve 与巡逻表下标）
 #include <cstdio>
 #include <filesystem>   // 调试快照：判断日志文件是不是"新建的"（见 DumpSnapshot）
@@ -266,14 +266,16 @@ void Game::BuildDemoMap()
 // ------------------------------------------------------------
 // S10 步骤 3：`StartNewRun` —— **一局的唯一入口**（开局与重开走同一条路）
 //
-// 重开清单（**顺序即依赖**；`S10_CHECKLIST` §4 的 6 步 + 第 5 步是本步补的，共 7 步）：
+// 重开清单（**顺序即依赖**；`S10_CHECKLIST` §4 的 6 步 + 第 5 步是步骤 3 补的，共 7 步）：
 //   1. 遍历 `Entities()` 逐个 `MarkForRemoval`  ← ★ 只 push `m_pendingRemove`，**遍历中调是安全的**
 //   2. **一次** `FlushRemovals()`               ← ★ 此刻实体表为空，而 `m_nextId` **保持不变**
 //   3. `m_enemies.clear()` / `m_bullets.clear()` （两张表存的都是**上一局的 id**）
 //   4. 标量归位：HP / kills / Σdt / 朝向
 //   5. `BuildDemoMap()`                          ← 见下面的取舍说明
 //   6. `Spawn` 玩家（拿到一个**新** id）
-//   7. `SpawnEnemies()`                          ← 步骤 4 会把它换成 `BeginWave(1)`
+//   7. `BeginWave(1)`                            ← ✅ 步骤 4 落地（原来是 `SpawnEnemies()`）
+//      ⚠️ `m_wave = 1` 与 `m_waveTimer = 0` 都由它负责 ⇒ §4 清单第 4 步里写的 `m_wave = 0`
+//        **在这里被吸收了**（少一次写，也就少一个"两处都能改 `m_wave`"的口子）。
 //
 // ⚠️ 1 与 2 **必须连贯**（先全部登记、再一次 flush）：⛔ 在 `Entities()` 的循环里调
 //    `FlushRemovals` 才会真的让手里的 span 失效 —— `MarkForRemoval` 之所以安全，正因为
@@ -295,7 +297,9 @@ void Game::StartNewRun()
     m_enemies.clear();
     m_bullets.clear();
 
-    // 4) 标量归位。⚠️ 步骤 4/5 会在这里补 `m_wave = 0;` 与 `m_ammo = kStartAmmo;`
+    // 4) 标量归位。⚠️ **`m_wave` 与 `m_ammo` 刻意不在这里** —— 它们由第 7 步的
+    //    `BeginWave(1)` 负责（那个函数是"一波的初始状态"的唯一入口，两个值都是"一波"的量）
+    //    ⇒ 少一处写入点，就少一个"两处都能改它"的口子。见 `BeginWave` 的定义处。
     m_playerHp = kPlayerMaxHp;
     m_kills    = 0;
     m_elapsed  = 0.0f;
@@ -318,9 +322,10 @@ void Game::StartNewRun()
     player.symbol             = '@';
     m_player = m_world.Spawn(player);
 
-    // 7) 铺敌人。放在**玩家之后**是刻意的 —— 渲染顺序 = `Entities()` 的顺序，
+    // 7) 刷第 1 波。⚠️ 放在**玩家之后**是刻意的 —— 渲染顺序 = `Entities()` 的顺序，
     //    玩家先画、敌人后画；两者位置刻意隔开（见 `kPatrolPaths` 的注释），不会互相盖掉。
-    SpawnEnemies();
+    //    ⚠️ `BeginWave` 顺带把 `m_wave = 1` / `m_waveTimer = 0` 也定了（见函数头那句）。
+    BeginWave(1);
 }
 
 void Game::OnStart()
@@ -336,20 +341,64 @@ void Game::OnStart()
 }
 
 // ------------------------------------------------------------
-// 敌人（S8）
+// 敌人（S8）+ 波次（S10 步骤 4）
 //
-// 三个函数的分工：
-//   SpawnEnemies   每局开始时铺 5 个：一个 `Entity`（`symbol = 'E'`）+ 一条 `EnemyData`
-//                  （S10 步骤 3 起由 `StartNewRun()` 调；步骤 4 会换成 `BeginWave(1)`）
-//   DriveEnemyAi   每帧：对每个敌人跑一次 `ai::Decide`，**只写速度**（不碰位置）
-//   IsEnemyId      只给绘制上色用
+// 五个函数的分工（**决策与接线分家** 的第 5 次实践）：
+//   WaveEnemyCount   **决策**（`Game.h`，`static constexpr`）：第 n 波该刷几个
+//   BeginWave        **接线**：记下 `m_wave`、清倒计时、按决策刷怪
+//   SpawnWaveEnemies **接线**：铺 count 个：一个 `Entity`（`symbol = 'E'`）+ 一条 `EnemyData`
+//   TickWave         **接线**：本波全灭 → 喘息倒计时 → 下一波
+//   DriveEnemyAi     每帧：对每个敌人跑一次 `ai::Decide`，**只写速度**（不碰位置）
+//   IsEnemyId        只给绘制上色用
 // ------------------------------------------------------------
 
-void Game::SpawnEnemies()
+void Game::BeginWave(int wave)
 {
-    m_enemies.reserve(static_cast<std::size_t>(kEnemyCount));
+    m_wave = wave;
+    SpawnWaveEnemies(WaveEnemyCount(wave));
 
-    for (int i = 0; i < kEnemyCount; ++i) {
+    // 本波**不在倒计时**（哨兵 0 = 未起倒计时；见 `m_waveTimer` 的注释）
+    m_waveTimer = 0.0f;
+
+    // ★ S10 步骤 5：**每波回满**（分叉 ④ 取"乙+丁"的那一半"乙"）。
+    //    ⚠️ 放在 `BeginWave` 里而**不是** `TickWave` 里，是为了让**重开的那一波**也回满
+    //       （分叉 ④ 的定稿原话："每波回满 ⇒ 重开那一波也算一波"）。
+    //    ⚠️ 所以它和 `StartNewRun()` 是**互补**关系，别在两边都写：重开走 `BeginWave(1)`
+    //       ⇒ 这一句已经覆盖了"重开时弹药回满"。
+    m_ammo = kStartAmmo;
+}
+
+void Game::TickWave(float dt)
+{
+    // ── 判据：**"这一波清完了吗"** ──────────────────────────────────────────
+    // ⛔ **不能只有 `m_enemies.empty()`**（坑表 4）：它在"还没刷第一波"时也为真
+    //    ⇒ 会立刻再刷一次（现象 = "第一波刷两遍"，很难查）。
+    //    这里用**两个条件的合取**：已经开过波（`m_wave >= 1`）**且** 场上没敌人了。
+    //    ⚠️ 写成一个 `if` 而不是"早退的防御分支"：这样就没有"实现了但不可达"的分支
+    //       （`TECH_DEBT` C22 那类东西要尽量不造）。
+    if (m_wave < 1 || !m_enemies.empty()) {
+        m_waveTimer = 0.0f;   // 本波还没清完（或还没开始）⇒ 倒计时清零（= 未起倒计时）
+        return;
+    }
+
+    // ── 刚清完：起倒计时（`m_waveTimer == 0` 既是"未起"也是"上一步刚清零"）─────
+    if (m_waveTimer == 0.0f) {
+        m_waveTimer = kWaveBreakSeconds;
+        return;
+    }
+
+    // ── 倒计时进行中 ──────────────────────────────────────────────────────
+    m_waveTimer -= dt;
+    if (m_waveTimer <= 0.0f) {
+        BeginWave(m_wave + 1);   // ⚠️ 这里会把 `m_waveTimer` 清 0（见 `BeginWave`）
+    }
+}
+
+void Game::SpawnWaveEnemies(int count)
+{
+    m_enemies.reserve(static_cast<std::size_t>(count));
+
+    for (int i = 0; i < count; ++i) {
         // 出生点 = 这条路线的第一个端点。它必须是**空格**（人工核对过，见 `kPatrolPaths`）。
         mini::world::Entity prototype{};
         prototype.transform.pos      = kPatrolPaths[i][0];
@@ -393,8 +442,8 @@ void Game::DriveEnemyAi(const mini::core::FrameContext& ctx)
         }
 
         // 这个敌人负责的那条路线（2 个点 → `(idx+1) % 2` 就是往返）。
-        // ⚠️ `patrolPath` 只由 `SpawnEnemies` 写成 `0 .. kEnemyCount-1`，所以这里不会越界；
-        //    两个常量都显式转 size_t，免得 /W4 的 signed/unsigned 提示。
+        // ⚠️ `patrolPath` 只由 `SpawnWaveEnemies` 写成 `0 .. count-1`（`count <= kWaveMax`），
+        //    所以这里不会越界；两个常量都显式转 size_t，免得 /W4 的 signed/unsigned 提示。
         const std::span<const mini::math::Vec2> path{
             kPatrolPaths[static_cast<std::size_t>(enemy.patrolPath)],
             static_cast<std::size_t>(kPatrolPathLen)};
@@ -462,6 +511,16 @@ void Game::DriveEnemyAi(const mini::core::FrameContext& ctx)
 
 void Game::FireBullet()
 {
+    // ── ★ S10 步骤 5：弹药判定必须在**最前面** ────────────────────────────────
+    //    理由（分叉 ④ 的"生成端"）：判定放在 `Spawn` 之后的话，"发出去再发现没弹药"
+    //    就要么留下一个白打的子弹、要么写负数弹药。放在最前面 ⇒ 打光了就是**什么都不发生**
+    //    （屏幕上不出 `*`，玩家立刻从 `ammo` 那栏看出来）。
+    //    ⚠️ 判据是 `<= 0` 而不是 `== 0`：不变量上它不会为负，但"≤"让这条不变量**不必被信任**
+    //      （真为负也只是"开不了火"，不会变成负得更多）。
+    if (m_ammo <= 0) {
+        return;
+    }
+
     const mini::world::Entity* player = m_world.Find(m_player);
     if (player == nullptr) {
         return;   // 玩家还没出生（OnStart 之前）
@@ -478,6 +537,10 @@ void Game::FireBullet()
     // ⚠️ 子弹**不需要任何额外数据**（分叉 ①）：位置/速度/字符全在 `Entity` 里，
     //    所以这里只把 id 记进 `m_bullets` —— 那是"哪些实体是子弹"的索引，不是数据的副本。
     m_bullets.push_back(m_world.Spawn(bullet));
+
+    // ⚠️ **扣减放在最后**（`Spawn` 成功之后）：`World::Spawn` 刻意不标 `noexcept`，
+    //    万一它抛了，弹药就不该白扣（与"先确认 Spawn 成功再记账"同一条道理，§7.4）。
+    --m_ammo;
 }
 
 void Game::ResolveBullets(const mini::core::FrameContext& ctx)
@@ -487,8 +550,12 @@ void Game::ResolveBullets(const mini::core::FrameContext& ctx)
     }
 
     // 本帧"hp 跨过 0"的敌人（**存 id，不存下标** —— 理由见下面的名单写入处）。
-    // 定长数组：最多 `kEnemyCount` 个跨过 0，不分配。
-    std::array<mini::world::EntityId, kEnemyCount> pending{};
+    // 定长数组：最多 `kWaveMax` 个跨过 0，不分配。
+    // ⚠️ **2026-10-12（S10 步骤 4）从 `kEnemyCount`(5) 改成 `kWaveMax`(8)** —— 这是本步
+    //    最险的一处涟漪：封顶值从 5 涨到 8 之后，5 个元素的栈上数组会被**写越界**
+    //    （8 个敌人同帧跨过 0 是完全可能的：一发子弹只打一个，但可以同时有多发命中）。
+    //    上界由 **D13** 保证：只有全灭才刷下一波 ⇒ 场上敌人 ≤ `kWaveMax`。
+    std::array<mini::world::EntityId, kWaveMax> pending{};
     std::size_t pendingCount = 0;
 
     // ⚠️ 遍历的是 `m_bullets`（**不是** `m_entities`）：这一点让 PLAN 点名的
@@ -508,16 +575,17 @@ void Game::ResolveBullets(const mini::core::FrameContext& ctx)
         // **预测线段**：这一帧子弹要走的整段路。判定必须在 ⑥ 之前，理由见 Game.h 的注释。
         const mini::math::Vec2 to = from + bullet->velocity.perSecond * ctx.deltaSeconds;
 
-        // ① 每次都重新收一遍"活着且 id 有效的敌人位置"（5 个元素，栈上定长数组，不分配）。
+        // ① 每次都重新收一遍"活着且 id 有效的敌人位置"（≤ `kWaveMax` 个元素，栈上定长数组，不分配）。
         //    ⚠️ **每发子弹重新收**是刻意的：这一帧前面的子弹可能已经打死了某个敌人，
         //       那样它就该从表里消失 —— 否则（a）`kills` 会被同一具尸体重复计数，
         //       （b）后面的子弹会被一具看不见的尸体挡住。
         //    ⚠️ S9 步骤 4 起"真删"发生在**整个循环之后** ⇒ 循环内就靠下面这个 `hp <= 0`
         //       过滤器让"已经死了的"从表里消失（两者是同一件事的两半，缺一不可）。
-        std::array<mini::math::Vec2, kEnemyCount> positions{};
-        std::array<std::size_t, kEnemyCount>      which{};   // 第 i 项对应 m_enemies 的哪一个
+        //    ⚠️ S10 步骤 4：同样从 `kEnemyCount`(5) 改成 `kWaveMax`(8)（同上，越界风险）。
+        std::array<mini::math::Vec2, kWaveMax> positions{};
+        std::array<std::size_t, kWaveMax>      which{};   // 第 i 项对应 m_enemies 的哪一个
         std::size_t aliveCount = 0;
-        for (std::size_t i = 0; i < m_enemies.size() && aliveCount < kEnemyCount; ++i) {
+        for (std::size_t i = 0; i < m_enemies.size() && aliveCount < kWaveMax; ++i) {
             const mini::world::Entity* e = m_world.Find(m_enemies[i].id);
             if (e == nullptr || m_enemies[i].hp <= 0) {
                 continue;   // 悬空 id（分叉 ① 的代价）或已经死了
@@ -545,6 +613,15 @@ void Game::ResolveBullets(const mini::core::FrameContext& ctx)
             //    已经 <= 0 的敌人根本不在表里，所以这里天然只会走到一次。
             if (target.hp <= 0) {
                 ++m_kills;
+
+                // ── ★ S10 步骤 5：弹药返还（分叉 ④ 的"返还端"）──────────────────────
+                //  ⚠️ **返还点必须与 `++m_kills` 同一处**（"跨过 0 那一次"），
+                //     ⛔ **不是**"打中一次 +1" —— 否则一个敌人被打 3 次就返还 3 发、
+                //     净耗变成 0，弹药这件事等于不存在（`AmmoRefundHappensOnlyOnKill` 钉住它）。
+                //  ⚠️ **`min(..., kMaxAmmo)` 不是可选项**：`kMaxAmmo == kStartAmmo == 18`，
+                //     而"每击杀 +1"在一波内会累积 ⇒ 没有夹取就能**慢慢磨着囤弹**
+                //     （挑软柿子的波次刷满），把后面的难度设计整个废掉。
+                m_ammo = std::min(m_ammo + kAmmoPerKill, kMaxAmmo);
 
                 // ★ 只记进"待真删"名单，**既不设 `active`、也不在这里 erase**。★
                 //   · 不设 `active`：那是 `DriveEnemyAi` 的职责（S8 定的"怎么死只有一条路径"）；
@@ -722,6 +799,16 @@ void Game::OnUpdate(const mini::core::FrameContext& ctx)
         m_world.Update(ctx.deltaSeconds);
     }
 
+    // ⑤x 波次推进（S10 步骤 4）—— **必须在 ⑥ 之后**：判据是"场上还有没有敌人"，
+    //     而这一帧被 bullet 打死的敌人在 ⑤d 就已经从 `m_enemies` 里 erase 了
+    //     ⇒ 放在这里"当帧"就能判出全灭（放在 ⑤d 之前会晚一帧）。
+    //     ⚠️ 也必须在 ⑤b/⑤d/⑥ **之后**：否则 `BeginWave` 会在本帧刚 `Spawn` 出来的
+    //        敌人身上又跑一遍 AI/积分（多推一帧的位移）。
+    //     ⚠️ 只在 `advanceWave` 时调（`Title`/`Paused`/`GameOver` 下不推进波次 —— 冻结的一部分）。
+    if (policy.advanceWave) {
+        TickWave(ctx.deltaSeconds);
+    }
+
     // ⑦ 相机跟随 —— **必须在 ⑥ 之后**（用本帧最新的玩家位置，S6 的帧序硬约束）。
     //    ⚠️ **不在策略表里** ⇒ 冻结状态下也跑：玩家没动，所以 `Follow` 的结果也不变
     //       （留着它反而是对的 —— 终端 resize 之后冻结中的画面也该跟着算对）。
@@ -875,10 +962,13 @@ void Game::DrawHud(mini::render::FrameBuffer& fb) const
     //    看不见朝向玩家就不知道该往哪打。
     // ⚠️ 提示行里的键名与代码里的常量是**同一个键的两个落点**（同 `kDumpKey`/`kFireKey` 的纪律）：
     //    换键时这一行要一起改。⚠️ 这里是 `F7` 的唯一提示落点（面板表头那句是另一处）。
+    // ⚠️ S10 步骤 5 加了 `ammo` 一栏（53 → ~65 列，插在 `hp` 与 `kills` 之间 ——
+    //    与 §10.2 那条人眼清单的字段顺序 `hp / ammo / kills / wave / dir` 一致）。
+    //    步骤 6 再补 `ENTER/ESC/R` 三个键位提示并**重新数 80 列**（`S10_CHECKLIST` D14：**仍是两行**）。
     char stateText[96];
     std::snprintf(stateText, sizeof(stateText),
-                  "hp %2d | kills %2d | dir %s | WASD SPC Q F4 F7",
-                  m_playerHp, m_kills, game::FacingGlyph(m_facing));
+                  "hp %2d | ammo %2d | kills %2d | wave %2d | dir %s | WASD SPC Q F4 F7",
+                  m_playerHp, m_ammo, m_kills, m_wave, game::FacingGlyph(m_facing));
     fb.Draw(0, kHudStateRow, stateText);
 }
 
@@ -1162,6 +1252,20 @@ Facing8 Game::Facing() const noexcept
 GameState Game::State() const noexcept
 {
     return m_state;
+}
+
+// 同上：真相是私有的 `m_wave`（`BeginWave` 是**唯一**写入点）。
+// ⚠️ 它在 `HUD` 上真的看得见（`wave` 那一栏）⇒ 同 `PlayerHp`/`Kills` 一个口径，不是"为测试而加"。
+int Game::Wave() const noexcept
+{
+    return m_wave;
+}
+
+// 同上：真相是私有的 `m_ammo`（三个写入点全在 Game.cpp，见 `Game.h` 的成员注释）。
+// ⚠️ HUD 的 `ammo` 那一栏真的读它 ⇒ 同 `PlayerHp`/`Kills` 一个口径。
+int Game::Ammo() const noexcept
+{
+    return m_ammo;
 }
 
 bool Game::ShouldQuit() const

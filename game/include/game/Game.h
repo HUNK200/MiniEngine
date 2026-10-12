@@ -79,6 +79,14 @@ public:
     //    都必须先过一遍 `Enter`（见 `tests/test_game.cpp` 的 `StartPlaying`）。
     [[nodiscard]] GameState State() const noexcept;
 
+    // 当前波次（S10 步骤 4）。**从 1 开始**；**0 = 还没开始**（`StartNewRun` 之前）。
+    // 同 `State()`：**真接口** —— HUD 真的会显示它（`wave` 那一栏），不是"为测试而加"。
+    [[nodiscard]] int Wave() const noexcept;
+
+    // 剩余弹药（S10 步骤 5）。同 `State()`/`Wave()`：**真接口** —— HUD 上真的看得见（`ammo` 那一栏）。
+    // ⚠️ 它只在 `Playing` 变化（`FireBullet` 扣、`ResolveBullets` 返还、`BeginWave` 回满）。
+    [[nodiscard]] int Ammo() const noexcept;
+
     // 敌人 HP 上限。⚠️ **2026-10-10 从 private 挪到 public**（S9 步骤 3）：
     //    子弹的"三发打死一个"必须由**公开常量**算出来（`kEnemyMaxHp / kDefaultBullet.damage`），
     //    否则用例只能写死 3 —— 那就变成"调手感要改测试"（S5_CHECKLIST 10.4 的纪律）。
@@ -90,6 +98,55 @@ public:
     //    ✅ 这正是 `S10_CHECKLIST` 前置事实 16 预测的那处改动。
     // ⚠️ 定 10 的理由留在 private 区（见那里的一行指路注释）。
     static constexpr int kPlayerMaxHp = 10;
+
+    // ── 波次四常量（S10 步骤 4；分叉 ③ 取甲、D18 定"全 public"）────────────────
+    // 第 n 波刷 `min(kWaveBase + (n-1) * kWaveGrowth, kWaveMax)` 个 ⇒ 3,4,5,6,7,8,8,8,…
+    // ⚠️ **四个都公开**（D18）：用例要拿它们算"第 n 波该有几个"、"喘息该等几帧"；
+    //    写在 private 就只能写死数字（同 `kEnemyMaxHp` / `kPlayerMaxHp` 的纪律）。
+    // ⚠️ 手感关系式（改数值前先代一遍；`S10_CHECKLIST` 分叉 ④ 的意图 A）：
+    //    打死一个要 `kEnemyMaxHp / kDefaultBullet.damage` 发、每击杀返还 `kAmmoPerKill`
+    //    ⇒ 净耗 2 发/敌人；要求 `(3 − kAmmoPerKill) × kWaveMax < kStartAmmo`，即 2×8 = 16 < 18 ✓。
+    //    ⇒ **改 `kWaveMax` 会同时动难度和弹药张力**（分叉 ④ 那句"两个意图不能同时满足"）。
+    static constexpr int   kWaveBase   = 3;   // 第 1 波几个
+    static constexpr int   kWaveGrowth = 1;   // 每波 +几个
+    static constexpr int   kWaveMax    = 8;   // 封顶（**同时**是弹药张力旋钮）
+    // 一波清完到下一波的**喘息秒数**。
+    // ⚠️ **施工图没定这个数**（它只在 §7.3 的伪代码里用了 `kWaveBreakSeconds`，没给值）
+    //    ⇒ 2026-10-12 步骤 4 落地时取 **2.0 秒**：够走到下一波出生点附近看一眼，
+    //    又不至于让人以为"游戏卡住了"。**手感旋钮，可调**（见报告的落地偏差）。
+    static constexpr float kWaveBreakSeconds = 2.0f;
+
+    static_assert(kWaveBase >= 1, "第 1 波至少要 1 个（否则清空那一帧会立刻又推进）");
+    static_assert(kWaveBreakSeconds > 0.0f,
+                  "喘息必须为正：`m_waveTimer == 0` 是\"未起倒计时\"的哨兵（坑表 16）");
+
+    // 第 `wave` 波该刷几个（**纯决策**；`BeginWave` 只是接线 —— 又一次"决策与接线分家"）。
+    // ⚠️ 定义域 `wave >= 1`：唯一调用方是 `StartNewRun` 的 `BeginWave(1)` 与
+    //    `TickWave` 的 `BeginWave(m_wave + 1)`，而 `m_wave` 恒 ≥ 1。
+    // ⚠️ 它是 `static constexpr` ⇒ **用例不用造 `Game` 实例就能逐波核对公式**
+    //    （"封顶"那条断言因此才可靠 —— 真要跑到第 6 波得杀 33 个敌人，见 `tests` 的注释）。
+    [[nodiscard]] static constexpr int WaveEnemyCount(int wave) noexcept
+    {
+        const int n = kWaveBase + (wave - 1) * kWaveGrowth;
+        return (n < kWaveMax) ? n : kWaveMax;
+    }
+
+    // ── 弹药三常量（S10 步骤 5；分叉 ④ 定稿：18 / 18 / 1，cap = 初值）────────────
+    // ⚠️ **三个都公开**（D18）：用例要拿它们算"打几发该空"、"击杀该返还几发"、"cap 在哪"；
+    //    写在 private 就只能写死数字（同 `kEnemyMaxHp` / `kPlayerMaxHp` 的纪律）。
+    // ⚠️ **手感关系式**（改数值前先代一遍）：
+    //    打死一个敌人要 `kEnemyMaxHp / kDefaultBullet.damage` = 3 发，每击杀返还 `kAmmoPerKill` = 1
+    //    ⇒ **净耗 = 3 − 1 = 2 发/敌人**；意图 A（全中够用、失误才紧）要求
+    //      `(3 − kAmmoPerKill) × kWaveMax < kStartAmmo`，即 **2 × 8 = 16 < 18 ✓**。
+    //    ⚠️ 它与 `kWaveMax` **共用同一个旋钮**：只调 `kWaveMax` 会把意图 A 破坏掉
+    //      （分叉 ④ 那句"两个意图不能同时满足"）。
+    static constexpr int kStartAmmo   = 18;   // 每波起手弹药（`BeginWave` 里回满到这个值）
+    static constexpr int kMaxAmmo     = 18;   // = 起手值 ⇒ **不许囤过初值**（配下面的 static_assert）
+    static constexpr int kAmmoPerKill = 1;    // 每击杀返还；N = 1 ⇒ 净耗 2 发/敌人
+
+    static_assert(kMaxAmmo >= kStartAmmo,
+                  "上限不能低于起手值：否则 `BeginWave` 的\"回满\"会当场把自己顶到超上限状态");
+    static_assert(kAmmoPerKill >= 0, "返还不能为负：那会让\"击杀\"变成惩罚");
 
     // —— 下面三个数是**公有** constexpr，这是刻意的：单测要用它们算期望值 ——
     //    tests/test_game.cpp 拿 kMoveSpeed 算"1 秒该走几格 / 位移多少格"，拿 kSpawnX/Y 算
@@ -117,9 +174,10 @@ private:
     static constexpr int kWorldW = 200;          // PLAN：World = 200×200
     static constexpr int kWorldH = 200;
 
-    // ── 敌人（S8）───────────────────────────────────────────────────────
-    // 数量写死 5：PLAN:572 的验收原话是"5 个敌人同时追不出现抖动打转"。
-    static constexpr int kEnemyCount    = 5;
+    // ── 敌人（S8；S10 步骤 4 起"几个"由波次决定）────────────────────────────
+    // ⚠️ **S10 步骤 4 删掉了 `kEnemyCount = 5`**：场上敌人个数不再是常量，而是
+    //    `WaveEnemyCount(m_wave)`（3,4,5,6,7,8,8,…）。`PLAN:572` 那句"**5 个敌人同时追**
+    //    不出现抖动打转"的验收**在第 3 波（5 个）达成**，第 6 波起是 8 个（比原验收更狠）。
     static constexpr int kPatrolPathLen = 2;   // 一条巡逻路线 = 两个端点 → `(idx+1)%2` 就是**往返**
     // ⚠️ `kEnemyMaxHp` 已于 2026-10-10（S9 步骤 3）挪到 **public** —— 用例要用它算"几发打死"。
 
@@ -134,20 +192,36 @@ private:
     // ⚠️ 每行只有 **2** 个点 → `(idx + 1) % 2` 恰好就是**往返**（PLAN:567 要的"预置路径点往返"）。
     //    `ai::EnemyBrain` 只保证"环形前进"（它是无状态的，推不出上次往哪个方向走）——
     //    把"往返"落在**表**上，是这个分工的结果，见 S8_CHECKLIST 落地偏差 1。
+    //
+    // ⚠️ **行数 = 8**（S10 步骤 4 从 5 扩到 8，因为封顶值是 `kWaveMax = 8`）：
+    //    `BeginWave` 按 `i` 索引它（`i < WaveEnemyCount(n) <= kWaveMax`）⇒ **表长必须 ≥ 封顶值**，
+    //    下面那条 `static_assert` 就是这条耦合的守卫（坑表 7）。
     // ⚠️ 位置是**人工核对**过的（S8 不做地图校验，S8_CHECKLIST §6.8）：
-    //    · 全落在空格上：柱阵只在 y = 10,20,… **且** x = 10,20,… 的交叉点；地标楼在
-    //      x = 30..36 / y = 5..8。这里取的 y = 2 / 4 / 6、x = 44..72 与两者都不相交；
+    //    · 全落在空格上：柱阵只在 y = 10,20,… **且** x = 10,20,… 的交叉点（两者都满足才是墙）；
+    //      地标楼在 x = 30..36 / y = 5..8。这里取的 y = 2/4/6/8、x = 44..72 与两者都不相交
+    //      （x = 60 虽然是 10 的倍数，但 y = 2/4/6/8 不是 ⇒ 那里没有柱子）；
     //    · 离玩家出生点 (2.5, 2.5) 最近也有 42 格 >> 视距(10) → **开局不会被追**；
-    //    · 全落在开局视口内（相机原点被夹到 0、视口 80×23）→ 一开局就能看见 5 个 E 在巡逻；
-    //    · 全避开 Game suite 那几条用例的行走区（x <= 23、y <= 9）→ 不会把 '@' 盖掉，
-    //      既有 4 条用例的期望值不受影响（S8_CHECKLIST 坑 14 那张表逐条核过）。
-    static constexpr mini::math::Vec2 kPatrolPaths[kEnemyCount][kPatrolPathLen] = {
+    //    · 全落在开局视口内（相机原点被夹到 0、视口 80×23）⇒ 直接看得见敌人巡逻／刷出；
+    //    · 全避开 Game suite 那几条用例的行走区（x <= 23、y <= 9）→ 不会把 '@' 盖掉
+    //      （S8_CHECKLIST 坑 14 那张表逐条核过；S10 步骤 4 新增的 3 行也按同一张表核过）。
+    // ⚠️ 行数写成**字面量 8**、而**不是** `= kWaveMax`：后者会让下面那条 `static_assert` 变成
+    //    **恒真断言**（`TECH_DEBT` C18 警告的正是这一类 —— "恒真断言比没有更坏"，因为它
+    //    看着像守卫、实际永远不响）。写成字面量之后，"有人把 `kWaveMax` 调到 9 却忘了扩表"
+    //    会在**编译期**被抓住。
+    static constexpr int kPatrolPathRows = 8;
+    static constexpr mini::math::Vec2 kPatrolPaths[kPatrolPathRows][kPatrolPathLen] = {
         {{44.5f, 2.5f}, {56.5f, 2.5f}},
         {{60.5f, 2.5f}, {72.5f, 2.5f}},
         {{44.5f, 4.5f}, {56.5f, 4.5f}},
         {{60.5f, 4.5f}, {72.5f, 4.5f}},
         {{44.5f, 6.5f}, {56.5f, 6.5f}},
+        // ↓↓↓ 2026-10-12（S10 步骤 4）新增的 3 行：沿用同一条规律（y 取 6.5/8.5 这两条无柱的行）
+        {{60.5f, 6.5f}, {72.5f, 6.5f}},
+        {{44.5f, 8.5f}, {56.5f, 8.5f}},
+        {{60.5f, 8.5f}, {72.5f, 8.5f}},
     };
+    static_assert(kWaveMax <= kPatrolPathRows,
+                  "封顶值超过了巡逻表长 ⇒ BeginWave 会越界读表（坑表 7）");
 
     // ── S10 步骤 3：**一局的唯一入口** ──────────────────────────────────────
     // 把"这一局的初始状态"全部铺出来：清空实体 → 重置标量 → 建地图 → Spawn 玩家 → 铺敌人。
@@ -166,6 +240,19 @@ private:
     //    那四样**不属于"一局"**，它们的作用域是"这次进程"（坑表 9 写了为什么）。
     void StartNewRun();
 
+    // ── S10 步骤 4：波次 ───────────────────────────────────────────────────
+    // 刷第 `wave` 波（**从 1 开始**）：个数 = `WaveEnemyCount(wave)`，出生点取 `kPatrolPaths[i][0]`。
+    // ⚠️ 两个调用点**只有**这两个：`StartNewRun` 的 `BeginWave(1)`，
+    //    和 `TickWave` 的 `BeginWave(m_wave + 1)`。⛔ 别在别处调 ——
+    //    它是"`m_wave` 与场上敌人数一致"这条不变量的唯一维护者。
+    // ⚠️ 内含"分叉 ④ 的**每波回满**"（步骤 5 落地：`m_ammo = kStartAmmo`）。
+    void BeginWave(int wave);
+
+    // 波次推进（帧序 **⑥ 之后、⑦ 之前**，只在 `advanceWave` 时调）：
+    // 本波全灭 → 起喘息倒计时 → 到点 `BeginWave(m_wave + 1)`。
+    // ⛔ 判据**不能**只有 `m_enemies.empty()` —— 它在"还没刷第一波"时也为真（坑表 4，§7.3）。
+    void TickWave(float dt);
+
     // 地图布局：**确定性**写死（不随机、不读文件）。
     // 内容 = 地图外沿一圈墙 + **每 10 格一根的规则柱阵** + 一个不对称地标（"一栋楼"）。
     // ⚠️ 规则性是有要求的（2026-09-30 实测被指出"# 摆得没规律"）：柱阵一眼看出是
@@ -175,8 +262,10 @@ private:
     //    直接从依赖里删掉了（分叉 ② 条件 2 的触发条件也就此关闭）。
     void BuildDemoMap();
 
-    // 铺敌人（`StartNewRun` 里、**玩家之后**调）。
-    void SpawnEnemies();
+    // 铺敌人：在 `kPatrolPaths[i][0]` 处 Spawn 第 i 个（`i = 0 .. count-1`）+ 一条 `EnemyData`。
+    // ⚠️ 由 `BeginWave` 调（"几个"是**决策**，铺是**接线** —— 所以拆成两个函数）。
+    // ⚠️ `count` 必须 ≤ `kPatrolPathRows`（调用方 `BeginWave` 由 `WaveEnemyCount` 保证 ≤ `kWaveMax`）。
+    void SpawnWaveEnemies(int count);
 
     // 敌人每帧的"决策"：对每个 `EnemyData` 跑一次 `ai::Decide`，**只写速度**。
     // ⚠️ 必须在 `World::Update` **之前**调（写速度必须在积分之前 —— 与玩家同一条帧序硬约束，
@@ -236,6 +325,24 @@ private:
     // ⚠️ **非 const**：要写文件、还要递增 `m_dumpCount`。它**只读**世界，不改任何状态
     //    （所以放在帧序的哪一步都不影响别的系统 —— 实现里放在相机之后）。
     void DumpSnapshot(const mini::core::FrameContext& ctx);
+
+    // ── S10 步骤 4：波次（"一局"的数值状态之一 ⇒ `StartNewRun` 会把它归位）────────
+    // `Wave()` 从 1 开始；**0 = 还没开始**。每波个数 = `WaveEnemyCount(m_wave)`。
+    int m_wave = 0;
+
+    // 本波清完之后的**喘息倒计时**（秒）。⚠️ **哨兵：`0` = 没在倒计时**（坑表 16）：
+    //   "已清完但还没起倒计时" 与 "倒计时进行中" 用同一个字段区分 ⇒ 0 必须不可能是"已到点"。
+    //   配 `static_assert(kWaveBreakSeconds > 0)`（在 public 区）。
+    // ⚠️ 它在 `BeginWave` 里被清 0；`TickWave` 是**唯一**递减它的地方。
+    float m_waveTimer = 0.0f;
+
+    // ── S10 步骤 5：弹药（"一局"的数值状态之一）─────────────────────────────────
+    // ⚠️ **初值 = `kStartAmmo`**（而不是 0）：`Title` 下它是"下一局会拿到的量"，
+    //    而 0 会是**谎话**（还没开始玩，不可能"打光了"）。反正 `BeginWave(1)` 会再写一次。
+    // ⚠️ **写入点只有三个**（都在 `Game.cpp`）：`FireBullet` 扣 `−1` / `ResolveBullets` 击杀返还
+    //    `min(+kAmmoPerKill, kMaxAmmo)` / `BeginWave` 回满。**别在别处改它** ——
+    //    否则"打几发该空"这条算式（用例 12/13/15 全部依赖它）就不成立了。
+    int m_ammo = kStartAmmo;
 
     // ── S10：状态机（**最重要的一件事**，所以放在成员区最前面）────────────
     // 规则在 `game/GameState.h`（纯函数 + 策略表），这里只存**当前在哪一态**。
