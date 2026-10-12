@@ -182,7 +182,12 @@ c++_simple_engine/
 │   │   ├── Game.h  GameState.h  Player.h  Enemy.h
 │   │   │               # ↑ 目标态；**S8 落地了 `Enemy.h`**（`EnemyData`：敌人的"状态+血量+定时器"，
 │   │   │               #   刻意**不**塞进 `mini::world::Entity` —— S8 分叉 ① / 差异 1）
-│   │   │               #   GameState / Player 仍未建（S10 / 玩家没有独立类型，就是那个 `@` 实体）
+│   │   │               #   **S10 落地了 `GameState.h`**（header-only，**164 行**：`GameState` 四态 +
+│   │   │               #   `StateEvent` 五事件 + `StatePolicy` 五个开关 + `kStatePolicies[4]` 策略表 +
+│   │   │               #   纯函数 `NextState` / `PolicyOf` + 3 条 `static_assert`（编译期钉住"只有
+│   │   │               #   `Playing` 会模拟"）。⚠️ 它**只 include `<cstddef>`/`<cstdint>`** —— 是这个
+│   │   │               #   项目第 4 个"完全不认识终端"的模块，也是"决策与接线分家"的第 4 次实践）
+│   │   │               #   `Player.h` 仍未建（玩家没有独立类型，就是那个 `@` 实体）
 │   │   │               #   **S9 落地了 `Bullet.h`**（header-only，**174 行**：`Facing8` 八向 +
 │   │   │               #   `FacingToVec2` / `DirectionToFacing` / `FacingGlyph` + `BulletTuning` +
 │   │   │               #   纯函数 `FirstEnemyOnSegment`（沿线段采样、先墙后敌））
@@ -190,7 +195,12 @@ c++_simple_engine/
 │   │   │               # ↑ 目标态；**S5 落地的只有 Game.h**，**S9 落地的是上面那行里的 `Bullet.h`**。
 │   │   │               #   ⚠️ `Projectile.h` **已作废**（S9 分叉 ①：子弹的额外字段是 **0 个** ⇒
 │   │   │               #   它就是一个普通 `Entity`，见 S9_CHECKLIST §12 差异 1）；
-│   │   │               #   `Weapon.h` / `Pickup.h` / `WaveManager.h` / `Hud.h` 仍等 S10。
+│   │   │               #   `Weapon.h` / `Pickup.h` / `Hud.h` 仍等以后（**S10 没有建它们**）。
+│   │   │               #   ⚠️ **`WaveManager.h` 已作废**（S10 分叉 ③ 取"甲"：波次 = `BeginWave` /
+│   │   │               #   `TickWave` 两个成员函数 + 一张 8 行常量表 + 1 个 `static constexpr` 纯函数
+│   │   │               #   `WaveEnemyCount`，**0 个新类型** ⇒ 不需要 Manager 这个类）。
+│   │   │               #   同理 **`Config.h` / `Hud.h` 也没建**：常量直接在 `Game.h` 的 public 区
+│   │   │               #   （D18：用例要拿它们算期望值）、HUD 就是 `DrawHud` 一个函数。
 │   └── src/                    # S5：Game.cpp
 │
 └── tests/
@@ -208,9 +218,11 @@ c++_simple_engine/
     │                           #   2026-10-02 S6：量速度那条改用 256×256 画布，
     │                           #   让相机退化成空操作（见 S6_CHECKLIST 落地偏差 3）
     ├── test_camera.cpp         # **S6**（Camera 14 个，纯函数、不需要终端）
-    ├── test_collision.cpp      # S7 之后
-    ├── test_tilemap.cpp
-    └── test_gamestate.cpp
+    ├── test_collision.cpp      # **S7**（Collision 17 个）+ **S9**（`Sweep` suite 6 个）= 23 个
+    ├── test_enemy.cpp          # **S8**（纯 `Decide`：迟滞 / 冷却 / 零距离 / `Dead` / 越界路点）18 个
+    ├── test_bullet.cpp         # **S9**（8 个：`Facing8` 八向 / 平滑 / `SweepStepCount` / 命中判定）
+    └── test_gamestate.cpp      # **S10**（13 个：6 条合法边 + 10 条非法边、越界状态、
+                                #   纯函数性、`simulate`/`advanceClock`/readMoveKeys 只在 `Playing`）
 ```
 
 ### A.3 依赖规则（一条硬规矩）
@@ -337,7 +349,7 @@ screen_row  = ToIndex(world.y) - OriginRow + kHudRow
 **找不到**（`Find` 返回 `nullptr`），而**不会静默指向另一个实体**。对象池复用 id 会把这个最难查的 bug 请回来。
 正确做法只有两种：**拒绝生成**，或**回收最老的（id 依然不复用）**。
 
-**待办去向**：`TECH_DEBT` **C19**（无上限 → S10 刷怪时定 cap）· **C20**（`Find` 的 O(B²)）。
+**待办去向**：`TECH_DEBT` **C19**（无上限 → ⚠️ **S10 复核结论：A.6 ② 的"结构性有界"成立（只有全灭才刷下一波 ⇒ 场上敌人 ≤ `kWaveMax`=8）⇒ 不需要 cap**，触发条件改挂"与'是否全灭'脱钩的生成"）· **C20**（`Find` 的 O(B²)，触发条件同 C19：子弹要上千时）。
 
 ---
 
@@ -665,19 +677,20 @@ AI 不会自己跑构建或 exe。一个步骤的 commit 由本人在验证通�
 | 坑 | ① **点判定必穿靶，而且危害远超预期**：实测把它换成"只判终点那一格"后 **4 条用例红**，其中 **3 条是 1/60**（0.75 格/帧也一发都打不中）⇒ 采样的价值不是"守高 dt 边界"，而是"**能不能打中**"（原文写的两条坑：`push_back` 那条**被架构消掉了**；"低帧率跳过敌人"那条**真踩到了**）。<br>② **真删必须两边一起删**：只删 `Entity` ⇒ 悬空 id（面板印 `<id gone>`）；只删 `EnemyData` ⇒ 世界里留下一具**没人驱动的活靶子**、而且照样被画出来（R5/R5′ 各打一半，签名完全不同）。<br>③ **"屏幕字符数 == 敌人数"是假前提**（步骤 3 实测假红 `lhs=3 rhs=4`）：敌人会叠格 ⇒ 判据改成"**与 `F7` 面板的真值比**"（偏差 9）。<br>④ **`Held` 不是"按住"的第一帧**：`Get()` 只在 `was && now` 时返回 `Held`（R4 实测：把开火判定改成 `Held` 会红 **6 条**，因为按一帧就松的 `FireOnce` 一发都发不出来）。<br>⑤ **HUD 加一行有 5 处涟漪**（`S9_CHECKLIST` 偏差 12），其中**用例侧的行号镜像常量**最容易被忘 —— 它不同步会**安全地红**（R7 实测证明它连"叠加式"这个错法都能抓住一半）。<br>⑥ **`F7` 面板同时是 HUD 与调试出口**：真删之后**没有 `state=Dead` 可看**了，S8 的取证手段到此为止（换成"面板行数本身就是结果"，`TECH_DEBT` C22/C23） |
 | 设计结论 | **① 子弹不需要自己的类型**（"额外字段 0 个"⇒ 纯 `Entity` + id 成员表，`PLAN` 原定的 `Projectile` + 对象池 + AABB 全部作废）；**② 抽样判定比 AABB 稳**（AABB 是"某一时刻的位置判据"，解决不了"一帧飞 2.25 格"，而采样用的是**位移本身**）；**③ 纯函数第三次兑现**（`SweepStepCount`/`SweepSampleAt`/`FirstEnemyOnSegment` 都是 header 里的纯函数 ⇒ 可离线测、`engine/` 几乎没动）。 |
 
-### S10 HUD / GameState / Wave —— 一个可玩的完整循环
+### S10 HUD / GameState / Wave —— 一个可玩的完整循环（✅ 2026-10-12 完成）
 
 | 项 | 内容 |
 | --- | --- |
 | 目标 | `HP/Ammo/Kills/Wave` 面板 + `Title/Playing/Paused/GameOver` 状态机 + 刷怪波次 |
-| 实现 | `GameState` 枚举状态机，`switch` 分派 Update/Render；`WaveManager` 按波次刷怪并递增难度；HUD 文本布局（左对齐 + 数值右对齐） |
-| C++ 知识 | 状态机、字符串格式化（`std::format` 或手写 padding）、常量配置抽到 `Config` |
-| 引擎知识 | 游戏状态与引擎循环的关系、暂停即"跳过 Update，只做 Render" |
-| 规模 | ~350 行 |
-| 可运行效果 | 完整的：开局提示 → 按 Enter → 刷怪 → 射击 → 掉血 → 死亡 → 按 R 重开 |
-| 验收 | 从启动到死亡再重开，循环 3 次不泄漏、不卡死；HP 归零后不再响应移动 |
-| 坑 | 暂停时仍累积 `dt`，恢复瞬间角色瞬移（应对 `dt` 清零或跳过时间更新） |
-| **里程碑** | **到这里 v0.3 达成：一个真正能玩的终端游戏** |
+| 实现 | **① 状态机做成"纯函数 + 策略表"**（`game/GameState.h`，164 行，header-only）：`GameState` 四态 + `StateEvent` 五事件 + `StatePolicy` 五个开关 + `kStatePolicies[4]` 表 + 纯函数 `NextState` / `PolicyOf` + **3 条 `static_assert`**（编译期钉住"有且只有一个状态会模拟世界"）。<br>**② 接线**（`Game.cpp`）：`OnUpdate` 的 ⓪ 造事件 → ① `NextState`（**全项目唯一的 `m_state` 写入点**）→ ①b `StartNewRun`（开局/重开同一条路）→ ② `PolicyOf` → ③ 按策略分派既有帧步（①方向/②归一化/③速度/③b朝向 · ⑤Σdt · ⑤b AI · ⑤c 开火 · ⑤d 子弹判定 · ⑥积分 · ⑤x `TickWave`）—— ④Q/④b面板/⑦相机/⑧F4/⑨清理/⑨b压缩**不在表里**（冻结时也跑）。<br>**③ 重开 = 用既有公开接口清空**（分叉 ② 取"丙"）：`for (e : Entities()) MarkForRemoval(e.id)` → **一次** `FlushRemovals()` → 清两张表 → 标量归位 → `BuildDemoMap()` → `Spawn` 玩家 → `BeginWave(1)`。**不重建 `m_world`** ⇒ `m_nextId` 不变 ⇒ **id 跨局不复用**。<br>**④ 波次**（分叉 ③ 取"甲"）：`WaveEnemyCount(n) = min(3+(n-1), 8)`（`static constexpr` **纯决策**）+ `BeginWave` / `TickWave`（全灭 → 喘息 2 s → 下一波）+ 8 行巡逻表 + `static_assert(kWaveMax <= kPatrolPathRows)`。<br>**⑤ 弹药**（分叉 ④ = 乙+丁）：`FireBullet` 头部挡"打光"、尾部扣减；`ResolveBullets` 击杀处 `min(+kAmmoPerKill, kMaxAmmo)`；`BeginWave` 每波回满。<br>**⑥ HUD 两行**（58 / 64 列，`%2d` 定宽 + `FacingGlyph` 定长 2 字符 ⇒ 列不左右跳）。<br>⚠️ **与目标树的偏差**：`WaveManager.h` / `Hud.h` / `Config.h` **一个都没建**（波次 = 2 个成员函数 + 1 个纯函数；HUD = 1 个 `DrawHud`；常量直接放 `Game.h` 的 public 区）。 |
+| C++ 知识 | `enum class : uint8_t` + `switch` 穷尽性、**`constexpr` 表 + `static_assert`**（把"只有 `Playing` 会模拟"从"读代码别读漏一行"变成**编译期性质**）、聚合初始化 + NSDMI、`[[nodiscard]]`、`static constexpr` **成员函数**（纯决策）、`std::min` 夹取、**哨兵值**（`m_waveTimer == 0` = 未起倒计时） |
+| 引擎知识 | **游戏状态与引擎循环的关系**：引擎每帧无条件调 `OnUpdate`+`OnRender`（`IGame` 只有 4 个虚函数）⇒ **"暂停"必须在 `game` 侧完成**，做法是"不是不调 `OnUpdate`，而是不跑其中**模拟的那几步**"；**一帧内的顺序即依赖**（⓪ 必须在读方向键之前；⑤x 必须在 ⑥ 之后 —— 被打死的敌人当帧就从 `m_enemies` 删掉了）；**"决策与接线分家"的第 4/5 次实践**（`GameState.h` 与 `WaveEnemyCount`） |
+| 规模 | 计划 ~350 行。**实测**：新增 `game/GameState.h` **164 行** + `Game.cpp` **1310 行**（S9 末 ≈1017 → **+293**，含注释）+ `Game.h` **417 行**（+118）+ `tests/test_gamestate.cpp` **301 行**（13 用例）+ `test_game.cpp` **+822**（18 → **33** 条）。**用例总数 169 → 197**（步骤 1 **+13** · 2 **+7** · 3 **+2** · 4 **+2** · 5 **+4** · 6 **±0**）。<br>⚠️ `engine/` **零改动**（3814 行，步骤 1~6 一行没动）—— 分叉 ② 取丙的直接回报 |
+| 可运行效果 | 完整的单向循环：**开局提示**（`Title`，只有一屏文字）→ 按 `Enter` → 刷第一波（3 个）→ 射击/被追打 → `Esc` 暂停（画面完全冻住）→ 死亡 → `GameOver` → `R` 重开 → 再打一轮。**HUD 四字段 `hp / ammo / kills / wave` 全在**，外加 `dir`（朝向）与键位提示 |
+| 验收 | **机器形式：`197 passed / 0 failed`**（本人 2026-10-12 回报"全绿"；`GameState` suite 13 条 + `Game` suite 33 条）。**反向验证 12 场**（`S10_CHECKLIST` §10.3，⬜ 步骤 8 待跑）+ **人眼 28 条合并清单**（§10.5，⬜ 步骤 8 一次走完）。<br>⚠️ 本阶段的**机器验收有一处特别值得记**：`Game.HudFitsInTwoLinesWithoutOverflow` 在步骤 6 **第一版就红过**（加 `ESC` ⇒ 屏幕多一个 `E` ⇒ `drawn=4 rhs=3`）—— 见"坑"第 ⑤ 条 |
+| 坑 | ① ★ **改一个初始值会波及全部既有用例**：`m_state` 初值改成 `Title` 之后，**18 条既有 `Game` 用例全部失效**（它们隐含假设"`OnStart` 之后世界就动"）⇒ 施工图漏算了这条（偏差 3）。解法：加 `StartPlaying` 辅助**并在调用点显式调**（不塞进 `StepFrame` —— 否则"`Title` 下冻结"那几条自己就没法推帧了）。<br>② ★ **"全灭"的判据不能只用 `m_enemies.empty()`** —— 它在"还没刷第一波"时也为真 ⇒ 第一波会刷两遍。必须配"已经开过波"（`m_wave >= 1`），而且写成**一个合取条件**而不是早退的防御分支（不造"实现了但不可达"的分支）。<br>③ ★★ **删掉一个常量时要扫的不只是用例，还有所有拿它当数组上界的代码**：`kEnemyCount = 5` 删掉之后，`ResolveBullets` 里**三处按它开的栈上定长数组**（`pending` / `positions` / `which` + 循环上界）必须跟着扩到 `kWaveMax`(8)，否则 8 个敌人写 5 个元素的数组 = **栈越界**（症状不是红，是"运气"）。⚠️ 这是**本阶段最险的一处**，施工图没提（偏差 11）。<br>④ ★ **新增一种有限资源之后，测试里"能无限次产生动作"的循环要重新核预算**：`WaveAdvancesWhenAllEnemiesDie` 原本允许打 20 发，而弹药只有 18（+3 次击杀返还）⇒ 上限改成 `Game::kStartAmmo`，**避免把"清不完"和"打光了"混成同一个症状**（偏差 16）。<br>⑤ ★★ **屏幕字形的命名空间是共享的**：`@`/`E`/`*` 三个字符**既是实体字形、又是普通字母** ⇒ 往屏幕上写字时写出其中一个，所有"数画面上有几个"的观察会**静默失真**（不是红，是**算错**）。步骤 6 加了 `ESC` 当场踩中（HUD 提示段含 `E`）。⇒ 用 **S9 就写在 HUD 用例里的那条老断言**抓住的（它存在的唯一理由就是这个）。**已登记 `TECH_DEBT` C31**（触发条件：S11 的 Debug Overlay 要打 `Enemy: 3`）。<br>⑥ **恒真断言比没有更坏**：`kPatrolPathRows` 一度写成 `= kWaveMax` ⇒ 那句 `static_assert(kWaveMax <= kPatrolPathRows)` 永远成立（看着像守卫、实际不响）。改成字面量 `8`（偏差 13）。<br>⑦ **"打不到边界的边界测试"要明说**：`kMaxAmmo == kStartAmmo` 且击杀至少花 3 发 ⇒ "刚好顶到 cap"**打不到** ⇒ `AmmoIsCappedAtMax` 核的是**不变量**，这一点**写在用例头上**（偏差 17，按 C18 的纪律）。<br>⑧ **`Title` 下按 `ESC` 是 no-op**（`NextState(Title, PauseToggled) → Title`）⇒ 标题屏原本那句 `WASD move … ESC pause …` 是**假提示**，加了 `in game:` 前缀（偏差 19）。<br>⑨ **不能把带 `E` 的键名写进 HUD**（`ESC`/`ENTER`）⇒ `Playing` 里看不到"怎么暂停"，只能靠标题屏的教学行（偏差 18）。 |
+| 设计结论 | **① 状态机值得做成纯函数**（第 4 次兑现）：`NextState`/`PolicyOf` 离线可测 ⇒ **"暂停时世界真的停了"从"读代码别读漏一行"变成编译期 + 13 条用例**（`static_assert` + `NextStateWalksEveryLegalEdge`）。<br>**② "重开"用既有公开接口清空，而不是重建 `World`**：`engine/` **零改动** + `m_nextId` 单调 ⇒ **id 跨局不复用**（最坏是"找不到"，**不是"找错实体"**）。代价见 `TECH_DEBT` **C28**（这条禁令目前只有注释在守）。<br>**③ 波次数量做成 `static constexpr` 纯函数**：封顶/递增可以**离线逐 n 核到第 20 波**，而"接线"只核到第 2 波（3 → 4）—— 真要靠打完一波刷下一波验到封顶，得连打 6 波杀 25 个敌人（慢且脆）。<br>**④ 弹药做三个写入点、一处夹取**：净耗 = `kEnemyMaxHp/damage − kAmmoPerKill` = **2 发/敌人**；意图 A（`(3−1)×8 = 16 < 18`）成立 ⇒ 全中够用、失误才紧。<br>**⑤ 引擎侧一行没改**：`IGame` 的 4 个虚函数 + 既有的 `FrameContext` 够用 ⇒ "暂停/状态机/波次"全是**游戏侧概念**，不该下沉。 |
+| **里程碑** | ✅ **2026-10-12：v0.3「玩得起来」达成** —— `H.1` 的**保底路径到此走完**，后面 S11~S14 都是加分项（`G` 节版本表已标 ✅） |
 
 ### S11 Debug Overlay + Logger + Profiler
 
@@ -1214,7 +1227,7 @@ while (!shouldQuit) {
 | --- | --- | --- | --- |
 | **v0.1 "看得见"** | ① 现代 CMake 骨架 + ctest 能跑<br>② 终端出现一个带边框的 2D 画面<br>③ WASD 能控制 `@` 移动 | S0~S5 | 三条命令构建成功；终端里有 `@` 且能用 WASD 推着走 |
 | **v0.2 "走得动"** | ① 200×200 地图 + 相机跟随<br>② 不能穿墙<br>③ 顶栏 FPS/FrameTime 实时显示 | S3,S6,S7 | 在比屏幕大得多的地图上自由走动，撞墙不穿模，FPS 数字稳定 |
-| **v0.3 "玩得起来"** | ① 敌人会追会打（**S8 ✅ 2026-10-09**）<br>② 能射击、能击杀（**S9 ✅ 2026-10-11**）<br>③ HP/Ammo/Kills/Wave + 死亡重开 | S8~S10 | **一个外人可以上手玩 5 分钟的完整游戏**（这是全项目最重要的一次验收） |
+| **v0.3 "玩得起来"** | ① 敌人会追会打（**S8 ✅ 2026-10-09**）<br>② 能射击、能击杀（**S9 ✅ 2026-10-11**）<br>③ HP/Ammo/Kills/Wave + 死亡重开（**S10 ✅ 2026-10-12**：代码与机器验收全绿；⚠️ 反向验证 12 场 + 人眼 28 条在 `S10_CHECKLIST` 步骤 8） | S8~S10 | **一个外人可以上手玩 5 分钟的完整游戏**（这是全项目最重要的一次验收）<br>✅ **2026-10-12 达成** —— 至此 `H.1` 的**保底路径走完**，后面的 S11~S14 全是加分项 |
 | **v0.4 "看得清"** | ① F1~F4 Debug Overlay<br>② `PROFILE_SCOPE` 各子系统耗时表<br>③ 单元测试覆盖 math/collision/gamestate | S4,S11 | 能说出"渲染占了多少 ms"；`ctest` 全绿 |
 | **v0.5 "像 3D"** | ① DDA 射线投射的走廊画面<br>② 无鱼眼扭曲<br>③ `F5` 在 2D/3D 视角间切换 | S12 | 同一个世界两种视角自由切换，走位在两个视角下一致 |
 | **v1.0 "收得起来"** | ① 精灵 + z-buffer 遮挡正确<br>② README + GIF + CI（**只跑 MSVC**）<br>③ 干净克隆后三条命令能跑 | S13,S14 | 别人按 README 能复现；`git tag v1.0` |
@@ -1243,7 +1256,7 @@ while (!shouldQuit) {
 
 | 路径 | 覆盖阶段 | 终点 |
 | --- | --- | --- |
-| **保底** | S0 ~ S10 | **v0.3「玩得起来」：一个能玩的 2D 游戏**（能刷怪 / 能射击 / 能死能重开） |
+| **保底** ✅ **已达成（2026-10-12）** | S0 ~ S10 | **v0.3「玩得起来」：一个能玩的 2D 游戏**（能刷怪 / 能射击 / 能死能重开）—— 见 `G` 节 v0.3 行 |
 | 标准 | + S11、S12 | v0.4「看得清」+ v0.5「像 3D」：Debug Overlay + 伪 3D 走廊 |
 | 完整 | + S13、S14 | v1.0「收得起来」：精灵遮挡 + README/GIF/CI + `git tag v1.0` |
 
