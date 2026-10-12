@@ -2,6 +2,7 @@
 
 #include "game/Bullet.h"      // S9：子弹的规则（朝向 + 命中判定纯函数）
 #include "game/Enemy.h"
+#include "game/GameState.h"   // S10：游戏状态机（四态 + 策略表，纯函数、零依赖）
 #include "mini/core/Application.h"
 #include "mini/math/Vec2.h"
 #include "mini/render/Camera.h"
@@ -69,6 +70,14 @@ public:
     // 玩家当前朝向（S9）。给 HUD 画 `dir ->` 用（分叉 ③ 的"必要配套"：停下沿用朝向就必须看得见）；
     // 用例也用它算"子弹该出现在哪个方向"。
     [[nodiscard]] Facing8 Facing() const noexcept;
+
+    // 当前游戏状态（S10）。**真接口**，不是"为测试而加"：`OnRender` 按它决定画什么
+    // （`Title` 是纯文字画面 / `Paused` 叠暂停横幅 / `GameOver` 叠结算横幅）。
+    // 用例断言 `State() == GameState::Paused` 不用比字符串，也不必去读屏幕。
+    // ⚠️ 初值是 `Title` —— **`OnStart()` 之后世界并不会自己动**，得先按一次 `Enter`
+    //    （`PLAN` 的"开局提示 → 按 Enter"）。这条改过之后，所有"要推帧看世界动"的用例
+    //    都必须先过一遍 `Enter`（见 `tests/test_game.cpp` 的 `StartPlaying`）。
+    [[nodiscard]] GameState State() const noexcept;
 
     // 敌人 HP 上限。⚠️ **2026-10-10 从 private 挪到 public**（S9 步骤 3）：
     //    子弹的"三发打死一个"必须由**公开常量**算出来（`kEnemyMaxHp / kDefaultBullet.damage`），
@@ -187,10 +196,32 @@ private:
     //    只写左边一条窄带（约 34 列），右边留给地图。理由详见 `Game.cpp` 的 `DrawAiPanel`。
     void DrawAiPanel(mini::render::FrameBuffer& fb) const;
 
+    // ── S10 步骤 2：三个「状态专属画面」──────────────────────────────────
+    // 分工：`OnRender` 按 `m_state` 决定**画什么**，这三个函数只管**自己那几行字**。
+    // ⚠️ 全 ASCII + `fb.Draw`（逐格越界忽略）—— 代码页 936 下非 ASCII 会乱码（S8 的坑表）。
+    // ⚠️ `DrawTitle` 是唯一"不画世界"的那个：`Title` 下连地图都不画（纯文字画面）。
+    void DrawTitle(mini::render::FrameBuffer& fb) const;        // 开局提示（按 Enter 开始）
+    void DrawGameOver(mini::render::FrameBuffer& fb) const;     // 结算（叠在世界之上）
+    void DrawPausedBanner(mini::render::FrameBuffer& fb) const;  // 暂停横幅（叠在世界之上）
+
     // 调试快照（键 = `kDumpKey`，见 `Game.cpp` 顶部常量）：把当前帧的参数追加写进 `miniengine_debug.log`。
     // ⚠️ **非 const**：要写文件、还要递增 `m_dumpCount`。它**只读**世界，不改任何状态
     //    （所以放在帧序的哪一步都不影响别的系统 —— 实现里放在相机之后）。
     void DumpSnapshot(const mini::core::FrameContext& ctx);
+
+    // ── S10：状态机（**最重要的一件事**，所以放在成员区最前面）────────────
+    // 规则在 `game/GameState.h`（纯函数 + 策略表），这里只存**当前在哪一态**。
+    //
+    // ⚠️ **初值 `Title`** —— `PLAN` 的可运行效果原话是"**开局提示** → 按 Enter → 刷怪 …"。
+    //    ⇒ `OnStart()` 之后**世界不会自己动**：`Title` 的 `StatePolicy` 五项全 false
+    //      （`simulate` = 不积分 / `readMoveKeys` = 不读 WASD / `advanceClock` = 不加 Σdt …）。
+    //    ⚠️ 这一条改动的涟漪很大：**所有"要推帧看世界动"的用例都得先按一次 Enter**
+    //       （见 `tests/test_game.cpp` 的 `StartPlaying` 与 `S10_CHECKLIST` 落地偏差 3）。
+    //
+    // ⚠️ **转移只有一处**（`OnUpdate` 顶部的 ⓪① 经 `NextState`）——
+    //    别在伤害代码里直接写 `m_state = ...`：那会造出"第二个真相"，
+    //    而"暂停时世界真的停了"这条性质的守卫正是"转移与策略都只有一个入口"。
+    GameState m_state = GameState::Title;
 
     mini::world::World    m_world{kWorldW, kWorldH};
     // 视口位置（S6）。每帧在 `World::Update` **之后** Follow 一次（帧序见 Game.cpp）。
@@ -206,9 +237,14 @@ private:
     // 所以它不影响帧序、也不影响用例（用例从不按它）。
     bool m_showAiPanel = false;
 
-    // S8：玩家 HP。⚠️ HP 归 0 **不发生任何事**（不会死、不会重开）——
-    // 唯一的后果是敌人把它当成"死了的目标"而脱战（`targetAlive = m_playerHp > 0`）。
-    // 真正的死亡/重开是 S10 的 `GameState`。
+    // S8：玩家 HP。
+    // ⚠️ **S10 步骤 2 起它有两个后果**（原来是"什么都不发生"）：
+    //   ① 敌人把它当成"死了的目标"而脱战（`targetAlive = m_playerHp > 0`，S8 的既有逻辑）；
+    //   ② **下一帧的 ⓪ 判出 `PlayerDied` ⇒ 状态转 `GameOver` ⇒ 世界冻结**（S10 新加）。
+    //      ⚠️ 刻意**不在扣血那一行**直接改 `m_state`：转移只有 ⓪① 一个入口（见 `m_state` 注释）。
+    //      ⚠️ 代价（S10_CHECKLIST §7.1 理由 1）：死亡响应**最早也要等下一帧** ——
+    //         换来的是"死那一帧起就不再响应移动"（`PLAN` 的验收原话），因为 ⓪ 在读方向键之前。
+    // ⚠️ **重开**（`R`）与"从 0 恢复"还没接：那是 S10 **步骤 3** 的 `StartNewRun()`。
     int m_playerHp = kPlayerMaxHp;
 
     // S8：敌人。⚠️ **S9 步骤 4 起会真删了**（原先写"只增不减"）：

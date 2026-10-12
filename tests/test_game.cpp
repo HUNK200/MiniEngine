@@ -62,6 +62,7 @@ namespace {
 //    这是**名字查找**问题，不是包含问题。
 using game::Facing8;
 using game::Game;
+using game::GameState;   // S10 步骤 2：用例断言 State() 要用它
 using mini::core::FrameContext;
 using mini::platform::InputState;
 using mini::platform::Key;
@@ -185,6 +186,10 @@ struct Delta {
 //
 // ⚠️ 返回的是**屏幕**位移：只有"相机退化"（视口 ≥ 地图）时才等于世界位移，
 //    所以量速度的用例必须显式传 `kWorldCanvasW/H`（见上面那段注释）。
+// ⚠️ **前置声明**：`StartPlaying` 在下面定义（它要用 `StepFrame`），而 `RunHolding` 比它先写
+//    —— C++ 要求先见到声明。S10 步骤 2 起，**任何"要推帧看世界动"的地方都得先过它一次**。
+void StartPlaying(Game& game, FakeInput& input, FrameBuffer& fb);
+
 Delta RunHolding(float seconds, std::initializer_list<Key> keys,
                  int canvasW = kScreenW, int canvasH = kScreenH)
 {
@@ -192,9 +197,12 @@ Delta RunHolding(float seconds, std::initializer_list<Key> keys,
     Game        game;
     FrameBuffer fb(canvasW, canvasH);
     game.OnStart();
+    StartPlaying(game, input, fb);   // ★ S10：先进 `Playing`，否则世界不会动（见它的注释）
 
     // 第 0 帧：不按键、dt = 0 → 位置不变，只为把 '@' 画出来当起点
     // ⚠️ ctx 与 fb 必须同一尺寸：相机读 ctx 的尺寸，`fb` 只管画（落地偏差 4）
+    // ⚠️ S10 起它前面多了 `StartPlaying` 那两帧（只按 Enter、不按方向键）⇒ 玩家仍在出生点，
+    //    `kSpawnX/kSpawnY` 这条基线不受影响。
     game.OnUpdate(MakeContext(input, 0.0f, canvasW, canvasH));
     fb.Clear();
     game.OnRender(fb);
@@ -243,6 +251,32 @@ void StepFrame(Game& game, FakeInput& input, FrameBuffer& fb, float dt)
     fb.Clear();
     game.OnRender(fb);
     input.BeginFrame();
+}
+
+// ── S10 步骤 2：把游戏推进到 `Playing`（按一次 Enter）──────────────────────
+//
+// 【为什么每个"要推帧看世界动"的用例都得先调它】
+//   S10 起状态机初值是 `Title`（`PLAN` 的"开局提示 → 按 Enter"），而 `Title` 的
+//   `StatePolicy` **五项全是 false** ⇒ 不按 Enter 的话：不读 WASD、不写速度、不积分、
+//   连 `sumdt` 都不加 —— **世界一个像素都不会动**，所有既有用例都会因为"@ 不动"而红。
+//
+// ⚠️ 这是 S10 施工图**漏算的一条涟漪**（`S10_CHECKLIST` 落地偏差 3）：施工图只列了
+//    "'R' 不重开是已知中间态"，没提"18 条既有 `Game` 用例全都假设世界从第 0 帧就在动"。
+//
+// ⚠️ 刻意**不藏进 `StepFrame` 里**（那能让 18 个调用点零改动）：因为新加的
+//    "`Title` 下推 60 帧什么都不许变"那几条用例**恰恰需要"没按过 Enter"的状态**
+//    —— 藏进去它们就没法推帧了。摆在调用点上，谁需要谁调。
+void StartPlaying(Game& game, FakeInput& input, FrameBuffer& fb)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+
+    input.Press(Key::Enter);
+    StepFrame(game, input, fb, kDt);     // 这一帧的 ⓪ 看到 Pressed → 转 `Playing`
+    input.Release(Key::Enter);
+    StepFrame(game, input, fb, kDt);     // 消化掉 Released（它不产生事件，只是走完状态机）
+
+    // ⚠️ 这两帧玩家一个方向键都没按 ⇒ **位置没动**，所以"第 0 帧基线"仍然是出生点，
+    //    以 `kSpawnX/kSpawnY` 算期望值的用例不受影响。
 }
 
 // 屏幕上所有 'E' 的位置。行优先扫描 → 顺序天然按 (y, x) 排好，可以直接逐项比较。
@@ -303,6 +337,8 @@ int WalkPlayerNextToEnemy(Game& game, FakeInput& input, FrameBuffer& fb)
     constexpr int   kStopDistSq = kStopDist * kStopDist;
     constexpr int   kMaxWalk    = 400;   // 5 秒上限（约 100 格），够走到地图上任何一个敌人
 
+    StartPlaying(game, input, fb);       // ★ S10：先按 Enter 进 `Playing`，否则 D 键读不到
+
     StepFrame(game, input, fb, kDt);     // 第 0 帧：拿起点（不按键）
     input.Press(Key::D);
 
@@ -319,6 +355,37 @@ int WalkPlayerNextToEnemy(Game& game, FakeInput& input, FrameBuffer& fb)
 
     input.Release(Key::D);               // 站住：下一帧 `IsDown(D)` 就是 false 了
     return (distSq >= 0 && distSq <= kStopDistSq) ? distSq : -1;
+}
+
+// ── S10 步骤 2：让玩家**死掉** ─────────────────────────────────────────────
+//
+// 走到敌人跟前 → 站着被打到 0 血 → 再推几帧等 ⓪ 判出 `PlayerDied`。
+// 返回 true = 确实停在 `GameOver`（否则说明"走到 0 血"这条链本身有问题，别把红算到状态机上）。
+//
+// ⚠️ 血是 10 点、敌人 0.8 秒一击、可能好几个一起打 ⇒ 12 秒（720 帧）绰绰有余
+//    （`PlayerHpStopsAtZero` 从 S8 起就用这个数）。
+// ⚠️ 循环条件写成 `PlayerHp() > 0` 而不是"跑满 720 帧"：一归零就停，
+//    这样"死亡那一帧"与"下一帧才转态"这两个时刻不会被多余的帧混过去。
+bool KillPlayer(Game& game, FakeInput& input, FrameBuffer& fb)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+
+    if (WalkPlayerNextToEnemy(game, input, fb) <= 0) {
+        return false;   // 没能走到敌人跟前（-1 = 走满上限还没靠近）
+    }
+
+    for (int i = 0; i < 720 && game.PlayerHp() > 0; ++i) {
+        StepFrame(game, input, fb, kDt);
+    }
+    if (game.PlayerHp() != 0) {
+        return false;   // 12 秒都没打死 —— 那是敌人/AI 的问题，不是状态机的
+    }
+
+    // 归零之后**最多再推 3 帧**：状态转移只发生在下一帧的 ⓪（见 `S10_CHECKLIST` §7.1 理由 1）
+    for (int i = 0; i < 3 && game.State() != GameState::GameOver; ++i) {
+        StepFrame(game, input, fb, kDt);
+    }
+    return game.State() == GameState::GameOver;
 }
 
 // ── S9 的两个小辅助 ────────────────────────────────────────────────────
@@ -541,6 +608,7 @@ MINI_TEST(Game, VelocityTakesEffectSameFrame)
     Game        game;
     FrameBuffer fb(kScreenW, kScreenH);
     game.OnStart();
+    StartPlaying(game, input, fb);   // ★ S10：先进 `Playing`（否则不读键、不积分）
 
     // 第 0 帧：没有任何键 → 只拿起点
     game.OnUpdate(MakeContext(input, 0.0f));
@@ -586,6 +654,7 @@ MINI_TEST(Game, PlayerIsDrawnAtItsCell)
     Game        game;
     FrameBuffer fb(kScreenW, kScreenH);
     game.OnStart();
+    StartPlaying(game, input, fb);   // ★ S10：先进 `Playing`（否则不读键、不积分）
 
     game.OnUpdate(MakeContext(input, 0.0f));
     fb.Clear();
@@ -678,6 +747,7 @@ MINI_TEST(Game, EnemiesPatrolUntilPlayerIsNear)
     Game        game;
     FrameBuffer fb(kScreenW, kScreenH);
     game.OnStart();
+    StartPlaying(game, input, fb);   // ★ S10：先进 `Playing`（否则敌人也不动）
 
     StepFrame(game, input, fb, kDt);   // 第 0 帧：先看一眼
 
@@ -906,6 +976,7 @@ MINI_TEST(Game, FiringSpawnsBulletAlongFacing)
     Game        game;
     FrameBuffer fb(kScreenW, kScreenH);
     game.OnStart();
+    StartPlaying(game, input, fb);   // ★ S10：先进 `Playing`
 
     StepFrame(game, input, fb, kDt);
     MINI_CHECK(game.Facing() == Facing8::East);   // 初值是确定性的：东
@@ -946,6 +1017,7 @@ MINI_TEST(Game, HoldingSpaceFiresOnlyOnce)
     Game        game;
     FrameBuffer fb(kScreenW, kScreenH);
     game.OnStart();
+    StartPlaying(game, input, fb);   // ★ S10：先进 `Playing`（否则 `SPACE` 读不到）
     StepFrame(game, input, fb, kDt);
 
     // `FakeInput::Press` = "按下并保持"（直到 `Release`），所以这就是"按住不放"
@@ -970,6 +1042,7 @@ MINI_TEST(Game, BulletDiesOnWall)
     Game        game;
     FrameBuffer fb(kScreenW, kScreenH);
     game.OnStart();
+    StartPlaying(game, input, fb);   // ★ S10：先进 `Playing`
     StepFrame(game, input, fb, kDt);
 
     // 面朝北（世界 Y 向下 ⇒ 北就是地图上边缘那堵墙的方向），只走一帧别贴到墙上
@@ -1076,6 +1149,7 @@ MINI_TEST(Game, BulletsDoNotAccumulateForever)
     Game        game;
     FrameBuffer fb(kScreenW, kScreenH);
     game.OnStart();
+    StartPlaying(game, input, fb);   // ★ S10：先进 `Playing`
     StepFrame(game, input, fb, kDt);
 
     // 面朝北（上墙只有 2 格远 ⇒ 每发都在几帧内撞墙消失）
@@ -1222,6 +1296,7 @@ MINI_TEST(Game, HudFitsInTwoLinesWithoutOverflow)
     Game        game;
     FrameBuffer probe(kProbeW, kProbeH);
     game.OnStart();
+    StartPlaying(game, input, probe);   // ★ S10：先进 `Playing`，否则 `Title` 下根本不画 HUD
     StepFrame(game, input, probe, kDt);   // `StepFrame` 用 fb 的尺寸造 ctx ⇒ 游戏真的画进这块
 
     const int posRow   = kTestHudRow - 1;   // 行 1：位置类
@@ -1262,5 +1337,301 @@ MINI_TEST(Game, HudFitsInTwoLinesWithoutOverflow)
         MINI_CHECK(line->find('@') == std::string::npos);
         MINI_CHECK(line->find('E') == std::string::npos);
         MINI_CHECK(line->find('*') == std::string::npos);
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// S10 步骤 2：状态机接线（`Title` / `Playing` / `Paused` / `GameOver`）
+//
+// 【这 7 条在测什么】
+//   那张决策表（`NextState` + `kStatePolicies`）在 `GameState` suite 里已经**逐条钉死**了；
+//   这 7 条测的是**接线**：表真的被 `Game::OnUpdate` 用上了吗？
+//   —— "表是对的、但忘了查表"是这类改动最典型的失败（写完 `PolicyOf` 却忘了包住那几步，
+//      那样 `GameState` suite 全绿、游戏却照常在暂停里动）。
+//
+// 【观察面：两个】
+//   ① `State()`（S10 新加的公开接口）
+//   ② **屏幕文本** `ScreenText`（逐字节比较）+ HUD 的 `pos` 栏（截图/取行的老套路，见 G28）
+//
+//   ⚠️ "整屏逐字节不变"是这里的主力判据，理由是它**一次盖住**玩家、敌人、子弹，以及
+//      HUD 里的 `sumdt` —— 而 `sumdt` 正是 10.2 自证链（`pos ≈ v × sumdt`）的输入，
+//      冻结时它必须**一点也不涨**。代价是它很脆：任何"冻结时还该动的东西"冒出来都会红
+//      （这正是想要的效果）。
+//   ⚠️ 反向：**光有"不变"不够** —— 一条永远不动的空屏幕也能过。所以每条"冻结"用例都配了一个
+//      "正向对照"（`Playing` 下真的会动 / 横幅真的画出来了 / 敌人真的在追）。
+//
+// 【与既有 18 条的接缝】
+//   `m_state` 初值是 `Title` ⇒ `OnStart()` 之后世界**不会自己动**，所以既有用例都得先按一次
+//   `Enter`（`StartPlaying`）。⚠️ 这条涟漪是 S10 施工图**漏算**的，见 `S10_CHECKLIST` 落地偏差 3。
+// ══════════════════════════════════════════════════════════════════════════
+
+// G1（施工图 §10.1 用例 1）：开局停在 `Title`，按 `Enter` 才进 `Playing`；进去之后**真的会动**。
+MINI_TEST(Game, StartsInTitleAndEnterBeginsPlay)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+
+    // ① `OnStart()` 之后**世界是停着的** —— 这就是 `PLAN` 要的"开局提示"
+    MINI_CHECK(game.State() == GameState::Title);
+    StepFrames(game, input, fb, kDt, 30);
+    MINI_CHECK(game.State() == GameState::Title);   // 不按 Enter 就一直是 Title
+
+    // ② 开局提示那一屏里**没有世界**：连 `@` 都不该有
+    MINI_CHECK_EQ(CountChar(fb, '@'), 0);
+
+    // ③ 按 `Enter` → `Playing`
+    input.Press(Key::Enter);
+    StepFrame(game, input, fb, kDt);
+    input.Release(Key::Enter);
+    MINI_CHECK(game.State() == GameState::Playing);
+
+    // ④ **正向对照**：`Playing` 下世界真的会动
+    //    （少了这条，"接上了但五个开关一个都没打开"也会全绿）
+    StepFrame(game, input, fb, kDt);
+    const Pos before = FindChar(fb, '@');
+    MINI_CHECK(before.found);
+
+    input.Press(Key::D);
+    StepFrames(game, input, fb, kDt, 30);   // 30 帧 × 20 格/秒 = 10 格（相机还没开始跟随）
+    input.Release(Key::D);
+
+    const Pos after = FindChar(fb, '@');
+    MINI_CHECK(after.found);
+    if (before.found && after.found) {
+        MINI_CHECK(after.x > before.x);     // 往东走了（只比大小，不假设走几格）
+        MINI_CHECK_EQ(after.y, before.y);
+    }
+}
+
+// G2（§10.1 用例 2）：`Title` 下按住键推 60 帧，**整屏逐字节不变**。
+MINI_TEST(Game, TitleDoesNotSimulate)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+    StepFrame(game, input, fb, kDt);           // 第 0 帧：拿基线
+
+    const std::string frozen = ScreenText(fb);
+    // ⚠️ 先证明"这一屏真的是开局提示"：否则下面那条"不变"可能是在测一块空屏
+    MINI_CHECK(frozen.find("PRESS ENTER TO START") != std::string::npos);
+
+    // 按住 D + 按住 SPACE 再推 60 帧 —— **什么都不许变**：
+    //   位置不动（`readMoveKeys` 关）、不出子弹（`readFireKey` 关）、
+    //   `sumdt` 不涨（`advanceClock` 关；它没画在 Title 上，靠 `Playing` 那几条兜底）。
+    input.Press(Key::D);
+    input.Press(Key::Space);
+    StepFrames(game, input, fb, kDt, 60);
+    input.Release(Key::D);
+    input.Release(Key::Space);
+
+    MINI_CHECK(game.State() == GameState::Title);
+    MINI_CHECK(ScreenText(fb) == frozen);      // ★ 整屏逐字节
+}
+
+// G3（§10.1 用例 3）：`Esc` 暂停 → 冻结；再按 `Esc` 恢复 → 又能动。
+MINI_TEST(Game, EscapePausesAndResumes)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+    StartPlaying(game, input, fb);
+    StepFrame(game, input, fb, kDt);           // 让 `sumdt` 涨一点，后面"不许再涨"才有的谈
+
+    // ① 按 `Esc` → `Paused`
+    input.Press(Key::Escape);
+    StepFrame(game, input, fb, kDt);
+    input.Release(Key::Escape);
+    MINI_CHECK(game.State() == GameState::Paused);
+
+    StepFrame(game, input, fb, kDt);           // 消化 `Released`，拿干净基线
+    const std::string frozen = ScreenText(fb);
+
+    // ② 按住 D + SPACE 推 60 帧：**整屏逐字节不变**
+    //    （含 HUD 上的 `sumdt`：暂停 1 秒它不许涨 1 秒 —— 涨了这条自证链就废了）
+    input.Press(Key::D);
+    input.Press(Key::Space);
+    StepFrames(game, input, fb, kDt, 60);
+    MINI_CHECK(game.State() == GameState::Paused);
+    MINI_CHECK(ScreenText(fb) == frozen);
+    //    ⚠️ 这一条其实被上一条盖住了（子弹会改变屏幕）；**分开写是为了红了能一眼看出是哪个开关**。
+    MINI_CHECK_EQ(CountChar(fb, '*'), 0);      // 暂停时按 SPACE 不出子弹（`readFireKey` 关）
+
+    // ③ 再按 `Esc` → `Playing`，而且**真的能动了**（"恢复"的正向对照）
+    const Pos before = FindChar(fb, '@');
+    MINI_CHECK(before.found);
+
+    input.Release(Key::D);
+    input.Release(Key::Space);
+    input.Press(Key::Escape);
+    StepFrame(game, input, fb, kDt);
+    input.Release(Key::Escape);
+    MINI_CHECK(game.State() == GameState::Playing);
+
+    input.Press(Key::D);
+    StepFrames(game, input, fb, kDt, 30);
+    input.Release(Key::D);
+
+    const Pos after = FindChar(fb, '@');
+    MINI_CHECK(after.found);
+    if (before.found && after.found) {
+        MINI_CHECK(after.x > before.x);
+    }
+}
+
+// G4（§10.1 用例 4）：**敌人在追人的状态下**暂停也不动。
+//   ⚠️ 与 G3 的分工：G3 的场景里敌人还在巡逻（Patrol），本条的敌人已经进战（Chase）
+//      —— Chase 每帧都会写一个"朝玩家"的速度，是"没关 `simulate`"最容易暴露的场景。
+MINI_TEST(Game, PausedEnemyDoesNotMove)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+    constexpr int   kMaxEnemies = 8;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+
+    // 走到敌人跟前 ⇒ 它们已经进战，每帧都在朝玩家写速度
+    MINI_CHECK(WalkPlayerNextToEnemy(game, input, fb) > 0);
+
+    input.Press(Key::Escape);
+    StepFrame(game, input, fb, kDt);
+    input.Release(Key::Escape);
+    MINI_CHECK(game.State() == GameState::Paused);
+    StepFrame(game, input, fb, kDt);           // 消化 `Released`
+
+    Pos       before[kMaxEnemies] = {};
+    const int nBefore = CollectEnemies(fb, before, kMaxEnemies);
+    MINI_CHECK(nBefore > 0);
+
+    StepFrames(game, input, fb, kDt, 60);      // 1 秒：平时它们能贴上来好几格
+
+    Pos       after[kMaxEnemies] = {};
+    const int nAfter = CollectEnemies(fb, after, kMaxEnemies);
+
+    MINI_CHECK_EQ(nAfter, nBefore);
+    // 屏幕上的 `E` 位置**逐个**对得上（行优先扫描 ⇒ 顺序确定，可以直接按位比）
+    for (int i = 0; i < nBefore && i < nAfter; ++i) {
+        MINI_CHECK_EQ(after[i].x, before[i].x);
+        MINI_CHECK_EQ(after[i].y, before[i].y);
+    }
+}
+
+// G5（§10.1 用例 5）：HP 归 0 → **下一帧**才 `GameOver`。
+//   ⚠️ 这条钉的是施工图 §7.1 理由 1 的那个取舍：转移只在 ⓪（读方向键之前）⇒ 死亡响应
+//      **最早等下一帧**。把 ⓪ 挪到读键之后，这条会红（归零那一帧就转态了）。
+MINI_TEST(Game, PlayerHpReachesZeroThenGameOver)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+
+    MINI_CHECK(WalkPlayerNextToEnemy(game, input, fb) > 0);
+
+    // 站着被打到 0。⚠️ **一归零就停**：多推一帧就会把状态转掉，下面那条断言就失效了
+    for (int i = 0; i < 720 && game.PlayerHp() > 0; ++i) {
+        StepFrame(game, input, fb, kDt);
+    }
+    MINI_CHECK_EQ(game.PlayerHp(), 0);
+
+    // ★ 归零的**那一帧**：状态还是 `Playing`（伤害在 ⑤b，而转移只在下一帧的 ⓪）
+    MINI_CHECK(game.State() == GameState::Playing);
+
+    StepFrame(game, input, fb, kDt);
+    MINI_CHECK(game.State() == GameState::GameOver);
+}
+
+// G6（§10.1 用例 6 · `PLAN` 的验收原话："HP 归零后不再响应移动"）
+MINI_TEST(Game, GameOverIgnoresMoveInput)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+
+    MINI_CHECK(KillPlayer(game, input, fb));   // 走过去被打死，停在 `GameOver`
+    MINI_CHECK(game.State() == GameState::GameOver);
+
+    StepFrame(game, input, fb, kDt);           // 消化输入状态，拿干净基线
+
+    // 判据取 **HUD 第 1 行的 `pos` 栏**（而不是屏幕上的 `@`）：
+    //   `@` 可能被同格的敌人**盖住**（敌人之间没有推挤，`TECH_DEBT` C12）⇒ 会假红；
+    //   而 HUD 是**最后画**的，`pos` 就是玩家自己的世界坐标 ⇒ 既不会被盖住，又比"动没动"精确
+    //   （位移 0.01 都会让它变）。⚠️ 取行的套路见 `HudFitsInTwoLinesWithoutOverflow`。
+    const int posRow = kTestHudRow - 1;
+    std::string posBefore;
+    for (int x = 0; x < fb.Width(); ++x) {
+        posBefore.push_back(fb.At(x, posRow).ch);
+    }
+    MINI_CHECK(posBefore.find("pos") != std::string::npos);   // 这一行真的是 pos 栏
+
+    input.Press(Key::D);
+    StepFrames(game, input, fb, kDt, 60);
+    input.Release(Key::D);
+
+    std::string posAfter;
+    for (int x = 0; x < fb.Width(); ++x) {
+        posAfter.push_back(fb.At(x, posRow).ch);
+    }
+
+    // ★ 按住 D 推 1 秒，`pos` **一个字符都不许变**（`readMoveKeys` 关 ⇒ 连速度都不重写）
+    MINI_CHECK(posAfter == posBefore);
+    MINI_CHECK(game.State() == GameState::GameOver);   // 顺便：按键也不会把状态顶出去
+}
+
+// G7（§10.1 用例 7）：`GameOver` 下**整个世界**冻住（敌人 + 子弹 + HUD 的 `sumdt`）。
+MINI_TEST(Game, GameOverFreezesWorld)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+    constexpr int   kMaxEnemies = 8;
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+
+    MINI_CHECK(KillPlayer(game, input, fb));
+    MINI_CHECK(game.State() == GameState::GameOver);
+
+    StepFrame(game, input, fb, kDt);           // 消化输入状态，拿干净基线
+    const std::string frozen = ScreenText(fb);
+    // ⚠️ 先证明结算横幅真的画出来了（否则"整屏不变"可能是在测一块空屏）
+    MINI_CHECK(frozen.find("GAME OVER") != std::string::npos);
+
+    Pos       before[kMaxEnemies] = {};
+    const int nBefore = CollectEnemies(fb, before, kMaxEnemies);
+
+    input.Press(Key::D);
+    input.Press(Key::Space);
+    StepFrames(game, input, fb, kDt, 120);     // 2 秒：平时敌人能贴上来、子弹能飞出去
+    input.Release(Key::D);
+    input.Release(Key::Space);
+
+    MINI_CHECK(game.State() == GameState::GameOver);
+    MINI_CHECK(ScreenText(fb) == frozen);      // ★ 整屏逐字节（含 HUD 的 `sumdt`）
+    MINI_CHECK_EQ(CountChar(fb, '*'), 0);      // 结算后按 SPACE 也不出子弹
+
+    // 敌人位置**逐个**对得上（这一条与"整屏不变"重复，但红了能直接指出是敌人没冻）
+    Pos       after[kMaxEnemies] = {};
+    const int nAfter = CollectEnemies(fb, after, kMaxEnemies);
+    MINI_CHECK_EQ(nAfter, nBefore);
+    for (int i = 0; i < nBefore && i < nAfter; ++i) {
+        MINI_CHECK_EQ(after[i].x, before[i].x);
+        MINI_CHECK_EQ(after[i].y, before[i].y);
     }
 }

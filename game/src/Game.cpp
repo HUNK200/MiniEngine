@@ -1,6 +1,7 @@
 #include "game/Game.h"
 
 #include "game/Bullet.h"           // S9：朝向 ↔ 向量、线段命中判定（纯函数）
+#include "game/GameState.h"         // S10：四态 + 策略表 + 纯函数 NextState / PolicyOf
 #include "mini/ai/EnemyBrain.h"   // S8：敌人每帧的"决策"（纯函数；只输出速度）
 #include "mini/math/Vec2.h"
 #include "mini/platform/Input.h"
@@ -14,7 +15,9 @@
 #include <cstdio>
 #include <filesystem>   // 调试快照：判断日志文件是不是"新建的"（见 DumpSnapshot）
 #include <fstream>      // 调试快照（追加写日志）
+#include <initializer_list>  // S10：DrawCenteredBlock 的行表
 #include <span>         // S8：把巡逻路点交给 Decide；S9：把敌人位置交给 FirstEnemyOnSegment
+#include <string_view>  // S10：DrawCenteredBlock 要算文本长度（居中）
 
 // ============================================================
 // Game 实现（S5）—— 引擎与游戏分家之后的**唯一**游戏侧文件
@@ -27,9 +30,10 @@
 //   5. 每帧：敌人决策（DriveEnemyAi，**必须在 Update 之前**）—— S8 加的
 //   6. 每帧：生成子弹 + 命中判定（FireBullet / ResolveBullets，**都在 Update 之前**）—— S9 加的
 //
-// ⚠️ 帧序（S5_CHECKLIST 7.1 + S6 7.1 + S8 §6.3 + S9 §7.1，顺序不能换）：
-//     读输入 → 归一化（顺手更新朝向）→ **写玩家速度** → 驱动 AI（**写敌人速度**）
-//     → **生成子弹** → **命中判定/标删** → Update(dt) → **相机 Follow** → FlushRemovals
+// ⚠️ 帧序（S5_CHECKLIST 7.1 + S6 7.1 + S8 §6.3 + S9 §7.1 + S10 §7.1，顺序不能换）：
+//     ⓪ 造「状态事件」→ ① 转移状态（**唯一入口** = `NextState`）→ ② 取策略 → ③ 按策略分派：
+//         读输入 → 归一化（顺手更新朝向）→ **写玩家速度** → 驱动 AI（**写敌人速度**）
+//         → **生成子弹** → **命中判定/标删** → Update(dt) → **相机 Follow** → FlushRemovals
 //   写速度必须在 Update 之前：反过来的现象是"按一下动一下、但慢一帧"，
 //   看着像手感问题，其实是顺序问题。
 //   驱动 AI 同理：敌人和玩家**在同一个循环里**被积分，所以两边的速度都得先写好。
@@ -40,6 +44,14 @@
 //     而用 `pos_after − v·dt` 反推在被墙夹住时是错的（起点落进墙里 ⇒ 假命中墙后的敌人）。
 //   相机必须在 Update 之后：用上一帧的玩家位置会让 @ 与地图差一帧相位
 //   （现象是"@ 偶尔不在正中，偶尔闪一格"）—— S6 坑 3。
+//
+//   ⚠️ **S10 新加的 ⓪①②为什么在最前面**（三条，别换）：
+//    1. ⓪ 在**读方向键之前**：`PLAN` 的验收要求"**HP 归零后不再响应移动**" ⇒ 死亡事件必须
+//       先于方向键生效。代价是死亡响应**最早等下一帧**（伤害发生在上一帧的 ⑤b）——
+//       这也可接受，且是唯一的正确时机（本帧开始时他还活着）。
+//    2. ① 只经 `NextState`：转移**只有一个入口**（别在扣血那里直接写 `m_state`）。
+//    3. ②③ 按策略分派：冻结状态下跳过的只有"模拟/输入/时钟/波次"那几步，
+//       `④Q`/`④bF7`/`⑦相机`/`⑧F4`/`⑨FlushRemovals`/`⑨b压缩` **照跑**（清理端 + 调试出口）。
 //
 // ⚠️ 坐标：`dt` 用 `ctx.deltaSeconds`（S3 已 clamp 过，**这里不夹**）；
 //   世界→屏幕的取整**一律 floor**（7.2），而且 S6 起**只取整一次**：
@@ -109,6 +121,20 @@ constexpr mini::platform::Key kAiPanelKey = mini::platform::Key::F7;
 //    只有"删 `Key::K`"这一处。
 constexpr mini::platform::Key kFireKey = mini::platform::Key::Space;
 
+// ── S10 步骤 2：三个「状态键」──────────────────────────────────────────────
+// ⚠️ 三个键**早就映射好了**（S2 起就在 `KeyCode.h` 里）⇒ **S10 对 `engine/` 的改动是 0 行**。
+//    · `Enter` = 开始（只在 `Title` 有效）
+//    · `Esc`   = 切换（`Playing ↔ Paused`，**以及** `GameOver → Title` —— 一个键三种去向，
+//                去向由 `NextState` 决定，不是这里）
+//    · `R`     = 重开（只在 `GameOver` 有效；⚠️ **世界重建是步骤 3 的 `StartNewRun()`**，
+//                本步它只切状态 ⇒ "按 R 不重开"是已知的中间态）
+// ⚠️ 键名在代码里**只有两处**（同 `kDumpKey`/`kFireKey` 那条纪律）：常量 + 相应状态画面里的提示字。
+// ⚠️ 三个都用 `Pressed`（**边沿**）：用 `Held` 会每帧触发一次转移 ——
+//    `R` 变成"每帧重开"、`Esc` 让 Paused/Playing 每帧来回翻（画面疯狂闪）。反向验证 R7 打这一条。
+constexpr mini::platform::Key kStartKey   = mini::platform::Key::Enter;
+constexpr mini::platform::Key kPauseKey   = mini::platform::Key::Escape;
+constexpr mini::platform::Key kRestartKey = mini::platform::Key::R;
+
 // 子弹画什么字符。⚠️ 它就是普通实体的 `symbol`（分叉 ①：子弹没有额外字段）——
 // 绘制走 `DrawEntities` 的既有规则（玩家黄 / 敌人红 / **其余白**）⇒ 子弹自动是白的，绘制零改动。
 // ⚠️ 不另立 `kBulletSymbol` 常量：`'*'` 在本文件只有这一处落点；用例里数 `'*'` 是"读屏幕"，
@@ -147,6 +173,26 @@ const char* StateName(mini::ai::EnemyState state) noexcept
 char CellMark(const mini::world::TileMap& map, int tx, int ty)
 {
     return mini::world::IsSolidAt(map, tx, ty) ? '#' : '.';
+}
+
+// S10 步骤 2：把若干行文本**居中**画出来（三个"状态专属画面"共用这一个）。
+// ⚠️ 列不够时退到第 0 列；行/列越界由 `fb.Draw` 自己忽略（它契约就是"逐格越界忽略"）。
+// ⚠️ 收 `std::initializer_list<const char*>` 而不是"数组 + 行数"：调用点直接写 `{...}`，
+//    **不用数行数** —— 而"增删一行时忘了改行数"正是这类代码最典型的 bug。
+void DrawCenteredBlock(mini::render::FrameBuffer& fb,
+                       std::initializer_list<const char*> lines,
+                       int topRow)
+{
+    int row = topRow;
+    for (const char* line : lines) {
+        const std::string_view text{line};
+        int col = (fb.Width() - static_cast<int>(text.size())) / 2;
+        if (col < 0) {
+            col = 0;
+        }
+        fb.Draw(col, row, text);
+        ++row;
+    }
 }
 
 } // namespace
@@ -495,45 +541,78 @@ void Game::OnUpdate(const mini::core::FrameContext& ctx)
 
     const mini::platform::Input& input = ctx.input;
 
-    // ① 方向：按住就算（IsDown = Pressed 或 Held）。
-    //    这里**不用** Pressed —— 那是 S3"按一次跳一格"的写法；
-    //    "按住连续走"靠的是速度 × dt，不是系统的按键自动重复。
-    mini::math::Vec2 dir{};
-    if (input.IsDown(Key::W) || input.IsDown(Key::ArrowUp))    { dir.y -= 1.0f; }
-    if (input.IsDown(Key::S) || input.IsDown(Key::ArrowDown))  { dir.y += 1.0f; }
-    if (input.IsDown(Key::A) || input.IsDown(Key::ArrowLeft))  { dir.x -= 1.0f; }
-    if (input.IsDown(Key::D) || input.IsDown(Key::ArrowRight)) { dir.x += 1.0f; }
-
-    // ② 归一化：不归一的斜向会快 √2 倍（对角 {1,1} 的长度是 1.414）。
-    //    零向量不用管：`Normalized()` 对 len2 == 0 返回零向量（S4 已定，含 NaN 一起挡）。
-    if (dir.LengthSq() > 0.0f) {
-        dir = dir.Normalized();
+    // ── ⓪ 造「状态事件」（S10 步骤 2）──────────────────────────────────────
+    // ⚠️ **优先级：死亡 > 其他** —— 死亡那一帧的按键不算数（`S10_CHECKLIST` §7.1 理由 1）。
+    // ⚠️ 除了那条必须的 `m_state == Playing`，这里**不再多判状态**：
+    //    "哪个事件在当前状态下有效"是 `NextState` 的职责 —— 这里只回答"这一帧发生了什么"；
+    //    两处都判就等于有了第二个真相。
+    game::StateEvent event = game::StateEvent::None;
+    if (m_playerHp <= 0 && m_state == GameState::Playing) {
+        event = game::StateEvent::PlayerDied;
+    } else if (input.Get(kStartKey) == KeyState::Pressed && m_state == GameState::Title) {
+        event = game::StateEvent::StartPressed;
+    } else if (input.Get(kPauseKey) == KeyState::Pressed) {
+        event = game::StateEvent::PauseToggled;
+    } else if (input.Get(kRestartKey) == KeyState::Pressed && m_state == GameState::GameOver) {
+        event = game::StateEvent::RestartPressed;
     }
 
-    // ③ 写速度 —— **必须在 ④ 之前**（帧序硬约束）。
-    //    用 `m_moveSpeed` 而不是 `kMoveSpeed`：后者只是默认值，实际速度可被 argv[2] 覆盖。
-    if (mini::world::Entity* player = m_world.Find(m_player); player != nullptr) {
-        player->velocity.perSecond = dir * m_moveSpeed;
-    }
+    // ① 转移 —— **全项目唯一的 `m_state` 写入点**（纯函数，非法边自动返回原状态）
+    m_state = game::NextState(m_state, event);
+    // ⚠️ **S10 步骤 3 会在这里插一句**：`StartPressed`/`RestartPressed` → `StartNewRun()`。
+    //    本步先只切状态 ⇒ "按 `R` 不重开"（世界没被清空，下一帧 ⓪ 又会判出 `PlayerDied`
+    //    ⇒ 状态在 `GameOver`/`Playing` 之间闪一帧）是**已知的中间态**，不是 bug
+    //    （`S10_CHECKLIST` §5 步骤 2 与 §进度板 都记着）。
 
-    // ③b 朝向（S9，分叉 ③）：**移动方向即朝向，停下沿用**。
-    //     ⚠️ 这里用**返回值**判断，而不是"反正它对零向量不写 out" —— 把"停下沿用"这条规则
-    //        摆在**调用点**上：以后有人改 `DirectionToFacing` 的行为，这里不会静默跟着变。
-    //     ⚠️ 例：松开所有方向键时 `dir` 是零向量 ⇒ 返回 false ⇒ `m_facing` 保持上一帧的值，
-    //        所以"站着不动也能朝原方向开火"。
-    Facing8 nextFacing = m_facing;
-    if (game::DirectionToFacing(dir, nextFacing)) {
-        m_facing = nextFacing;
+    // ② 本帧跑哪些系统（纯数据表；越界兜底 = 全 false）
+    const game::StatePolicy policy = game::PolicyOf(m_state);
+
+    // ③ 按策略分派：下面这些步骤在 `Title` / `Paused` / `GameOver` 下会被 `policy` 关掉。
+    //    ⚠️ **没被包起来的步骤（④Q / ④bF7 / ⑦相机 / ⑧F4 / ⑨FlushRemovals / ⑨b压缩）在任何
+    //       状态下都跑** —— 它们是"调试出口"与"清理端"（理由见 `game/GameState.h` 的策略表注释）。
+    if (policy.readMoveKeys) {
+        // ① 方向：按住就算（IsDown = Pressed 或 Held）。
+        //    这里**不用** Pressed —— 那是 S3"按一次跳一格"的写法；
+        //    "按住连续走"靠的是速度 × dt，不是系统的按键自动重复。
+        mini::math::Vec2 dir{};
+        if (input.IsDown(Key::W) || input.IsDown(Key::ArrowUp))    { dir.y -= 1.0f; }
+        if (input.IsDown(Key::S) || input.IsDown(Key::ArrowDown))  { dir.y += 1.0f; }
+        if (input.IsDown(Key::A) || input.IsDown(Key::ArrowLeft))  { dir.x -= 1.0f; }
+        if (input.IsDown(Key::D) || input.IsDown(Key::ArrowRight)) { dir.x += 1.0f; }
+
+        // ② 归一化：不归一的斜向会快 √2 倍（对角 {1,1} 的长度是 1.414）。
+        //    零向量不用管：`Normalized()` 对 len2 == 0 返回零向量（S4 已定，含 NaN 一起挡）。
+        if (dir.LengthSq() > 0.0f) {
+            dir = dir.Normalized();
+        }
+
+        // ③ 写速度 —— **必须在 ④ 之前**（帧序硬约束）。
+        //    用 `m_moveSpeed` 而不是 `kMoveSpeed`：后者只是默认值，实际速度可被 argv[2] 覆盖。
+        if (mini::world::Entity* player = m_world.Find(m_player); player != nullptr) {
+            player->velocity.perSecond = dir * m_moveSpeed;
+        }
+
+        // ③b 朝向（S9，分叉 ③）：**移动方向即朝向，停下沿用**。
+        //     ⚠️ 这里用**返回值**判断，而不是"反正它对零向量不写 out" —— 把"停下沿用"这条规则
+        //        摆在**调用点**上：以后有人改 `DirectionToFacing` 的行为，这里不会静默跟着变。
+        //     ⚠️ 例：松开所有方向键时 `dir` 是零向量 ⇒ 返回 false ⇒ `m_facing` 保持上一帧的值，
+        //        所以"站着不动也能朝原方向开火"。
+        Facing8 nextFacing = m_facing;
+        if (game::DirectionToFacing(dir, nextFacing)) {
+            m_facing = nextFacing;
+        }
     }
 
     // ④ Q 退出。Esc 刻意不退出 —— 它从 S10 起要用来关菜单（S2 的决策），
     //    进程级退出（Ctrl+C / 关窗口）由 Application 看 Input::QuitRequested()。
+    //    ⚠️ **不在策略表里** ⇒ 冻结状态下也跑：它是"关掉程序"的唯一出口，暂停时更要能按。
     if (input.Get(Key::Q) == KeyState::Pressed) {
         m_quit = true;
     }
 
     // ④b `kAiPanelKey` 开/关敌人面板（S8 的临时面板，S11 会换成正式 Overlay）。
     //     只在 `Pressed` 翻转：用 `Held` 会每帧闪。
+    //     ⚠️ **不在策略表里** ⇒ 冻结状态下也跑：暂停/结算时"看敌人状态"恰恰是最需要的。
     if (input.Get(kAiPanelKey) == KeyState::Pressed) {
         m_showAiPanel = !m_showAiPanel;
     }
@@ -543,30 +622,46 @@ void Game::OnUpdate(const mini::core::FrameContext& ctx)
     //     ⚠️ 连带影响：S8 的用例 `Game.EnemyDiesAndDisappears` 原来按 `F7`+`K`，
     //        本步同步改写成"朝敌人开火把它打死"（不然它会因为键没了而变红）。
 
-    // ⑤ Σdt：HUD 拿它自证 `pos ≈ v × sum dt`（10.2 的运行时验收；v 就是 m_moveSpeed）
-    m_elapsed += ctx.deltaSeconds;
+    // ⑤ Σdt（**只在 `Playing` 加**）：HUD 拿它自证 `pos ≈ v × sum dt`（10.2 的运行时验收）。
+    //    ⚠️ 冻结状态下**一点也不加** —— 否则"暂停 1 分钟"会让 `sumdt` 凭空多 60 秒，
+    //       那条自证就废了（S10_CHECKLIST 决策 D9）。⚠️ 恢复那一帧用的就是**本帧的正常 dt**，
+    //       本项目**没有任何"积压 dt"通路**（`Time` 每帧独立给 dt）—— 别去引入一个。
+    if (policy.advanceClock) {
+        m_elapsed += ctx.deltaSeconds;
+    }
 
     // ⑤b 敌人决策（S8）—— **必须在 ⑥ 之前**：敌人和玩家在**同一个循环里**被积分，
     //     所以两边的速度都得先写好（与 ③ 是同一条帧序约束）。
     //     反过来的现象：敌人慢一帧，或（若挪到 ⑥ 之后并写了速度）完全不产生位移。
-    DriveEnemyAi(ctx);
+    if (policy.simulate) {
+        DriveEnemyAi(ctx);
+    }
 
     // ⑤c 开火（S9）—— **必须在 ⑥ 之前**：子弹当帧就要飞出去（否则慢一帧）。
     //     ⚠️ `Pressed` 是**边沿触发**（按一下一发）：用 `IsDown` 会按住连射。
-    if (input.Get(kFireKey) == KeyState::Pressed) {
+    //     ⚠️ 冻结状态下**连按键都不读**（`readFireKey`）⇒ 暂停时按 SPACE 不扣弹药、不出子弹。
+    if (policy.readFireKey && (input.Get(kFireKey) == KeyState::Pressed)) {
         FireBullet();
     }
 
     // ⑤d 子弹的命中判定 + 标删（S9）—— **也在 ⑥ 之前**，用的是**预测线段**。
     //     理由写在 `Game.h` 的 `ResolveBullets` 注释里（挪到 ⑥ 之后就要存"上一帧位置"，
     //     而反推在被墙夹住时是错的）。
-    ResolveBullets(ctx);
+    if (policy.simulate) {
+        ResolveBullets(ctx);
+    }
 
     // ⑥ 积分（world 唯一的"物理"）。dt 已由 S3 clamp 过，这里**不再夹**（坑 #7）
     //    ⚠️ 子弹也在这里被积分 —— 它是普通 `Entity`，所以 S7 的碰撞/夹紧**白拿**。
-    m_world.Update(ctx.deltaSeconds);
+    //    ⚠️ 这一个 `if` 就是"暂停时世界真的停了"的**全部实现**（`PolicyOf` 那条纯函数
+    //       已经在编译期钉住"只有 Playing 会模拟"，这里只是执行它）。
+    if (policy.simulate) {
+        m_world.Update(ctx.deltaSeconds);
+    }
 
     // ⑦ 相机跟随 —— **必须在 ⑥ 之后**（用本帧最新的玩家位置，S6 的帧序硬约束）。
+    //    ⚠️ **不在策略表里** ⇒ 冻结状态下也跑：玩家没动，所以 `Follow` 的结果也不变
+    //       （留着它反而是对的 —— 终端 resize 之后冻结中的画面也该跟着算对）。
     //    尺寸用 ctx 而不是 fb：`Application::Run` 第 ③ 步先 Resize、第 ④ 步才造 ctx，
     //    所以**本帧**两者是一致的（S6_CHECKLIST 前置事实第 5 条）→ 不需要 resize 钩子。
     //    ⚠️ 视口高要减掉引擎顶栏那一行：相机只管"多少格"，不知道 HUD 的存在（6.5 的契约）。
@@ -799,17 +894,75 @@ void Game::DrawAiPanel(mini::render::FrameBuffer& fb) const
     }
 }
 
+// ------------------------------------------------------------
+// S10 步骤 2：三个「状态专属画面」
+//
+// ⚠️ 分工：`OnRender` 按 `state` 决定**画什么**，这三个函数只管**自己那几行字**
+//    —— 它们**不认识** `state`，也不知道谁调它们（同"纯函数要中立"那条纪律）。
+// ⚠️ 全 ASCII：终端代码页是 936，非 ASCII 在这里会乱码（S8 的坑表记过）。
+// ------------------------------------------------------------
+
+void Game::DrawTitle(mini::render::FrameBuffer& fb) const
+{
+    // 开局提示：**只有这一屏不画世界**（`PLAN` 的"开局提示 → 按 Enter"，`S10` 步骤 2）。
+    // ⚠️ 提示里的键名与 `kStartKey`/`kPauseKey` 是**同一个键的两个落点**（同 `kDumpKey` 的纪律）：
+    //    换键时这里要一起改。⚠️ 这里也是 `kStartKey` 唯一的提示落点。
+    // ⚠️ **刻意不写"5 个敌人"这类会随波次变的话** —— 波次在步骤 4 才落地，
+    //    写死数字就会变成"假提示"（同 S9 偏差 10 的 `K=kill nearest` 那个教训）。
+    const int top = fb.Height() / 2 - 2;
+    DrawCenteredBlock(fb,
+                      {"MiniEngine",
+                       "",
+                       "PRESS ENTER TO START",
+                       "",
+                       "WASD move   SPACE fire   ESC pause   Q quit"},
+                      top > 0 ? top : 0);
+}
+
+void Game::DrawPausedBanner(mini::render::FrameBuffer& fb) const
+{
+    // 暂停横幅：**叠在世界与 HUD 之上**（世界照画 —— 只是冻住了，玩家要看得见自己站在哪）。
+    const int top = fb.Height() / 2;
+    DrawCenteredBlock(fb, {"-- PAUSED --", "ESC to resume"}, top > 0 ? top : 0);
+}
+
+void Game::DrawGameOver(mini::render::FrameBuffer& fb) const
+{
+    // 结算：叠在世界与 HUD 之上（要看得见自己死在哪、打了多少击杀 —— 击杀数在 HUD 第 2 行）。
+    // ⚠️ **这里刻意只写 `ESC back to title`，不写 `R restart`**：`R` 的世界重建是**步骤 3** 的
+    //    `StartNewRun()`；本步按 `R` 只会让状态闪一帧。**写了就是假提示**
+    //    （S9 偏差 10 的教训：面板一直在教人按一个已经不存在的键）。
+    //    → 步骤 3 落地 `StartNewRun` 之后，**这里要补上 `R restart`**。
+    const int top = fb.Height() / 2;
+    DrawCenteredBlock(fb, {"GAME OVER", "", "ESC back to title"}, top > 0 ? top : 0);
+}
+
 void Game::OnRender(mini::render::FrameBuffer& fb)
 {
-    DrawMap(fb);
-    DrawEntities(fb);
-    // HUD 压在**视口第 0 行**上（= 相机原点那一行；同"顶栏压在最上面"一个道理）。
-    // ⚠️ 顺序不能换：HUD 要盖掉地图，而 `@` 必须画在地图之后、HUD 之前。
-    DrawHud(fb);
+    // `Title` 是**纯文字画面**：世界与 HUD 都不画。
+    // ⚠️ 不依赖 `DrawHud` 内部那句 `player == nullptr` 早退来"挡住 HUD"——
+    //    那是"碰巧正确"（玩家的确还没出生），换成显式判断才不靠巧合。
+    if (m_state != GameState::Title) {
+        DrawMap(fb);
+        DrawEntities(fb);
+        // HUD 压在**视口第 0 行**上（= 相机原点那一行；同"顶栏压在最上面"一个道理）。
+        // ⚠️ 顺序不能换：HUD 要盖掉地图，而 `@` 必须画在地图之后、HUD 之前。
+        DrawHud(fb);
 
-    // 面板最后画。它**底部对齐**，与 HUD（第 1 行）以及敌人常在的第 3~7 行都不重叠。
-    if (m_showAiPanel) {
-        DrawAiPanel(fb);
+        // 面板在 HUD 之后。它**底部对齐**，与 HUD（第 1 行）以及敌人常在的第 3~7 行都不重叠。
+        if (m_showAiPanel) {
+            DrawAiPanel(fb);
+        }
+    }
+
+    // 状态横幅**最后画**（压在 HUD / 面板之上）。
+    // ⚠️ `switch` **不写 `default`**：以后加第五态，编译器会在这里提醒"你没处理新状态"
+    //    （与 `StateName` 的穷尽性是同一个手法）。
+    switch (m_state) {
+    case GameState::Title:    DrawTitle(fb);        break;
+    case GameState::Playing:                        break;   // 玩的时候不叠任何东西
+    case GameState::Paused:   DrawPausedBanner(fb); break;
+    case GameState::GameOver: DrawGameOver(fb);     break;
     }
 }
 
@@ -936,6 +1089,15 @@ int Game::Kills() const noexcept
 Facing8 Game::Facing() const noexcept
 {
     return m_facing;
+}
+
+// 同上：真相是私有的 `m_state`（`OnUpdate` 的 ① 是**唯一**写入点）。
+// ⚠️ 这个 getter 存在的理由与 `PlayerHp`/`Kills`/`Facing` 不同：**用例离不开它** ——
+//    "当前是不是暂停了"除了它没有别的公开观察面（屏幕上看不出 `Playing` 和 `Paused` 的区别，
+//    除非去解析横幅文本，而那正是 `ScreenText` 注释里说的"最脆的取证方式"）。
+GameState Game::State() const noexcept
+{
+    return m_state;
 }
 
 bool Game::ShouldQuit() const
