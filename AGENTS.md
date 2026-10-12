@@ -113,7 +113,6 @@ AI 替我跑了，我就丢掉了第一手的反馈。
 | `doc/S8_CHECKLIST.md` | S8 施工图：`ai/EnemyBrain.h`（五态 FSM 纯函数）+ `game/` 侧 `EnemyData`、迟滞与抖动的坑、23 个用例、10 条落地偏差 |
 | `doc/S9_CHECKLIST.md` | S9 施工图：`game/Bullet.h`（纯函数命中判定）+ `world/Collision.h` 采样器、子弹接线与**真删**、HUD 两行、12 条落地偏差、**8 场反向验证的实测记录** |
 | `doc/S10_CHECKLIST.md` | S10 施工图：`game/GameState.h`（状态机纯函数 + 策略表）+ 波次 + 弹药、**4 个分叉的拍板记录**、20 条落地偏差、**§10.5 人眼验收合并清单**（按游玩顺序排、验收步一次走完）、**12 场反向验证** |
-| `doc/S11_CHECKLIST.md` | S11 施工图（v0.4「看得清」）：`debug/Profiler.h` + `core/Logger.h` + `debug/DebugOverlay.h`、**18 条前置事实**、15 条坑表（含 C31 屏幕字形）、**5 个分叉待拍板**、6 场反向验证 · ⚠️ **本项目第一次必须动 `engine/`** |
 | `doc/TECH_DEBT.md` | **技术债清单与执行计划**：A/B/C/D 四组（A 只跑命令、B 要改代码、C 明确推迟附触发条件、D 已关闭留档）。**每阶段收口时更新它** |
 | `doc/SHOWCASE_PLAN.md` | **元文档**：展示层/对外可读性的 6 个动作（README · CI · 一页技术亮点 · S11 · S12 · 第二个项目）按 ROI 排序 + 执行顺序 + 不做清单 + **对外介绍的事实纪律**。⛔ 不改代码、不进构建 |
 | `doc/MINITEST_SPEC.md` | 要手写的测试框架 MiniTest 的规格（接口、注册机制、runner 行为、坑） |
