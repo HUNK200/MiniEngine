@@ -9,9 +9,10 @@ description: 把 MiniEngine 游戏引擎项目的阶段切碎成 5~10 分钟、�
 
 - 相对本文件的路径：`../../../doc/WORK_MODE.md`（**只认这一条**）
 
-> ⚠️ **不要把绝对路径写进仓库**（2026-10-02 踩过）：这里原来写着旧机器的
-> `d:/Project/fish/c++_simple_engine/doc/WORK_MODE.md`。新机器上仓库换成 `D:\WorkPlace\MiniEngine`
+> ⚠️ **不要把绝对路径写进仓库**（2026-10-02 踩过）：这里原来写着某台机器的
+> `d:/<某台机器>/…/doc/WORK_MODE.md`。换一台机器（仓库搬到 `D:\<另一台机器>\MiniEngine`）
 > 之后，本 skill **整体失效**（读不到正文），而且它违反 `AGENTS.md` 第 5 节"绝不提交含绝对路径的文件"。
+> ⚠️ 2026-10-13：上面这行**连"反面例子"里的盘符也一并脱敏了** —— 例子本身不该把本机路径带进仓库。
 > 真要绝对路径时，用"本文件上溯三级"现算 —— 别把盘符写进来。
 
 配套文档都在仓库根的 `doc/` 下（**不在本目录**）：`MiniEngine_PLAN.md`（阶段定义、H 节长期路线、E 风险表）、`S7_CHECKLIST.md`（最新施工图；`S6_CHECKLIST.md` 是上一阶段，`S0_CHECKLIST.md` 是历史留档）。
@@ -39,7 +40,7 @@ Agent Skill 的发现路径是 `.agents/skills/<name>/SKILL.md`，而文档被�
 
 ```bash
 # 方案 A：彻底改成标准位置（正文搬进来，删掉 doc/ 里那份）
-cd <仓库根>        # 例如 D:\WorkPlace\MiniEngine —— 别把盘符写进仓库
+cd <仓库根>        # 例如 <某台机器上的仓库路径> —— 别把盘符写进仓库（2026-10-13 脱敏）
 mv doc/WORK_MODE.md .agents/skills/work-mode/SKILL.md
 # 然后删掉本文件的前 4 行之后的所有"执行方式"内容，并把 frontmatter 保留
 

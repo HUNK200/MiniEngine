@@ -24,9 +24,9 @@
 
 | 项 | 家机（2026-09-23 实测） | 公司机（2026-09-24 实测） | 新机（2026-10-02 实测） | 对方案的影响 |
 | --- | --- | --- | --- | --- |
-| CMake | **4.4.3** @ `C:\Program Files\CMake\bin`（当天用 `winget install Kitware.CMake` 补装，**装之前家机完全没有 CMake**） | **4.2.1** @ `C:\Program Files\CMake\bin` | **4.0.0-rc3** @ `C:\Program Files\CMake\bin`（**RC 版**；2026-10-02 决定先不升级、先用它跑通全绿 —— 触发条件：报出真实构建错误时再换正式版） | **CMake 4.x 已移除 `cmake_minimum_required(VERSION < 3.5)` 的兼容**，最低写 `3.20` |
-| MSVC | VS 2022 Community @ **`E:\Program Files\VisualStudio`**（**不在** C 盘）；装了 14.38.33130 / 14.44.35207 两套 toolset；CMake 生成器实测选中 **19.38.33145.0** | VS 2022 Community，cl 14.44 (19.44) | VS 2022 Community **17.13.2** @ **`C:\Program Files\Microsoft Visual Studio\2022\Community`**（**在** C 盘）；**只装 14.43.34808 一套 toolset（cl 19.43）**；生成器自动选中，未硬编码 | 主力编译器，默认生成器 `Visual Studio 17 2022`；生成器选哪套 toolset 由 VS 自己定，别在文档里硬编码 |
-| clang | **19.1.5** @ `…\VisualStudio\VC\Tools\Llvm\bin`（**不在** `C:\Program Files\LLVM`） | 17.0.6（原记录，**未复测**） | 未探测（本项目不碰） | ⛔ **不使用**（2026-09-29 决定）：不做 clang 交叉验证，构建脚本里也不留 ClangCL 分支。**它装着，但本项目不碰** |
+| CMake | **4.4.3**（当天用 `winget install Kitware.CMake` 补装，**装之前家机完全没有 CMake**） | **4.2.1** | **4.0.0-rc3**（**RC 版**；2026-10-02 决定先不升级、先用它跑通全绿 —— 触发条件：报出真实构建错误时再换正式版） | **CMake 4.x 已移除 `cmake_minimum_required(VERSION < 3.5)` 的兼容**，最低写 `3.20` |
+| MSVC | VS 2022 Community（**装在非系统盘**）；装了 14.38.33130 / 14.44.35207 两套 toolset；CMake 生成器实测选中 **19.38.33145.0** | VS 2022 Community，cl 14.44 (19.44) | VS 2022 Community **17.13.2**（默认安装位置）；**只装 14.43.34808 一套 toolset（cl 19.43）**；生成器自动选中，未硬编码 | 主力编译器，默认生成器 `Visual Studio 17 2022`；生成器选哪套 toolset 由 VS 自己定，别在文档里硬编码 |
+| clang | **19.1.5**（随 VS 安装，**不在**独立的 LLVM 目录） | 17.0.6（原记录，**未复测**） | 未探测（本项目不碰） | ⛔ **不使用**（2026-09-29 决定）：不做 clang 交叉验证，构建脚本里也不留 ClangCL 分支。**它装着，但本项目不碰** |
 | Windows SDK | 10.0.22621.0 | **10.0.26100.0**（配置期自动选中，目标 10.0.26200） | **10.0.22621.0**（只装了这一个） | — |
 | g++ / gcc | **未安装** | **未安装** | **未安装** | **只做 Windows**（已确认）：不写也不跑 Linux / macOS 分支。编译器**只有 MSVC 一条路** |
 | ninja / make | **未安装**（不阻塞，VS 生成器可用） | **未安装** | **未安装** | 多配置（VS）生成器，所以**必须带 `--config`／`-C`** |
@@ -1478,7 +1478,7 @@ docs: record coordinate convention in plan
 ### F.2 修：一条命令（**只让 GitHub 走代理**）
 
 ```powershell
-git config --global http.https://github.com.proxy http://127.0.0.1:7897
+git config --global http.https://github.com.proxy http://127.0.0.1:<你的代理端口>
 ```
 
 **为什么用这个长写法，而不是裸的 `http.proxy`**：
@@ -1505,16 +1505,16 @@ git config --global http.connecttimeout 15      # 连不上就 15 秒报错，�
 ### F.4 先找端口：本机代理到底在哪
 
 ```powershell
-netstat -ano | Select-String "LISTENING" | Select-String ":7897|:7890|:10809|:1080"
+netstat -ano | Select-String "LISTENING" | Select-String ":7890|:7891|:10809|:1080"
 # 拿最后一列的 PID 看是谁：
 tasklist /FI "PID eq <PID>"
 ```
 
-本次实测就是这么找到的：**PID 31032 = `verge-mihomo.exe`** → Clash Verge 的内核 → 端口 **7897**。
+本次实测就是这么找到的：先看监听的那个 PID 是哪个代理内核进程，再去它的设置里读端口（**具体 PID / 端口属本机环境，不写进仓库**）。
 
 | 代理软件 | 常见端口 |
 | --- | --- |
-| **Clash Verge / mihomo**（本机就是它）| **7897**（混合端口，HTTP/SOCKS 都吃）|
+| **Clash Verge / mihomo** | 常见 **7897**（混合端口，HTTP/SOCKS 都吃）—— ⚠️ 以你本机设置里的值为准 |
 | Clash for Windows | 7890（混合）/ 7891 |
 | v2rayN | 10809（HTTP）/ 10808（SOCKS）|
 | 通用 SOCKS5 | 1080 → 写法是 `socks5://127.0.0.1:1080` |
