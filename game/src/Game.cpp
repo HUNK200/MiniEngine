@@ -136,6 +136,19 @@ constexpr mini::platform::Key kStartKey   = mini::platform::Key::Enter;
 constexpr mini::platform::Key kPauseKey   = mini::platform::Key::Escape;
 constexpr mini::platform::Key kRestartKey = mini::platform::Key::R;
 
+// ── `kQuitKey`：退出键（2026-10-13 补，`TECH_DEBT` **B6**）──────────────────────────
+// ⚠️ **它是最后一个被补上常量的键**（2026-10-13，`TECH_DEBT` B6）：在那之前读点写的是
+//    `mini::platform::Key` 的**枚举值本身** —— 它**没有一个可搜的名字**，于是那条
+//    "换键时要一起改全部落点"的纪律对它**不成立**：
+//    · 搜枚举值：只命中**读点 1 处**，下面两处提示**扫不到**；
+//    · 搜字母：本文件出 **11 行、真落点只有 3 行**（其余是注释与 `ShouldQuit`）。
+//    ⚠️ 这正是那一课：**注释里别再抄枚举值 / 字母**（抄了就又把噪声放回来了）。
+// ⚠️ 键字母在代码里**只有三处**（同 `kDumpKey` 那条纪律）：这个常量 + `DrawHud` 行 2 的
+//    提示段 + `DrawTitle` 的 `in game:` 横幅。换键 = 这三处一起改。
+// ⚠️ 它治的是"**能查到**"，不是"能一起改"：提示文本是给玩家看的**字面量**、没法用常量渲染
+//    ⇒ 那两处靠"旁边的注释指向 `kQuitKey`"来兜住（grep 常量名即可找全）。
+constexpr mini::platform::Key kQuitKey = mini::platform::Key::Q;
+
 // 子弹画什么字符。⚠️ 它就是普通实体的 `symbol`（分叉 ①：子弹没有额外字段）——
 // 绘制走 `DrawEntities` 的既有规则（玩家黄 / 敌人红 / **其余白**）⇒ 子弹自动是白的，绘制零改动。
 // ⚠️ 不另立 `kBulletSymbol` 常量：`'*'` 在本文件只有这一处落点；用例里数 `'*'` 是"读屏幕"，
@@ -743,10 +756,12 @@ void Game::OnUpdate(const mini::core::FrameContext& ctx)
         }
     }
 
-    // ④ Q 退出。Esc 刻意不退出 —— 它从 S10 起要用来关菜单（S2 的决策），
+    // ④ `kQuitKey` 退出。Esc 刻意不退出 —— 它从 S10 起要用来关菜单（S2 的决策），
     //    进程级退出（Ctrl+C / 关窗口）由 Application 看 Input::QuitRequested()。
     //    ⚠️ **不在策略表里** ⇒ 冻结状态下也跑：它是"关掉程序"的唯一出口，暂停时更要能按。
-    if (input.Get(Key::Q) == KeyState::Pressed) {
+    //    ⚠️ 这里是 `kQuitKey` 的**读点**；它的两处**提示落点**在 `DrawHud` 行 2 与 `DrawTitle`，
+    //       两边都留了"与 `kQuitKey` 同步"的注释（`TECH_DEBT` B6 —— 在那之前这里写的是枚举值本身）。
+    if (input.Get(kQuitKey) == KeyState::Pressed) {
         m_quit = true;
     }
 
@@ -990,6 +1005,9 @@ void Game::DrawHud(mini::render::FrameBuffer& fb) const
     //    ⚠️ 用例里有**反向断言**：提示段**必须恰好**是这五个键（含则红）—— 防止后来人"顺手统一"。
     // ⚠️ 提示行里的键名与代码里的常量是**同一个键的两个落点**（同 `kDumpKey`/`kFireKey` 的纪律）：
     //    换键时这一行要一起改。⚠️ 这里是 `F7` 的唯一提示落点（面板表头那句是另一处）。
+    //    ⚠️ 段里那个 `Q` 是 **`kQuitKey`** 的两处字面落点之一（另一处在 `DrawTitle` 的 `in game:` 横幅）
+    //       —— 换 `kQuitKey` 时**这一行要一起改**（`TECH_DEBT` B6）。提示是给玩家看的字面量、
+    //       没法用常量渲染，所以靠这行注释兜住：grep `kQuitKey` 就能找到这里。
     char stateText[96];
     std::snprintf(stateText, sizeof(stateText),
                   "hp %2d | ammo %2d | kills %2d | wave %2d | dir %s | WASD SPC Q F4 F7",
@@ -1083,8 +1101,12 @@ void Game::DrawAiPanel(mini::render::FrameBuffer& fb) const
 void Game::DrawTitle(mini::render::FrameBuffer& fb) const
 {
     // 开局提示：**只有这一屏不画世界**（`PLAN` 的"开局提示 → 按 Enter"，`S10` 步骤 2）。
-    // ⚠️ 提示里的键名与 `kStartKey`/`kPauseKey` 是**同一个键的两个落点**（同 `kDumpKey` 的纪律）：
+    // ⚠️ 提示里的键名与 `kStartKey`/`kPauseKey`/`kQuitKey` 是**同一个键的两个落点**（同 `kDumpKey` 的纪律）：
     //    换键时这里要一起改。⚠️ 这里也是 `kStartKey` 唯一的提示落点。
+    //    ⚠️ 末段那句 `Q quit` 是 **`kQuitKey`** 的两处字面落点之一（另一处在 `DrawHud` 行 2 的提示段）
+    //       —— 换 `kQuitKey` 时**这一行要一起改**（`TECH_DEBT` B6）。
+    //    ⚠️⚠️ **这条横幅没有机器守卫**：用例只钉了 HUD 那条提示段（精确串那一行），
+    //       横幅**一个字都没被断言过** ⇒ **改键漏了它没人会提醒你**，只有人眼（§10.5 的 A1）能看见。
     // ⚠️ **刻意不写"5 个敌人"这类会随波次变的话** —— 波次在步骤 4 才落地，
     //    写死数字就会变成"假提示"（同 S9 偏差 10 的 `K=kill nearest` 那个教训）。
     //
