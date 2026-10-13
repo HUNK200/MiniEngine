@@ -115,6 +115,7 @@ AI 替我跑了，我就丢掉了第一手的反馈。
 | `doc/S10_CHECKLIST.md` | S10 施工图：`game/GameState.h`（状态机纯函数 + 策略表）+ 波次 + 弹药、**4 个分叉的拍板记录**、20 条落地偏差、**§10.5 人眼验收合并清单**（按游玩顺序排、验收步一次走完）、**12 场反向验证** |
 | `doc/TECH_DEBT.md` | **技术债清单与执行计划**：A/B/C/D 四组（A 只跑命令、B 要改代码、C 明确推迟附触发条件、D 已关闭留档）。**每阶段收口时更新它** |
 | `doc/SHOWCASE_PLAN.md` | **元文档**：展示层/对外可读性的 6 个动作（README · CI · 一页技术亮点 · S11 · S12 · 第二个项目）按 ROI 排序 + 执行顺序 + 不做清单 + **对外介绍的事实纪律**。⛔ 不改代码、不进构建 |
+| `doc/CI_CHECKLIST.md` | **CI 施工图与进度板**（`SHOWCASE_PLAN` 动作 2）：9 条接口决策、7 步流水线、11 条坑、验收 + 反向验证、**公开仓库前的审计清单**。⛔ 不改代码（只新增 `.github/workflows/ci.yml`） |
 | `doc/MINITEST_SPEC.md` | 要手写的测试框架 MiniTest 的规格（接口、注册机制、runner 行为、坑） |
 | `doc/CTEST_NOTES.md` | CTest 入门：与 GoogleTest 的分工、命令速查、PowerShell 差异 |
 | `doc/WORK_MODE.md` | 上班碎片时间微任务开关的正文 |

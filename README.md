@@ -6,6 +6,11 @@
 
 **状态**：**v0.3「玩得起来」已达成**（可玩的一局：刷怪 / 射击 / 暂停 / 死亡 / 重开）· `VersionString()` = `0.3.0-dev` · 用例 **197 条**（13 个 suite）· 反向验证 **12 场** · 人眼验收 **28 条**。
 
+[![CI](https://github.com/HUNK200/MiniEngine/actions/workflows/ci.yml/badge.svg)](https://github.com/HUNK200/MiniEngine/actions/workflows/ci.yml)
+
+CI 只跑 **Windows + MSVC**，用的命令与下面那三条**逐字一致**（不装任何工具、不加缓存 —— 本项目零第三方依赖）。
+⚠️ 纯文档改动不触发 CI（`paths-ignore`），所以 badge 反映的是**最近一次代码改动**的结果。
+
 <!-- TODO(发布前)：这里放一张真实录制的 GIF —— 标题屏 → ENTER 开局 → 打怪/开火 → ESC 暂停（画面冻住）→ 死亡 → R 重开。
      录制工具用 ScreenToGif 之类即可（开发工具，不是代码依赖）。补录计划见 doc/SHOWCASE_PLAN.md 的「动作 1」。 -->
 
