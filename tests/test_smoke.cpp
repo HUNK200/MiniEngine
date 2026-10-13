@@ -27,7 +27,7 @@ MINI_TEST(Core, VersionIsReported)
     //    ✅ **2026-10-13 这次 bump**（`0.2.0-dev` → `0.3.0-dev`，依据 `PLAN` G 节的 v0.3 达成）
     //    **四处一起改了**；这条用例就是它的机器守卫：只改字符串不改数字（或反过来）当场红。
     // ⚠️ 这里的逗号在 `strcmp(...)` 的括号内，`MINI_CHECK` 是变参宏，不会被拆成两个参数。
-    MINI_CHECK(std::strcmp(mini::core::VersionString(), "0.3.0-dev") == 0);
+    MINI_CHECK(std::strcmp(mini::core::VersionString(), "0.3.1-dev") == 0);
     MINI_CHECK_EQ(mini::core::VersionMajor(), 0);
     MINI_CHECK_EQ(mini::core::VersionMinor(), 3);
 }
