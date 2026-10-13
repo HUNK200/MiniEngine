@@ -14,7 +14,7 @@
 | `ci.yml` | ✅ **已写**（`.github/workflows/ci.yml`，97 行）· ✅ **已推、已首跑** |
 | 验收 | ✅ **首跑全过**（本人 2026-10-13 回报；数据见 §9）· ⚠️ **实测 `1m 10s`，我在方案里估的"3~5 分钟"偏保守**（偏差已记在 §9） |
 | 反向验证 | ✅ **R1 通过**（2026-10-13：`196 passed, 1 failed` + 退出码 1，逐字吻合；⚠️ **1 处预测失误** + **1 个设计洞**，见 §9）· ⬜ R2 未跑（非必需） |
-| 仓库可见性 | ⬜ **本人 2026-10-13 决定：改为公开** —— ⛔ **翻转前先看 §11**（**第 0 条**：119/131 个 commit 的 author 是公司邮箱） |
+| 仓库可见性 | ✅ **本人 2026-10-13 决定：改为公开**，且**审计已过**（邮箱一项定"接受"，见 §11）⇒ **不再有阻塞**，时机由本人定。⚠️ 转公开后 badge 才对别人可见 + CI 变成免费无限；⚠️ §11 的第 3~5 条（非邮箱）仍待处置 |
 
 ## 分工约定（沿用 `AGENTS.md` §1.4）
 
@@ -203,15 +203,20 @@ git ls-remote --tags https://github.com/actions/checkout.git | grep -E 'refs/tag
 
 > ⚠️ **为什么必须在翻转可见性之前做完**：一旦公开，**这些字串在 git 历史里永久可见** ——
 > 事后再删文件也不管用（除非 rewrite history）。所以这一步是**先审计、后公开**。
+>
+> ✅ **2026-10-13 本人就已拍板（原话「邮箱无所谓」）⇒ 第 0 / 1 / 2 条按「接受」结案，不重写历史**
+> ⇒ **转公开不再被邮箱这一项阻塞**（时机由本人定）。
+> ⚠️ **代价照实记**：公开后每个 commit 都会显示 `Wuyangzhi <wu.yangzh@aerok.com.cn>` —— 真名 + 公司邮箱 + 雇主域名，**搜索引擎会收录**。
+> ⬜ **第 3~5 条（非邮箱）尚未处置** —— ⚠️ 其中**第 3 条是规则违规**（`AGENTS.md` §5），不是偏好问题。
 
-| # | 命中 | 内容 | 建议 |
+| # | 命中 | 内容 | 结论（2026-10-13） |
 | --- | --- | --- | --- |
-| **0** | ★★ **`git log` 的 author / committer 字段**（不是文件内容） | 🔴🔴 **131 个 commit 里 119 个是** `Wuyangzhi <wu.yangzh@aerok.com.cn>`（**公司邮箱 + 真名 + 雇主域名**），另 12 个是 `HUNK200` / `HUNK <wuunj@126.com>`。本机 `git config user.email` 就是那个公司邮箱 | ⛔ **改文件没用**（它写在 commit 对象里）⇒ 要清只能**重写历史**，或**接受**。换法：用 GitHub 的 noreply 邮箱（`<id>+<login>@users.noreply.github.com`）+ 打开账号设置里的「Keep my email addresses private」。⚠️ 重写的连带代价：**131 个 hash 全变** + force push + **另两台机器要 `git fetch && git reset --hard origin/main` 重新同步**。⛔ **转公开前必须先决定这一条** |
-| 1 | `doc/MiniEngine_PLAN.md:33` | 🔴🔴 **公司邮箱 + 雇主**：`Wuyangzhi <wu.yangzh@aerok.com.cn>` | **必须处理**：改成 `公司机（身份略）` 或 `<work-email>`。⚠️ 这条最敏感 |
-| 2 | `doc/MiniEngine_PLAN.md:33,1354` | 🟡 **个人邮箱** `wuunj@126.com` | 你定：公开个人邮箱通常可接受（它是 git commit 的 author 信息，公开仓库里本来也能看到）⇒ 但要知道它会被搜索引擎收录 |
-| 3 | `.agents/skills/work-mode/SKILL.md:13` | 🟠 `d:/Project/fish/c++_simple_engine/…` + `D:\WorkPlace\MiniEngine` | **违反 `AGENTS.md` §5"绝不提交任何含绝对路径的文件"** ⇒ 改成 `<仓库根>` 占位 |
-| 4 | `doc/MiniEngine_PLAN.md:1481` | 🟠 **本机代理**：`http://127.0.0.1:7897` | 建议删掉这一行（属本机环境，与项目无关） |
-| 5 | `doc/MiniEngine_PLAN.md:27-29` | 🟡 家机 VS 装在 **`E:\Program Files\VisualStudio`**、CMake 装在 `C:\Program Files\CMake\bin` | 无害但属本机细节 ⇒ 可脱敏为 `VS 2022（自选路径）` |
+| **0** | ★★ **`git log` 的 author / committer 字段** | 🔴 **131 个 commit 里 119 个是** `Wuyangzhi <wu.yangzh@aerok.com.cn>`，另 12 个是 `HUNK200` / `HUNK <wuunj@126.com>`；本机 `git config user.email` 就是那个公司邮箱 | ✅ **本人定：接受** ⇒ **不重写历史**，转公开的硬阻塞**解除**。⚠️ 留档：重写的代价本来不小（131 个 hash 全变 + force push + **另两台机器要 `git fetch && git reset --hard origin/main`**），所以"接受"是合理取舍 |
+| 1 | `doc/MiniEngine_PLAN.md:33` | 公司邮箱 + 雇主（同第 0 条） | ✅ **本人定：接受**（文件里那行**不改**） |
+| 2 | `doc/MiniEngine_PLAN.md:33,1354` | 个人邮箱 `wuunj@126.com` | ✅ **本人定：接受** |
+| 3 | `.agents/skills/work-mode/SKILL.md:13` | 🟠 `d:/Project/fish/c++_simple_engine/…` + `D:\WorkPlace\MiniEngine` | ⬜ **待处置** —— ⚠️ **它违反 `AGENTS.md` §5「绝不提交任何含绝对路径的文件」**（是**规则**问题，与"邮箱无所谓"是两件事）⇒ 建议改成 `<仓库根>` 占位 |
+| 4 | `doc/MiniEngine_PLAN.md:1481` | 🟠 本机代理 `http://127.0.0.1:7897` | ⬜ **待处置** —— 建议删掉那一行（与项目无关的本机环境） |
+| 5 | `doc/MiniEngine_PLAN.md:27-29` | 🟡 家机 VS 装在 `E:\Program Files\VisualStudio`、CMake 在 `C:\Program Files\CMake\bin` | ⬜ **待处置** —— 无害本机细节，脱敏或照旧都行 |
 | 6 | `doc/S0_CHECKLIST.md:417` | 🟢 `D:/b/mini`（示例路径） | 无需处理 |
 | 7 | 家目录 / 用户名 | ✅ **`C:\Users\…` 与用户名 `wuyan` 一处都没有命中** | 无需处理 |
 
