@@ -12,8 +12,8 @@
 #    就必须显式 pin 这个标签。
 #
 # 边界（AGENTS.md §3）：GitHub Actions 是**构建服务** —— 不进产物、不改 CMake
-#   ⇒ 不算"引入第三方库"。但 `uses:` 确实会把别人的代码拉进流水线，所以两个
-#     action 都 **pin 到 40 位 commit SHA**（不是浮动标签）。
+#   ⇒ 不算"引入第三方库"。但 `uses:` 确实会把别人的代码拉进流水线，所以下面**唯一
+#     的那一个 action** 也 **pin 到 40 位 commit SHA**（不是浮动标签）。
 #    取 SHA 的办法（本项目不装 gh，用 git 自带的就够）：
 #      git ls-remote --tags https://github.com/actions/checkout.git refs/tags/v6.0.3^{}
 # ============================================================
@@ -88,10 +88,15 @@ jobs:
       - name: 跑 ctest（验 CTest 集成）
         run: ctest --test-dir build -C Debug --output-on-failure
 
-      - name: 失败时上传 ctest 日志
-        if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
-        with:
-          name: ctest-log
-          path: build/Testing/Temporary/LastTest.log
-          if-no-files-found: ignore
+      # ⛔ 这里原本有一个 `if: failure()` 上传 `build/Testing/Temporary/LastTest.log` 的
+      #    artifact 步骤 —— **2026-10-13 的反向验证 R1 证明它是空转的，已删除**：
+      #    · R1（把 test_smoke.cpp 的版本串改坏）让上面"跑用例"那一步红 ⇒ GitHub Actions
+      #      **默认跳过后续步骤**（除非那一步写了 `if: always()` / `if: failure()`），
+      #      于是 ctest 根本没跑 ⇒ `LastTest.log` 没生成 ⇒ 上传那步报
+      #      "No files were found with the provided path"。
+      #    · 而失败信息（`[FAIL] Core.VersionIsReported`、尾行、退出码）本来就完整印在
+      #      **那一步的日志**里，run 页面能直接看、log archive 也能下载
+      #      ⇒ 这个 artifact 不解决任何问题，只多一个会空转的机制。
+      #    ⚠️ 若将来真要它：先解决"ctest 在该跑的时候真的跑了"（给 ctest 加 `if: always()`，
+      #      并用 `id: build` + `steps.build.outcome == 'success'` 守住构建失败的情形），
+      #      否则它还是空转。详见 doc/CI_CHECKLIST.md 的坑表 12 / 13。
