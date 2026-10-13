@@ -229,7 +229,9 @@ C 组 **28 条**有意推迟。
 **CI（2026-10-13）**：✅ **`SHOWCASE_PLAN` 动作 2 落盘** —— `.github/workflows/ci.yml`（`windows-2022` + MSVC + ctest，
 命令与 README **逐字一致**，不装工具、不做缓存）+ `doc/CI_CHECKLIST.md`（施工图 / 坑表 / 公开前审计）。
 两个 action **pin 到 commit SHA**（`git ls-remote` 取的权威值：`checkout` v6.0.3 · `upload-artifact` v7.0.2）。
-⚠️ **未推、未首跑** ⇒ 验收与反向验证 R1（改坏一条用例看 CI 是否红）**归本人**。⇒ **C5 因此提前关闭**（原挂 S14）· 新增 **C36**。
+✅ **首跑全过**（本人 2026-10-13 回报：`succeeded` / **1m 10s** / `197 passed, 0 failed` / `ctest 1/1`；
+配置阶段那行 `Building for: Visual Studio 17 2022` ⇒ **坑表 1 的判据成立**；CI 的 cl = `19.44.35229.0`）。
+⬜ **反向验证 R1**（改坏一条用例看 CI 是否红）**归本人** —— 唯一还没验的一条。⇒ **C5 因此提前关闭**（原挂 S14）· 新增 **C36**。
 
 > **⛔ 2026-09-29 大决定：clang 全线移除。** 本人决定"默认只用 MSVC"，
 > 于是 `ms-clang-debug` 预设、`clang-debug` buildPreset、`CMakeLists.txt` 里那条

@@ -11,10 +11,10 @@
 | 项 | 状态 |
 | --- | --- |
 | 本文件 | ✅ **2026-10-13 落纸**（方案 + 已落地的 workflow + 公开前审计） |
-| `ci.yml` | ✅ **已写**（`.github/workflows/ci.yml`，97 行）· ⬜ **未推、未首跑** |
-| 验收 | ⬜ 待本人 `git push` 后看 Actions 页面（见 §9） |
-| 反向验证 | ⬜ 待跑（R1：故意改坏一条用例 ⇒ CI 必须红） |
-| 仓库可见性 | ⬜ **本人 2026-10-13 决定：改为公开** —— ⚠️ **翻转前先看 §11 的审计** |
+| `ci.yml` | ✅ **已写**（`.github/workflows/ci.yml`，97 行）· ✅ **已推、已首跑** |
+| 验收 | ✅ **首跑全过**（本人 2026-10-13 回报；数据见 §9）· ⚠️ **实测 `1m 10s`，我在方案里估的"3~5 分钟"偏保守**（偏差已记在 §9） |
+| 反向验证 | ⬜ **待跑**（R1：故意改坏一条用例 ⇒ CI 必须红，且日志指出是哪条）—— **唯一还没验的一条** |
+| 仓库可见性 | ⬜ **本人 2026-10-13 决定：改为公开** —— ⛔ **翻转前先看 §11**（**第 0 条**：119/131 个 commit 的 author 是公司邮箱） |
 
 ## 分工约定（沿用 `AGENTS.md` §1.4）
 
@@ -155,20 +155,27 @@ git ls-remote --tags https://github.com/actions/checkout.git | grep -E 'refs/tag
 
 **首跑记录（本人抄录）**
 
-| # | 项 | 实测 |
+| # | 项 | 实测（本人 2026-10-13 回报） |
 | --- | --- | --- |
-| 1 | run 结论 | ⬜ 待抄 |
-| 2 | step 3 的 `Building for:` | ⬜ 待抄 |
-| 3 | step 5 尾行 | ⬜ 待抄 |
-| 4 | step 6 结果 | ⬜ 待抄 |
-| 5 | 整轮实际耗时（分钟） | ⬜ 待抄（用来核 §10 的估算） |
+| 1 | run 结论 | ✅ **`succeeded`** |
+| 2 | step 3 的 `Building for:` | ✅ **`Visual Studio 17 2022`** ⇒ **坑表 1 的判据成立** |
+| 3 | step 5 尾行 | ✅ **`197 passed, 0 failed`** |
+| 4 | step 6 结果 | ✅ `1/1 Test #1: mini_tests … Passed 1.21 sec` · **`100% tests passed, 0 tests failed out of 1`**（Total Test time 1.26s） |
+| 5 | 整轮实际耗时 | ✅ **`1m 10s`** |
+| 6 | 环境（顺带抄录） | `MSVC 19.44.35229.0`（cl.exe `…/14.44.35207/…/cl.exe`）· SDK `10.0.26100.0` → 目标 `10.0.20348` · 配置阶段 **14.8s** |
+
+⚠️ **偏差（估算失误，照实记）**：我在 §6 / §10 里把一次 run 估成 **3~5 分钟**，**实测 `1m 10s`**。
+原因：MSVC 在 runner 上并行编译 ~40 个 TU 用不到 1 分钟；配置阶段 14.8s 与预估（10~30s）吻合。
+⇒ 教训：**别用"感觉上的编译耗时"估算，先跑一次拿数字** —— 本项目那条"手感数字要试出来"的纪律，对 CI 同样成立。
+⚠️ **未抄录**：step 2 的 `cmake --version` 与 `vswhere` 两行（按你定的 §10.4 结案口径不追着补）；
+`cl 19.44.35229.0` 已能间接印证"拿到的就是 VS 2022 那套工具链"（三台机器：家机 19.44 / 新机 19.43）。
 
 ## 10. 成本
 
 | 情况 | 数字 |
 | --- | --- |
 | **仓库转公开后** | ✅ **标准 runner 上完全免费、无额度上限** ⇒ 成本不再是任何决策因素（`SHOWCASE_PLAN` 动作 2 的"越早越好"因此更成立） |
-| 若仍私有 | Free 计划 2,000 分钟/月；一次 job ≈ 2~3 分钟 ⇒ 每周 5 推 ≈ 130 配额分钟/月（**≈ 6.5%**）；超了 Windows 约 $0.010/分钟 |
+| 若仍私有 | Free 计划 2,000 分钟/月；✅ **实测一次 run = `1m 10s`** ⇒ 折 ≈ **2.3 配额分钟/次**（Windows 按 2× 扣）· 每周 5 推 ≈ **51 配额分钟/月（≈ 2.5%）**；超了 Windows 约 $0.010/分钟 |
 | ⚠️ 不确定项 | 见坑表 11（跨 OS 扣分钟的官方口径在 2025-12 改版后不明确） |
 
 ## 11. ★ 公开前的审计（2026-10-13 AI 用 `git grep` 扫的）
@@ -178,6 +185,7 @@ git ls-remote --tags https://github.com/actions/checkout.git | grep -E 'refs/tag
 
 | # | 命中 | 内容 | 建议 |
 | --- | --- | --- | --- |
+| **0** | ★★ **`git log` 的 author / committer 字段**（不是文件内容） | 🔴🔴 **131 个 commit 里 119 个是** `Wuyangzhi <wu.yangzh@aerok.com.cn>`（**公司邮箱 + 真名 + 雇主域名**），另 12 个是 `HUNK200` / `HUNK <wuunj@126.com>`。本机 `git config user.email` 就是那个公司邮箱 | ⛔ **改文件没用**（它写在 commit 对象里）⇒ 要清只能**重写历史**，或**接受**。换法：用 GitHub 的 noreply 邮箱（`<id>+<login>@users.noreply.github.com`）+ 打开账号设置里的「Keep my email addresses private」。⚠️ 重写的连带代价：**131 个 hash 全变** + force push + **另两台机器要 `git fetch && git reset --hard origin/main` 重新同步**。⛔ **转公开前必须先决定这一条** |
 | 1 | `doc/MiniEngine_PLAN.md:33` | 🔴🔴 **公司邮箱 + 雇主**：`Wuyangzhi <wu.yangzh@aerok.com.cn>` | **必须处理**：改成 `公司机（身份略）` 或 `<work-email>`。⚠️ 这条最敏感 |
 | 2 | `doc/MiniEngine_PLAN.md:33,1354` | 🟡 **个人邮箱** `wuunj@126.com` | 你定：公开个人邮箱通常可接受（它是 git commit 的 author 信息，公开仓库里本来也能看到）⇒ 但要知道它会被搜索引擎收录 |
 | 3 | `.agents/skills/work-mode/SKILL.md:13` | 🟠 `d:/Project/fish/c++_simple_engine/…` + `D:\WorkPlace\MiniEngine` | **违反 `AGENTS.md` §5"绝不提交任何含绝对路径的文件"** ⇒ 改成 `<仓库根>` 占位 |
