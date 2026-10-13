@@ -13,7 +13,7 @@
 | 本文件 | ✅ **2026-10-13 落纸**（方案 + 已落地的 workflow + 公开前审计） |
 | `ci.yml` | ✅ **已写**（`.github/workflows/ci.yml`，97 行）· ✅ **已推、已首跑** |
 | 验收 | ✅ **首跑全过**（本人 2026-10-13 回报；数据见 §9）· ⚠️ **实测 `1m 10s`，我在方案里估的"3~5 分钟"偏保守**（偏差已记在 §9） |
-| 反向验证 | ⬜ **待跑**（R1：故意改坏一条用例 ⇒ CI 必须红，且日志指出是哪条）—— **唯一还没验的一条** |
+| 反向验证 | ✅ **R1 通过**（2026-10-13：`196 passed, 1 failed` + 退出码 1，逐字吻合；⚠️ **1 处预测失误** + **1 个设计洞**，见 §9）· ⬜ R2 未跑（非必需） |
 | 仓库可见性 | ⬜ **本人 2026-10-13 决定：改为公开** —— ⛔ **翻转前先看 §11**（**第 0 条**：119/131 个 commit 的 author 是公司邮箱） |
 
 ## 分工约定（沿用 `AGENTS.md` §1.4）
@@ -54,7 +54,7 @@
 
 | 类别 | 文件 | 规模 |
 | --- | --- | --- |
-| **新增** | `.github/workflows/ci.yml` | **97 行**（含注释） |
+| **新增** | `.github/workflows/ci.yml` | **102 行**（含注释；首版 97 行，R1 后删掉 artifact 步骤 + 补 2 条坑的注释） |
 | **新增** | `doc/CI_CHECKLIST.md`（本文件） | — |
 | 改 | `README.md`（badge + 一句说明） | +3 行 |
 | 改 | `doc/SHOWCASE_PLAN.md`（动作 2 状态 + ★ 坑） | ~8 行 |
@@ -67,7 +67,7 @@
 | 问题 | 判定 | 写在哪 |
 | --- | --- | --- |
 | GitHub Actions 违反"不引入第三方库"吗？ | **不违反**：它是**构建服务**，不进产物、不改 CMake、不新增编译依赖 | `ci.yml` 文件头 + README |
-| `uses:` 呢？ | ⚠️ **确实是把别人的代码拉进流水线**（两个都是 GitHub 官方维护）⇒ 所以 **pin 到 40 位 commit SHA** | 同上 |
+| `uses:` 呢？ | ⚠️ **确实是把别人的代码拉进流水线**（那一个是 GitHub 官方维护的）⇒ 所以 **pin 到 40 位 commit SHA** | 同上 |
 | 只跑 MSVC？ | ✅ 必须（`PLAN` v1.0 原话；clang 已于 2026-09-29 全线移除） | — |
 
 ## 5. 接口设计（= `ci.yml` 的"公开面"）
@@ -82,7 +82,7 @@
 | **D6 超时** | `timeout-minutes: 20` | 防挂死（GitHub 硬上限 6 小时） |
 | **D7 job 结构** | **v1 只一个 job（Debug）** | 首跑要一次成功；Release 走 v2（§12） |
 | **D8 生成器** | **不传 `-G`** —— 保住"CI 命令 = README 命令"这条命根子 | 代价：生成器是隐式的 ⇒ 用 step 3 的日志当观察面 |
-| **D9 action 取法** | **两个都 pin SHA**：`actions/checkout@df4cb1c0…`（v6.0.3）· `actions/upload-artifact@cf430e03…`（v7.0.2） | 供应链纪律；代价：升级要手动（§8 给了取 SHA 的命令） |
+| **D9 action 取法** | **pin SHA**：`actions/checkout@df4cb1c0…`（v6.0.3）—— ⚠️ 原先还有第二个 action（`upload-artifact`），**R1 之后已删**（见 §6 step 7 / 坑表 13） | 供应链纪律；代价：升级要手动（§8 给了取 SHA 的命令）。✅ 删掉一个也顺带**消掉一个供应链面** |
 
 ## 6. 逐步骤（每步：命令 / 作用 / 对应本地哪一条）
 
@@ -94,7 +94,7 @@
 | 4 | 构建 | `cmake --build build --config Debug` | `--config` 不能漏（多配置生成器） |
 | 5 | **跑用例（拿尾行）** | `.\build\bin\Debug\mini_tests.exe` | ★ 给出本项目口径的 `197 passed, 0 failed`；**并且**它是"测试有没有被编译进来"的**响亮**守卫（事实 4） |
 | 6 | **跑 ctest** | `ctest --test-dir build -C Debug --output-on-failure` | 验证 CTest 集成（`-C` 不能漏）。期望 `1/1` |
-| 7 | 失败留证 | `if: failure()` → `upload-artifact`（`LastTest.log`） | 日志几 KB，不占配额；失败时能直接在页面看 CTest 原始输出 |
+| 7 | ~~失败留证~~ | ⛔ **已删除**（原本是 `if: failure()` → `upload-artifact` 上传 `LastTest.log`） | **2026-10-13 的反向验证 R1 证明它是空转的**：R1 让 step 5 红 ⇒ Actions **默认跳过后续步骤** ⇒ ctest 没跑 ⇒ `LastTest.log` 没生成 ⇒ 上传那步报 "No files were found"。而失败信息本来就在步骤日志里 ⇒ 见坑表 12/13 |
 
 > ⚠️ **step 5 与 step 6 都在是故意的**：`ctest` 只会说 `1/1`（一个 exe = 一个用例，事实 7），
 > **说不出 `197`**；而直接跑 exe 看不到 CTest 集成。**两个都要，各管一件事。**
@@ -114,13 +114,15 @@
 | 9 | 行尾差异 | `.gitattributes` 强制 LF；runner 上 `core.autocrlf` 若为真会改写 ⇒ step 2 一行消除 | ⚠️ 环境 |
 | 10 | vswhere 位置变了 | step 2 打不出 VS 版本（但**不会**让 CI 红，因为写了 `Test-Path` 分支） | ⚠️ 环境 |
 | 11 | **计费口径我不确定** | GitHub 在 2025-12 的计费改版里**撤掉了 1/2/10 那张倍率表**，改成按 SKU 的美元价；"跨 OS 怎么扣免费分钟"官方**没明说**（我查到的两份资料互相矛盾）⇒ 按 §10 的上界估 | ⚠️ 资料冲突 |
+| 12 | ★★ **"前一步失败 ⇒ 后续步骤被跳过"**（**2026-10-13 实测踩到**） | GitHub Actions 的**默认语义**：任何一步失败后，**它后面的步骤一律跳过**，除非那一步自己写了 `if: always()` / `if: failure()`。⇒ 判据：R1 日志里 step 6（ctest）**根本没出现**，直接跳到下一个步骤。⚠️ 我方案里预测"step 6 也红"是**错的**（偏差记在 §9） | ⚠️ 默认语义（不是错） |
+| 13 | ★★ **artifact 会"空转"**（**2026-10-13 实测踩到**） | 它要的 `build/Testing/Temporary/LastTest.log` 是 **ctest 生成**的；而失败发生在 step 5 时 ctest 已被跳过（坑 12）⇒ 文件不存在 ⇒ 报 `No files were found with the provided path`。⇒ **该步骤已删除**（取"甲"）。若将来要恢复：先给 ctest 加 `if: always()`，并用 `id: build` + `steps.build.outcome == 'success'` 守住"构建失败"的情形 | ⚠️ 设计洞（已修） |
 
 ## 8. `SHA pin` 记录与升级流程
 
 | action | pin 的 SHA | 版本 | 来源 |
 | --- | --- | --- | --- |
 | `actions/checkout` | `df4cb1c069e1874edd31b4311f1884172cec0e10` | **v6.0.3** | `git ls-remote` 的 `refs/tags/v6.0.3^{}`（**权威**） |
-| `actions/upload-artifact` | `cf430e030ddbb5b0abf93d22962f4752f3646cd9` | **v7.0.2** | `git ls-remote` 的 `refs/tags/v7.0.2`（**权威**） |
+| ~~`actions/upload-artifact`~~ | ~~`cf430e030ddbb5b0abf93d22962f4752f3646cd9`~~ | ~~v7.0.2~~ | ⛔ **2026-10-13 已移除该步骤**（R1 证明它空转，见坑表 13）⇒ **现在整条流水线只有 1 个 action**，供应链面少一个 |
 
 **升级 / 复核用这一条命令**（用 `git` 就行，本项目不装 `gh`）：
 
@@ -146,10 +148,29 @@ git ls-remote --tags https://github.com/actions/checkout.git | grep -E 'refs/tag
 
 **反向验证**（同 S10 §10.3 的纪律：**预测 → 实测 → 比对 → 还原**）
 
-| 场次 | 破坏方式 | 预期 |
+| 场次 | 破坏方式 | 预期 | 结果 |
+| --- | --- | --- | --- |
+| **R1** | 把 `tests/test_smoke.cpp` 的版本串期望值改成 `"0.3.1-dev"`（补注释后该行是**第 30 行**） | step 5 红，日志指出 **`[FAIL] Core.VersionIsReported`**；~~step 6 也红~~ | ✅ **通过**（实测见下） |
+| **R2**（可选） | 删掉 step 4 的 `--config Debug` | 期望红在**构建**（证明坑表 2 是真的） | ⬜ 未跑（非必需） |
+
+**R1 实测记录（2026-10-13，本人回报的原话优先）**
+
+| 我预测的 | 实测 | 判定 |
 | --- | --- | --- |
-| **R1** | 把 `tests/test_smoke.cpp:28` 的期望值改成 `"0.3.1-dev"` | step 5 红，日志指出 **`[FAIL] Core.VersionIsReported`**；step 6 也红（同一个 exe） |
-| **R2**（可选） | 删掉 step 4 的 `--config Debug` | 期望红在**构建**（证明坑表 2 是真的） |
+| step 5 尾行 `196 passed, 1 failed` | ✅ **`196 passed, 1 failed`** | ✔ 逐字吻合 |
+| 非 0 退出码 | ✅ **`Error: Process completed with exit code 1.`** | ✔ |
+| run 整体红 | ✅ **Failure** | ✔ |
+| **step 6（ctest）也红** | ❌ **它被"跳过"了，根本没执行** | ✘ **预测失误** |
+
+⇒ **偏差 1（我的）**：我按"两条命令都会跑"去预测，**漏了 GitHub Actions 的默认语义** —— 前一步失败后，
+它后面的步骤**一律跳过**（除非那一步写了 `if: always()`）。已并入坑表 **12**。
+⇒ **偏差 2（我的，设计洞）**：artifact 步骤的 `if: failure()` **确实执行了**（这点我预测对了），但它要的
+`LastTest.log` **不存在**（ctest 被跳过 ⇒ 没生成）⇒ 报 `No files were found with the provided path`。
+也就是说：**只要失败发生在 ctest 之前，这个 artifact 永远空转** ⇒ 取"甲"：**删掉该步骤**（已并入坑表 **13**）。
+⇒ ⚠️ **还原过程中踩到的一件事（值得单独记）**：R1 的破坏被当成一次正常提交**推上去了**（`c343214`，消息就是 `test`）
+⇒ `main` 一度是**红的**。处置 = **新开一个 fix commit 还原**（`git checkout HEAD~1 -- tests/test_smoke.cpp` + 提交），
+**不用 force push**。📌 **R1 的证据留在 Actions 的 run 历史里**，不需要靠代码留存 ——
+这正是"反向验证"和"故意留一个坏提交"的区别。
 
 ⚠️ R1 跑完必须 `git checkout -- tests/test_smoke.cpp` **并再推一次**，确认回到绿。
 
