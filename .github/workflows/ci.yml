@@ -1,0 +1,97 @@
+# ============================================================
+# CI —— 唯一的流水线：GitHub Actions + MSVC + ctest
+#
+# 它想证明的只有一件事：
+#   「一个陌生人 clone 这个仓库之后，README 里那三条命令真的能跑通」。
+# ⇒ 所以下面每一步都必须与 README / AGENTS.md §4 的命令**逐字一致**：
+#   不传 -D、不装任何工具、不加缓存（本项目零第三方依赖，没有可缓存的东西）。
+#
+# ⚠️ `windows-2022` 不是随手写的（详见 doc/CI_CHECKLIST.md 坑表 1）：
+#    2026-06 起 `windows-latest` / `windows-2025` 默认换成 Visual Studio 2026，
+#    而本项目的 CMake 生成器是 `Visual Studio 17 2022` ⇒ 要留在 VS 2022，
+#    就必须显式 pin 这个标签。
+#
+# 边界（AGENTS.md §3）：GitHub Actions 是**构建服务** —— 不进产物、不改 CMake
+#   ⇒ 不算"引入第三方库"。但 `uses:` 确实会把别人的代码拉进流水线，所以两个
+#     action 都 **pin 到 40 位 commit SHA**（不是浮动标签）。
+#    取 SHA 的办法（本项目不装 gh，用 git 自带的就够）：
+#      git ls-remote --tags https://github.com/actions/checkout.git refs/tags/v6.0.3^{}
+# ============================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+    # 本仓库一半 commit 是文档 ⇒ 纯文档改动不进 CI。
+    # ⚠️ 副作用：这类 push 不会触发 run，badge 会停在上一次的颜色（不代表"刚验过"）。
+    paths-ignore:
+      - 'doc/**'
+      - '**/*.md'
+      - 'AGENTS.md'
+      - '.agents/**'
+  pull_request:
+    branches: [main]        # PR 不过滤路径：避免"必需检查被跳过"那一类麻烦
+  workflow_dispatch:        # 手动补一次（被 paths-ignore 跳过的 run 也靠它）
+
+permissions:
+  contents: read            # 最小权限：checkout 只需要读
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true  # 连推多个 commit 时只跑最后一个
+
+jobs:
+  build-and-test:
+    name: MSVC / Debug
+    runs-on: windows-2022   # ★ 不要改成 windows-latest —— 见文件头
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh         # Windows runner 默认就是 pwsh，写出来只为明确
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10   # v6.0.3
+        with:
+          fetch-depth: 1     # CI 不需要历史
+
+      # AGENTS.md §4「每台机器第一步：核版本」—— CI 就是第 4 台机器。
+      # ⚠️ 只打印、不断言：三台机器的 CMake / cl 版本本来就各不相同（家机 19.44 /
+      #    新机 19.43），写死断言会把"环境差异"变成"假红"。
+      - name: 核版本（cmake / VS）
+        run: |
+          git config --global core.autocrlf false   # 与 .gitattributes 的 LF 约定对齐
+          cmake --version
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (Test-Path $vswhere) { & $vswhere -latest -property installationVersion }
+          else { Write-Host "vswhere 不在预期位置（CI 仍继续：它只是环境探测）" }
+
+      # ↓↓↓ 以下三条与 README「跑起来」那一段**逐字一致** ↓↓↓
+      - name: 配置
+        run: cmake -S . -B build
+        # 观察面：这一句的输出里有 `Building for: Visual Studio 17 2022`。
+        # 生成器是**隐式**的（README 没写 -G）⇒ 只能靠这行日志确认它选对了。
+
+      - name: 构建
+        run: cmake --build build --config Debug
+
+      # 跑两遍是**故意的**，两遍各管一件事：
+      #   ① 直接跑 exe → 拿到本项目口径的尾行 `197 passed, 0 failed`；
+      #      而且它是"测试到底有没有被编译进来"的**响亮**守卫 —— 若哪天
+      #      MINI_BUILD_TESTS 的默认值变成 OFF（CMakeLists.txt:24），这个 exe
+      #      根本不存在，这里直接红。⚠️ 只跑 ctest 会**静默 0/0**
+      #      （一个 exe = 一个 CTest 用例，见 tests/CMakeLists.txt:50）。
+      - name: 跑用例（拿尾行）
+        run: .\build\bin\Debug\mini_tests.exe
+
+      - name: 跑 ctest（验 CTest 集成）
+        run: ctest --test-dir build -C Debug --output-on-failure
+
+      - name: 失败时上传 ctest 日志
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
+        with:
+          name: ctest-log
+          path: build/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
