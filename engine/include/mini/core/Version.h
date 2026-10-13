@@ -9,9 +9,11 @@
 
 namespace mini::core {
 
-// 形如 "0.2.0-dev"。版本号里程碑见 PLAN G 节（v0.1 看得见 / v0.2 走得动 / v0.3 玩得起来）。
-// ⚠️ 改版本号要**三处一起**（`Version.cpp` 的字符串 + 下面两个函数 + `test_smoke.cpp` 的断言）；
-//    "这个函数为什么还留着（只有一个测试调用者）"也写在 `Version.cpp` 的注释里。
+// 形如 "0.3.0-dev"（**当前值**）。版本号里程碑见 PLAN G 节
+// （v0.1 看得见 / v0.2 走得动 / v0.3 玩得起来 / v0.4 看得清）。
+// ⚠️ 改版本号 = **四处功能落点**（`Version.cpp` 的字符串 + `VersionMajor()` + `VersionMinor()`
+//    + `test_smoke.cpp` 的断言）+ **这句举例**。这一句没有机器守卫（编译器和用例都不管它）⇒ 最容易漏。
+// ⚠️ "这个函数为什么还留着（只有一个测试调用者）"写在 `Version.cpp` 的注释里；变更史也在那儿。
 const char* VersionString();
 
 int VersionMajor();
