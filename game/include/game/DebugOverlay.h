@@ -58,6 +58,9 @@ struct OverlayData {
     int   shots = 0;
     int   ammo  = 0;
     int   hp    = 0;
+    // 几何层开关（`F2`，S11 步骤 5c）。⚠️ 它**不是**引擎数据 —— 归 `Game::m_showGeometry`，
+    //   放在这里是因为"看读数的人得知道屏幕上那层底色为什么亮着"。
+    bool  geometry = false;
 };
 
 using OverlayLines = std::array<std::array<char, kOverlayLineCap>, kOverlayMaxLines>;
@@ -92,8 +95,11 @@ inline int BuildOverlayLines(const OverlayData& d, OverlayLines& out) noexcept
                   "wave %2d  foes %2d  shots %2d", d.wave, d.foes, d.shots);
     ++n;
 
+    // `geom` 用定宽 `%-3s`：开关切换时这一行**不会左右抖**（同 HUD 里 `%2d` 的理由）。
+    // ⚠️ `on` / `off` 全是小写 —— 面板里不许出现 `@` / `E` / `*`（C31 的字形纪律）。
     std::snprintf(out[static_cast<std::size_t>(n)].data(), kOverlayLineCap,
-                  "hp %2d    ammo %2d", d.hp, d.ammo);
+                  "hp %2d    ammo %2d  geom %-3s",
+                  d.hp, d.ammo, d.geometry ? "on" : "off");
     ++n;
 
     std::snprintf(out[static_cast<std::size_t>(n)].data(), kOverlayLineCap,

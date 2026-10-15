@@ -162,6 +162,19 @@ constexpr mini::platform::Key kQuitKey = mini::platform::Key::Q;
 //    ⛔ 别顺手把它加进 `DrawHud` 的提示段：那一行的精确串与列宽被用例钉着（`TECH_DEBT` C24）。
 constexpr mini::platform::Key kOverlayKey = mini::platform::Key::T;
 
+// ── `kGeometryKey`：几何层开关（S11 步骤 5c）＝ `TECH_DEBT` **C13** 的到期处置 ─────────────
+// ⚠️ 它**不是** `PLAN:549` 字面上的"碰撞盒"。S7 判过"C13 不做"，理由是
+//    "1 格 1 字符下，把格子边界画出来 ≈ 没画"（同一格既画格子又画实体，看不出区别）。
+//    5c 走的是**另一条通道 —— 底色**（字形一个字节都不动）：
+//      · 实心格（墙 / 越界）→ 暗灰底（`DrawMap`）；
+//      · 玩家占格 → 蓝底、敌人占格 → 红底（`DrawEntities`）。
+//    ⇒ S7 那条理由对它**不成立**（那说的是字符通道），而"实体占的是哪一格"
+//      （点模型正好一格）第一次看得见。
+// ⚠️ **`F2` 在本机可用**（实测：`F1`/`F3` 被别的软件抢占，见 `kOverlayKey` 那段）；
+//    `PLAN:549` 里留给它的正是这个位置，所以这次不用换键。
+// ⚠️ 同 `kOverlayKey`：**不进 HUD 提示行**（开发者工具，不是玩法键）⇒ 键字母在本文件只有这一处。
+constexpr mini::platform::Key kGeometryKey = mini::platform::Key::F2;
+
 // 子弹画什么字符。⚠️ 它就是普通实体的 `symbol`（分叉 ①：子弹没有额外字段）——
 // 绘制走 `DrawEntities` 的既有规则（玩家黄 / 敌人红 / **其余白**）⇒ 子弹自动是白的，绘制零改动。
 // ⚠️ 不另立 `kBulletSymbol` 常量：`'*'` 在本文件只有这一处落点；用例里数 `'*'` 是"读屏幕"，
@@ -809,6 +822,14 @@ void Game::OnUpdate(const mini::core::FrameContext& ctx)
         m_showOverlay = !m_showOverlay;
     }
 
+    // ④e `kGeometryKey` 开/关几何层（S11 步骤 5c；`TECH_DEBT` C13）。
+    //     同 ④d：只在 `Pressed` 翻转、**不在策略表里**（冻结状态下也该能看"哪一格是实心"）。
+    //     ⚠️ 它**只影响底色**：不动字形、不动世界、不动帧序 ——
+    //        所以"数屏幕上 `'E'`"那些判据**一个都不受影响**（那是 C31 的安全边界）。
+    if (input.Get(kGeometryKey) == KeyState::Pressed) {
+        m_showGeometry = !m_showGeometry;
+    }
+
     // ⑤ Σdt（**只在 `Playing` 加**）：HUD 拿它自证 `pos ≈ v × sum dt`（10.2 的运行时验收）。
     //    ⚠️ 冻结状态下**一点也不加** —— 否则"暂停 1 分钟"会让 `sumdt` 凭空多 60 秒，
     //       那条自证就废了（S10_CHECKLIST 决策 D9）。⚠️ 恢复那一帧用的就是**本帧的正常 dt**，
@@ -912,11 +933,21 @@ void Game::DrawMap(mini::render::FrameBuffer& fb) const
     const int originCol = m_camera.OriginCol();
     const int originRow = m_camera.OriginRow();
 
+    // S11 几何层（键 = `kGeometryKey`）：**只加底色、不碰字形** ——
+    //   实心格铺一层暗灰底（`#` 之外多一个通道），于是"哪一片是墙 / 哪里是地图外"一眼可见。
+    // ⚠️ 底色**只给实心格**：空格保持默认底色（否则整屏都是灰的，反而看不出边界在哪）。
+    // ⚠️ 它在循环外算一次（`Default` 是"不铺"的哨兵，见 `Set` 的默认参数）——
+    //    图层关着时**一个字节的绘制差异都没有**（这是默认关的意义）。
+    const mini::render::Color solidBg = m_showGeometry ? mini::render::Color::BrightBlack
+                                                       : mini::render::Color::Default;
+
     for (int row = kHudRow; row < h; ++row) {
         const int worldRow = originRow + (row - kHudRow);
         for (int col = 0; col < w; ++col) {
             if (map.At(originCol + col, worldRow) == mini::world::Tile::Wall) {
-                fb.Set(col, row, '#', mini::render::Color::BrightBlack);
+                // ⚠️ 越界也走这一支（`TileMap::At` 把地图外当实心 = S7 的"越界 = 墙"）
+                //    ⇒ 几何层顺带把那条规则**画出来**了。
+                fb.Set(col, row, '#', mini::render::Color::BrightBlack, solidBg);
             }
         }
     }
@@ -946,14 +977,35 @@ void Game::DrawEntities(mini::render::FrameBuffer& fb) const
         // 颜色：玩家黄 / 敌人红 / 其余（将来的子弹等）白。
         // ⚠️ 这里靠 `IsEnemyId` 扫一遍 `m_enemies` 才知道"它是不是敌人" ——
         //    `Entity` 里只有 `symbol`，"谁是敌人"这个身份归 game/ 说了算（分叉 ①）。
+        // ⚠️ 2026-10-15（S11 5c）：把两个判断提成 `isPlayer` / `isEnemy` 两个布尔量 ——
+        //    几何层要用**同一套身份**决定底色，写成两份 `if` 链迟早会不一致。
+        const bool isPlayer = (entity.id == m_player);
+        const bool isEnemy  = !isPlayer && IsEnemyId(entity.id);
+
         mini::render::Color color = mini::render::Color::BrightWhite;
-        if (entity.id == m_player) {
+        if (isPlayer) {
             color = mini::render::Color::BrightYellow;
-        } else if (IsEnemyId(entity.id)) {
+        } else if (isEnemy) {
             color = mini::render::Color::BrightRed;
         }
 
-        fb.Set(col, row, entity.symbol, color);
+        // ── S11 几何层（键 = `kGeometryKey`）：把**实体占的那一格**用底色标出来 ──────────
+        // 点模型下实体**正好占一格**（`ToIndex(pos)`），而此前"它占哪一格"是**看不见**的
+        //   （`E` 画在空地上，读者不知道格界在哪 —— S7 判 C13 不做时说的就是这件事）。
+        // ⚠️ 底色用**非亮版同色系**（玩家蓝 / 敌人红）：与前景色同源 ⇒
+        //    "这是谁"与"它占哪一格"两条信息由同一个色相表达，不会互相打架。
+        // ⚠️ 子弹（其余）**不铺底**：它小、快、数量多，铺底只会闪（也不提供新信息 ——
+        //    子弹的位置本来就一眼可见）。⇒ 这一档的底色恒为默认值。
+        mini::render::Color bg = mini::render::Color::Default;
+        if (m_showGeometry) {
+            if (isPlayer) {
+                bg = mini::render::Color::Blue;
+            } else if (isEnemy) {
+                bg = mini::render::Color::Red;
+            }
+        }
+
+        fb.Set(col, row, entity.symbol, color, bg);
     }
 }
 
@@ -1436,6 +1488,9 @@ OverlayData Game::BuildOverlayData(const mini::core::Profiler::Row* rows, int ro
     d.shots = BulletCount();
     d.ammo  = m_ammo;
     d.hp    = m_playerHp;
+    // S11 5c：几何层开关也进面板 —— 底色层开没开**从读数上要能确认**
+    //   （不然"屏幕上那片灰是图层还是别的什么"只能靠猜；同 `Rows` 之于顶栏的作用）
+    d.geometry = m_showGeometry;
 
     return d;
 }

@@ -2387,3 +2387,71 @@ MINI_TEST(Game, DumpSnapshotGoesThroughLogger)
 
     std::remove(kLogPath);
 }
+
+// ============================================================
+// S11：几何层（`F2`）＝ `TECH_DEBT` **C13** 的到期处置（1 条）
+//
+// 【这条完全在屏幕上取证，不新增任何公开访问器】
+//   底色本来就是 `Cell` 的一部分（`Cell{ch, fg, bg}`）⇒ "图层开没开、开了之后哪一格变了、
+//   关掉之后回没回来"都能直接断。**没有 `GeometryOn()`** 是刻意的：
+//   本层的效果全在屏幕上，再开一个只给测试用的开关读数就是"0 调用者不建"的反面。
+//
+// 【它顺便证明本层只碰颜色通道】
+//   图层切换前后 **`ScreenText` 逐字节相同** —— 这正是"几何层敢开在游戏里"的理由：
+//   屏幕字符是共享命名空间（`@`/`E`/`*` 既是实体字形又是普通字母，`TECH_DEBT` C31），
+//   一个新图层只要不动字符，就不会把任何"数屏幕字符"的判据弄脏。
+//
+// 【为什么要先暂停】世界冻住 ⇒ 两次渲染的差异只可能来自这一层（同 `OverlayTogglesWithT` 的手法）。
+// ============================================================
+MINI_TEST(Game, GeometryLayerPaintsSolidAndOccupiedCells)
+{
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+    StartPlaying(game, input, fb);
+
+    PressOnce(game, input, fb, Key::Escape);          // 冻住世界
+    MINI_CHECK(game.State() == GameState::Paused);
+
+    const std::string frozen = ScreenText(fb);
+
+    // 两个探针：一个实心格（墙，`DrawMap` 画的）与玩家自己那一格（`DrawEntities` 画的）
+    const Pos wall   = FindChar(fb, '#');
+    const Pos player = FindChar(fb, '@');
+    MINI_CHECK(wall.found);
+    MINI_CHECK(player.found);
+    if (!wall.found || !player.found) {
+        return;   // 探针都找不到就没法测了（`FindChar` 全屏扫，HUD/面板都不含这两个字符）
+    }
+
+    // ① **默认关**：两处的底色都是"不铺"（`Color::Default` 是 `Set` 的默认值）
+    MINI_CHECK(fb.At(wall.x, wall.y).bg == mini::render::Color::Default);
+    MINI_CHECK(fb.At(player.x, player.y).bg == mini::render::Color::Default);
+
+    // ② 按 `F2` → 实心格变暗灰底、玩家格变蓝底
+    PressOnce(game, input, fb, Key::F2);
+    MINI_CHECK(fb.At(wall.x, wall.y).bg == mini::render::Color::BrightBlack);
+    MINI_CHECK(fb.At(player.x, player.y).bg == mini::render::Color::Blue);
+    // ★ **字形一个字节都没变**（本层只走颜色通道）
+    MINI_CHECK_EQ(ScreenText(fb), frozen);
+
+    // ③ 再按 `F2` → 底色回到"不铺"，整屏仍是逐字节原样（不留残影）
+    PressOnce(game, input, fb, Key::F2);
+    MINI_CHECK(fb.At(wall.x, wall.y).bg == mini::render::Color::Default);
+    MINI_CHECK(fb.At(player.x, player.y).bg == mini::render::Color::Default);
+    MINI_CHECK_EQ(ScreenText(fb), frozen);
+
+    // ④ 敌人那一半：走到敌人跟前（这时它们真的在屏幕上），开图层 ⇒ 它们那一格是红底
+    //    ⚠️ 上面按了两次 ⇒ 现在是**关**；这里按一次 = 开。
+    PressOnce(game, input, fb, Key::Escape);          // 恢复 `Playing`（世界又开始动）
+    MINI_CHECK(game.State() == GameState::Playing);
+    MINI_CHECK(WalkPlayerNextToEnemy(game, input, fb) > 0);
+
+    PressOnce(game, input, fb, Key::F2);
+    const Pos foe = FindChar(fb, 'E');
+    MINI_CHECK(foe.found);
+    if (foe.found) {
+        MINI_CHECK(fb.At(foe.x, foe.y).bg == mini::render::Color::Red);
+    }
+}
