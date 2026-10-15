@@ -26,10 +26,12 @@ MINI_TEST(Core, VersionIsReported)
     //    逼着四个落点一起走 —— 同 `kDumpKey` 那种"一个字母两个落点"的纪律。
     //    ✅ **2026-10-13 这次 bump**（`0.2.0-dev` → `0.3.0-dev`，依据 `PLAN` G 节的 v0.3 达成）
     //    **四处一起改了**；这条用例就是它的机器守卫：只改字符串不改数字（或反过来）当场红。
+    //    ✅ **2026-10-15 又 bump 一次**（`0.3.0-dev` → `0.4.0-dev`，依据 v0.4「看得清」达成：
+    //    S11 的 overlay / Logger / Profiler 三件套落地）—— 同样是四处一起改。
     // ⚠️ 这里的逗号在 `strcmp(...)` 的括号内，`MINI_CHECK` 是变参宏，不会被拆成两个参数。
-    MINI_CHECK(std::strcmp(mini::core::VersionString(), "0.3.0-dev") == 0);
+    MINI_CHECK(std::strcmp(mini::core::VersionString(), "0.4.0-dev") == 0);
     MINI_CHECK_EQ(mini::core::VersionMajor(), 0);
-    MINI_CHECK_EQ(mini::core::VersionMinor(), 3);
+    MINI_CHECK_EQ(mini::core::VersionMinor(), 4);
 }
 
 // 画布尺寸的接受条件（TECH_DEBT C7 收窄：这段逻辑以前埋在 Application.cpp 的匿名

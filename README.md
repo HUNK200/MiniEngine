@@ -4,7 +4,7 @@
 >
 > *A dependency-free 2D game engine in C++20 that renders a playable game entirely inside a terminal. Windows only.*
 
-**状态**：**v0.3「玩得起来」已达成**（可玩的一局：刷怪 / 射击 / 暂停 / 死亡 / 重开）· `VersionString()` = `0.3.0-dev` · 用例 **197 条**（13 个 suite）· 反向验证 **12 场** · 人眼验收 **28 条**。
+**状态**：**v0.4「看得清」已达成**（可玩的一局 + 三个调试出口：`T` 面板 / `F2` 几何层 / `F7` 列表）· `VersionString()` = `0.4.0-dev` · 用例 **216 条**（23 个 suite）· 反向验证 **12 场**（S10）· 人眼验收 **28 条**（S10）。
 
 [![CI](https://github.com/HUNK200/MiniEngine/actions/workflows/ci.yml/badge.svg)](https://github.com/HUNK200/MiniEngine/actions/workflows/ci.yml)
 
@@ -36,13 +36,17 @@ ctest --test-dir build -C Debug --output-on-failure
 | `ENTER` | 标题屏开始（**只在标题屏有效**） |
 | `ESC` | 暂停 / 恢复；`GAME OVER` 时回到标题屏 |
 | `R` | `GAME OVER` 后立刻重开（世界重铺、实体 id 不复用） |
-| `F4` | 写一份调试快照到 `miniengine_debug.log` |
-| `F7` | 敌人状态面板（暂停 / 结算时也能开） |
+| `T` | **Debug Overlay**：右上角实时面板（帧时间 / 分段耗时表 / 游戏计数），默认关 |
+| `F2` | **几何层**：实心格与实体占格的**底色**可见（字形不变），默认关 |
+| `F4` | 写一份调试快照到 `miniengine_debug.log`（带 `[时间][级别]` 前缀） |
+| `F7` | 敌人状态面板（逐敌 `state / distance / tile`；暂停 / 结算时也能开） |
 | `Q` | 退出 |
 
 一局是什么样：开局是**标题屏** → `ENTER` 后刷**第 1 波 3 个敌人** → 被追打、开火反击 → `ESC` 暂停（**世界完全冻住**，连波次的喘息倒计时都停）→ 掉血归零 → `GAME OVER` → `R` 重开。
 
 HUD 两行（**58 / 64 列**）：`pos / tile / sumdt / v` + `hp / ammo / kills / wave / dir`。波次 `3 → 4 → 5 …` 封顶 8；弹药 18，每击杀返还 1 发（**净耗 2 发/敌人** ⇒ 打得准就够用，失误才缺）。
+
+**三个调试出口的分工**（都默认关）：`T` = **摘要**（引擎帧数据 + 分段耗时表 + `wave/foes/shots/hp/ammo/geom`）、`F2` = **图层**（只改底色、不动一个字符）、`F7` = **列表**（逐敌状态）。按 `T` 之后，"渲染占了多少 ms"就是面板上的一行数字。
 
 ## 5 个技术点
 
@@ -80,7 +84,7 @@ HUD 两行（**58 / 64 列**）：`pos / tile / sumdt / v` + `hp / ammo / kills 
 
 - `engine/` —— 引擎：终端 IO（Windows 控制台 + ANSI）、帧缓冲与**行差分**渲染、时间与限帧、数学（`Vec2`/`AABB`/`Ray`）、世界与碰撞、相机、敌人 AI 状态机。**不认识任何游戏概念**。
 - `game/` —— 一个具体的游戏：地图、波次、弹药、HUD、状态机接线。**只 include 引擎的公共头**。
-- `tests/` —— 自研的 MiniTest 框架 + **197 条用例**（13 个 suite）。
+- `tests/` —— 自研的 MiniTest 框架 + **216 条用例**（23 个 suite）。
 - `doc/` —— 施工图与台账：前置事实、坑表、逐条落地偏差、反向验证记录、技术债。**判断过程都在这里**。
 
 ## 已知限制（照实写）
@@ -89,7 +93,8 @@ HUD 两行（**58 / 64 列**）：`pos / tile / sumdt / v` + `hp / ammo / kills 
 - **依赖终端类型**：在 ConPTY 系终端（VS Code 内置终端 / Windows Terminal）里**收不到真正的 key-up** ⇒ "按住移动"会退化成"每次按键走一帧"。
 - **实体之间没有推挤**：两只敌人可以叠在同一格，屏幕上只画得出一个 `E`（有意不做，台账 **C12**）。
 - HUD 里**不出现** `ESC` / `ENTER` 这类含 `E` 的键名 —— 屏幕是唯一的观察面，用例靠数屏幕上 `E` 的个数来数敌人。
-- 版本字符串是 `0.3.0-dev`：**已达成 v0.3，但这棵树还在往 v0.4 走**（`-dev` 后缀的含义）。
+- `T` / `F2` 这两个调试键**能不能收到只有人眼知道**：用例全走假输入（绕过真实键盘），而 `F1` / `F3` 在本机都被别的软件抢占过（台账 **C37**）。按下去屏幕没反应就先怀疑这个。
+- 版本字符串是 `0.4.0-dev`：**已达成 v0.4，但这棵树还在往 v0.5 走**（`-dev` 后缀的含义）。
 
 ## 这个仓库是怎么做出来的（照实说）
 
