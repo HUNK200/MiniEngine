@@ -4,6 +4,7 @@
 #include <game/Game.h>
 
 #include <mini/ai/EnemyBrain.h>   // S8：用例要拿 kDefaultTuning::sightRange 算"该不该被追"
+#include <mini/core/Logger.h>     // S11：C14 那条用例要临时装一个 Logger
 #include <mini/core/Profiler.h>   // S11：`Profiler::Row`（overlay 表体的一行）
 #include <mini/core/Time.h>       // S9：`kMaxDelta`（dt 的上限，G7 的防穿靶用例要用它）
 #include <mini/platform/Input.h>
@@ -12,7 +13,9 @@
 #include <mini/world/TileMap.h>
 
 #include <cmath>
+#include <cstdio>     // std::remove（S11：C14 那条用例要清掉临时日志）
 #include <cstddef>
+#include <fstream>    // S11：读日志文件（`ReadWholeFile`）
 #include <initializer_list>
 #include <sstream>  // S9 步骤 3 收尾：`SummarizeEnemyPanel` 按"词"解析面板行（不按列）
 #include <string>   // S8：`ScreenText` 用（在面板文本里找状态名）
@@ -449,6 +452,21 @@ std::string ScreenText(const FrameBuffer& fb)
         text.push_back('\n');
     }
     return text;
+}
+
+// ── S11（C14）：读一个文件的全部内容 ─────────────────────────────────────────
+// 用途：`DumpSnapshotGoesThroughLogger` 要看日志文件到底写了什么。
+// ⚠️ 读不到就返回**空串** —— 让调用方的 `find(...) == npos` 去红，
+//    而不是在这里崩（"文件打不开"和"内容不对"是两件事，但都不该让进程死掉）。
+std::string ReadWholeFile(const char* path)
+{
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        return {};
+    }
+    std::ostringstream oss;
+    oss << in.rdbuf();
+    return oss.str();
 }
 
 // ── S9 步骤 3 收尾：面板文本的解析（四条"打敌人"的用例共用）─────────────────
@@ -2299,4 +2317,64 @@ MINI_TEST(Game, OverlayTogglesWithT)
     PressOnce(game, input, fb, Key::T);
     MINI_CHECK(!game.OverlayOn());
     MINI_CHECK_EQ(ScreenText(fb), without);
+}
+
+// ============================================================
+// S11：C14 —— 调试快照改走 Logger（1 条）
+//
+// 【为什么值得一条机器用例】老实现（自己开 `std::ofstream`）的验收**只有人眼**
+// （"按 F4 之后打开 `miniengine_debug.log` 看一眼"）⇒ 它坏掉不会有任何提示。
+// C14 迁到 Logger 之后，"正文 + 前缀 + 未装即丢弃"这三件事都能离线钉住。
+//
+// ⚠️ 用例**自己装 Logger**（模拟 `Application` 构造时干的事），路径用临时文件：
+//    不去碰仓库里那份真日志，也不留垃圾（结尾 `std::remove`）。
+// ⚠️ 顺序有讲究：**先装再按**（第一次 dump 才会写那段 `dump-doc:` 字段说明）。
+// ============================================================
+MINI_TEST(Game, DumpSnapshotGoesThroughLogger)
+{
+    constexpr float       kDt     = 1.0f / 60.0f;
+    constexpr const char* kLogPath = "miniengine_test_dump.log";
+
+    std::remove(kLogPath);   // 从干净状态开始（上一次跑剩的内容会干扰"看到的就是这一次写的"）
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+    StartPlaying(game, input, fb);
+
+    // ① 装上 Logger（= `Application` 构造时那一步）后按一次 `F4`
+    // ⚠️ Logger 放进**内层作用域**：Windows 上"打开着的文件删不掉"（`std::remove` 会失败），
+    //    所以必须先让它析构、再删临时文件 —— 否则每跑一次都往工作目录里留一个 `*.log`。
+    std::string text;
+    {
+        mini::core::Logger logger{kLogPath};
+        MINI_CHECK(logger.Good());
+        mini::core::SetCurrentLogger(&logger);
+
+        PressOnce(game, input, fb, Key::F4);
+        logger.Flush();
+        text = ReadWholeFile(kLogPath);
+
+        // ② 迁移的可见证据：**Logger 的前缀** + session 头（构造时写的）
+        MINI_CHECK(text.find("session start") != std::string::npos);
+        MINI_CHECK(text.find("[INFO]") != std::string::npos);
+
+        // ③ 正文形状**保持老口径**（逐行 `key=value`）⇒ 老的 grep / 人眼习惯还有效（§8 坑 13）
+        MINI_CHECK(text.find("dump=1 ") != std::string::npos);   // 计数从 1 起
+        MINI_CHECK(text.find("pos=") != std::string::npos);
+        MINI_CHECK(text.find("tile=(") != std::string::npos);
+        MINI_CHECK(text.find("frac=(") != std::string::npos);
+        MINI_CHECK(text.find("solidNow=") != std::string::npos);
+        MINI_CHECK(text.find("tryStepX=") != std::string::npos);
+        // 本进程第一次 dump ⇒ 还写了**纯 ASCII 的字段说明**（老实现是 BOM + 中文表头）
+        MINI_CHECK(text.find("dump-doc:") != std::string::npos);
+
+        // ④ 未装 Logger 时**安全 + 不写任何东西**（C14 契约；`Game` 在单测里的默认处境）
+        mini::core::SetCurrentLogger(nullptr);
+        PressOnce(game, input, fb, Key::F4);
+        MINI_CHECK_EQ(ReadWholeFile(kLogPath), text);   // 逐字节没变
+    }
+
+    std::remove(kLogPath);
 }

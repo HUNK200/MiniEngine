@@ -32,13 +32,13 @@
 //   顺带：**碰撞仍然没有**（S7），所以走进地图外时 `@` 会离开画面，这是预期的。
 //
 // ⚠️ **调试快照键**（2026-10-08 加，为查"看着没贴墙却动不了"那类问题）：
-//   按一次就把当前帧的关键参数**追加**写进 `miniengine_debug.log`（实现见 `Game.cpp` 的 `DumpSnapshot`）。
+//   按一次就把当前帧的关键参数**追加**写进 `miniengine_debug.log`
+//   （实现见 `Game.cpp` 的 `DumpSnapshot`；**S11 起写入交给 `core::Logger`**）。
 //   它记的东西里有一样是专门为那类 bug 准备的：**盒子压到的 4 个格各自是墙还是空**
 //   —— 因为"盒占 4 格、屏幕只画 1 格"，挡住你的常常是**看不见**的那一格。
 //   ⚠️ **具体是哪个 F 键是运行时的事**：按键写在 `Game.cpp` 顶部的 `kDumpKey` 一处，
 //      并在 HUD 提示里显示出来（不用记文档）。历程：F1 撞别的软件 → F3 也不行 → 现在 **F4**。
-//   ⚠️ 这是 S11 的 Logger 之前的**临时出路**（`TECH_DEBT` C14）；它做文件 I/O，
-//   只在手动按时发生（会污染那一帧的 `work` 值，属可接受）。
+//   ⚠️ 它做文件 I/O，只在手动按时发生（会污染那一帧的 `work` 值，属可接受）。
 //
 // ⚠️ 本类**不 include `platform/Input.h`**：OnUpdate 只从 `FrameContext` 拿 `const Input&`
 //   （Application.h 已前向声明），OnRender 完全不碰输入。
@@ -349,9 +349,11 @@ private:
     void DrawGameOver(mini::render::FrameBuffer& fb) const;     // 结算（叠在世界之上）
     void DrawPausedBanner(mini::render::FrameBuffer& fb) const;  // 暂停横幅（叠在世界之上）
 
-    // 调试快照（键 = `kDumpKey`，见 `Game.cpp` 顶部常量）：把当前帧的参数追加写进 `miniengine_debug.log`。
-    // ⚠️ **非 const**：要写文件、还要递增 `m_dumpCount`。它**只读**世界，不改任何状态
-    //    （所以放在帧序的哪一步都不影响别的系统 —— 实现里放在相机之后）。
+    // 调试快照（键 = `kDumpKey`，见 `Game.cpp` 顶部常量）：把当前帧的参数交给 `core::Logger`
+    // （追加写 `miniengine_debug.log`；`TECH_DEBT` **C14 于 S11 到期** —— 以前它自己开 `ofstream`）。
+    // ⚠️ **非 const**：要写日志、还要递增 `m_dumpCount`（它同时是"本进程第一次 dump"的判据）。
+    // ⚠️ 它**只读**世界，不改任何状态（所以放在帧序的哪一步都不影响别的系统 —— 实现里放在相机之后）。
+    // ⚠️ **未装 Logger 时静默丢弃**（单测里就是这样）⇒ 调它总是安全的。
     void DumpSnapshot(const mini::core::FrameContext& ctx);
 
     // ── S10 步骤 4：波次（"一局"的数值状态之一 ⇒ `StartNewRun` 会把它归位）────────

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "mini/core/Logger.h"     // S11：它也是 Application 的**成员** ⇒ 要完整定义
 #include "mini/core/Profiler.h"   // S11：它是 Application 的**成员** ⇒ 要完整定义
 #include "mini/core/Time.h"
 #include "mini/platform/Console.h"
@@ -13,7 +14,8 @@
 // 从前到后一条线：**拥有子系统 → 跑循环 → 不认识具体游戏**。
 //
 //   main 只有几十行：造一个 IGame，交给 Application::Run()
-//   Application 负责：时间、输入推进、画布尺寸对齐、提交、退出判定、顶栏、**分段计时（S11）**
+//   Application 负责：时间、输入推进、画布尺寸对齐、提交、退出判定、顶栏、
+//                     **分段计时（S11）**、**分级日志（S11）**
 //   game 只负责：读 ctx 更新自己的状态 + 往 FrameBuffer 上画
 //
 // 三条硬规矩（都是踩出来的，别改）：
@@ -148,6 +150,15 @@ private:
     platform::ConsoleSize              m_size{};    // 先于 FrameBuffer：画布尺寸来源
     render::FrameBuffer                m_frameBuffer;
     Time                               m_time;
+
+    // S11：分级日志（`TECH_DEBT` C14 的**正式落点**）。与 `m_profiler` 同一个手法 ——
+    // 构造时把自己装到进程级 current 指针上，于是 `game/`（甚至以后别的模块）不必拿到
+    // `Application` 就能写日志。
+    // ⚠️ 它的构造函数会**追加写 3 行 session 头**（时间 + 版本 + 级别）⇒ 每跑一次 exe，
+    //    日志里都会留一条"这一段是哪个进程写的"。旧文件不受影响（追加模式）。
+    // ⚠️ 声明顺序有意排在 `m_console` **之后**：`console` 构造失败会抛（不是控制台就退出）
+    //    那一路**不该**留下一条 session 头 —— 日志文件里不该出现"根本没跑起来"的段落。
+    Logger                             m_logger;
 
     // S11：分段计时器。`Application` 构造时把自己**装到进程级 current 指针**上
     //（见 .cpp），于是 `game/` 里的 `MINI_PROFILE_SCOPE` 不必拿到 Application 就能记账。

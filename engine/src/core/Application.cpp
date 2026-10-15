@@ -90,14 +90,21 @@ Application::Application(AppConfig cfg)
     // ⚠️ 未装时那些宏**空转** —— 单测里就是这种情形（`tests/test_profiler.cpp` 最后一条
     //    专门钉了这条路径），所以它必须是安全的。
     SetCurrentProfiler(&m_profiler);
+
+    // S11：日志同上一节（`TECH_DEBT` C14 的落点）。`m_logger` 的**构造函数**已经写过
+    // session 头了（那是它自己的事）；这里只负责把它挂成"进程级 current"。
+    // ⚠️ 未装时 `mini::core::Log(...)` **静默丢弃** —— 单测里就是这样（`Game` 会在没有
+    //    `Application` 的情况下被构造），所以那条路径必须是安全的（`tests/test_logger.cpp` 钉着）。
+    SetCurrentLogger(&m_logger);
 }
 
 Application::~Application()
 {
     // 卸掉 current 指针：**必须发生在成员析构之前**（Application 的析构体先跑、
-    // 成员再逆序析构），否则别处再问 `CurrentProfiler()` 会拿到一个半死的对象。
-    // Profiler 自己没有别的清理动作，所以这里不做第二件事。
+    // 成员再逆序析构），否则别处再问 `CurrentProfiler()` / `CurrentLogger()`
+    // 会拿到一个半死的对象。
     SetCurrentProfiler(nullptr);
+    SetCurrentLogger(nullptr);
 }
 
 void Application::Run(IGame& game)

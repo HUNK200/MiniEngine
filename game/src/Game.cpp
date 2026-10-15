@@ -4,6 +4,7 @@
 #include "game/DebugOverlay.h"     // S11：overlay 的纯数据 + 绘制（`BuildOverlayLines` 可离线测）
 #include "game/GameState.h"         // S10：四态 + 策略表 + 纯函数 NextState / PolicyOf
 #include "mini/ai/EnemyBrain.h"   // S8：敌人每帧的"决策"（纯函数；只输出速度）
+#include "mini/core/Logger.h"      // S11：调试快照改走它（`TECH_DEBT` C14 的正式落点）
 #include "mini/math/Vec2.h"
 #include "mini/platform/Input.h"
 #include "mini/render/Color.h"
@@ -14,10 +15,9 @@
 #include <array>        // S9：定长暂存（`kWaveMax` 是编译期常量 ⇒ 判定时不分配）
 #include <cstddef>      // std::size_t（S8：reserve 与巡逻表下标）
 #include <cstdio>
-#include <filesystem>   // 调试快照：判断日志文件是不是"新建的"（见 DumpSnapshot）
-#include <fstream>      // 调试快照（追加写日志）
 #include <initializer_list>  // S10：DrawCenteredBlock 的行表
 #include <span>         // S8：把巡逻路点交给 Decide；S9：把敌人位置交给 FirstEnemyOnSegment
+#include <sstream>      // S11：调试快照先拼成一行字符串，再交给 Logger（不再自己写文件）
 #include <string_view>  // S10：DrawCenteredBlock 要算文本长度（居中）
 
 // ============================================================
@@ -99,7 +99,10 @@ constexpr int kHudRow = 2;
 //    F3 也不行 → 落到 F4。`KeyCode.h` 目前只映射了 `F1..F4`；想用 F5+ 得先去那儿加映射。
 //    `F2` 留着给 S11 的 Debug Overlay（`PLAN:549` 的"F2 显示碰撞盒"），所以不占它。
 constexpr mini::platform::Key kDumpKey = mini::platform::Key::F4;
-const char* kDumpFileName = "miniengine_debug.log";   // *.log 已被 .gitignore 忽略
+
+// ⚠️ **2026-10-15（S11）删掉了这里的 `kDumpFileName`**：文件名归 `core::Logger`
+//    （`Logger::kDefaultPath` = `miniengine_debug.log`）—— 同一个名字不留两个真相。
+//    同一批退役的还有 `<fstream>` / `<filesystem>` 两个 include（见 `DumpSnapshot`）。
 
 // ── `kAiPanelKey`：S8 的**临时**面板键（`TECH_DEBT` C15 记着"什么时候删"）────────
 //   kAiPanelKey  开/关敌人面板   → S11 的正式 Debug Overlay 落地时删
@@ -870,8 +873,10 @@ void Game::OnUpdate(const mini::core::FrameContext& ctx)
     }
 
     // ⑧ 调试快照（键 = `kDumpKey`，见本文件顶部的常量）。放在相机之后 = 记的是"本帧最终"的位置与相机。
-    //    ⚠️ **只读**：写文件 + 递增计数器，不碰世界 → 帧序不受影响。
+    //    ⚠️ **只读**：往 Logger 写一行 + 递增计数器，不碰世界 → 帧序不受影响。
     //    ⚠️ 只在 `Pressed` 时写（不是 `Held`）—— 否则按住会每帧刷盘。
+    //    ⚠️ S11 起 sink 是 `core::Logger`（以前是自开 `ofstream`）：**未装 Logger 时静默丢弃**
+    //       ⇒ 单测里按 `F4` 也是安全的（`tests/test_game.cpp` 的 `DumpSnapshotGoesThroughLogger`）。
     if (input.Get(kDumpKey) == KeyState::Pressed) {
         DumpSnapshot(ctx);
     }
@@ -1239,48 +1244,48 @@ void Game::OnRender(mini::render::FrameBuffer& fb)
 //     · `solidNow` / `tryStepX/Y`：现在站的格 / 用本帧 v×dt 试算之后的格实不实心
 //   留着它仍然有用：人眼验收（"顶墙停在哪"、"贴墙滑到哪"）也得取证，而不是靠眼睛估。
 //
-// ⚠️ 契约：
+// ⚠️ **S11 起它不再自己开文件**（`TECH_DEBT` C14 的到期处置，2026-10-15）：
+//   · 写入走 `mini::core::Log(LogLevel::Info, 一行)` —— 分级、前缀（`[时间][级别] `）、
+//     追加、每行 `flush()` 全归 `core/Logger` 管（那些坑在 `Logger.cpp` 里踩过一遍了）；
+//   · **未装 Logger 时静默丢弃**（单测里就是这样）⇒ 调试输出不许影响游戏能不能跑
+//     —— 这条契约从第一版起就在，只是换了实现者；
+//   · **文件名也归 Logger**（`Logger::kDefaultPath` = `miniengine_debug.log`）
+//     ⇒ 本文件不再有第二个"文件名真相"（删掉了 `kDumpFileName`）。
+//
+// ⚠️ 关于**旧文件头**（UTF-8 BOM + 中文字段说明）为什么退役：
+//   Logger 不写 BOM，而没有 BOM 时 PowerShell 的 `Get-Content` 会按 **GBK(936)** 解码
+//   ⇒ 中文字段说明会显示成乱码。所以字段说明改成**纯 ASCII 的两行**（`dump-doc:` 开头，
+//   **每个进程第一次 dump 时写一次**），中文解释留在本段注释里（源码里读得到、不会乱码）。
+//   ⚠️ **老日志文件不受影响**：追加模式只往后写，它原有的 BOM 与中文头照旧可读。
+//
+// ⚠️ 契约（不变）：
 //   · **只读**世界（不改 pos、不碰相机）→ 放在帧序哪一步都不影响别的系统；
-//   · 打开失败（目录只读 / 文件被占）就**静默返回** —— 调试输出不许影响游戏能不能跑；
-//   · 追加模式 + 每次 flush（进程被杀也不丢；按一次才写，代价可忽略）；
-//   · ⚠️ 这是 S11 的 Logger 之前的**临时出路**（`TECH_DEBT` C14）。
+//   · 每次 dump 写**两行**（主行 + 四邻行），保持老文件的可读形状（§8 坑 13）；
+//   · 打开失败（目录只读 / 文件被占）也**不影响游戏** —— 现在这由 Logger 兜（`Good()`）。
 // ------------------------------------------------------------
 void Game::DumpSnapshot(const mini::core::FrameContext& ctx)
 {
-    // ⚠️ 判断"新文件"**必须在打开之前**问文件系统 —— 两种错误做法都踩过：
-    //   · `out.tellp()`：追加模式下未写入前它**不可靠**（2026-10-08 实测：**每按一次都返回 0**
-    //     → BOM 和表头被反复插进文件中间）。**这就是那个 bug 的成因。**
-    //   · `m_dumpCount == 1`：计数器每次进程启动都从 0 开始 → 第二次运行也会重复插。
-    std::error_code ec;
-    const bool isNewFile = !std::filesystem::exists(kDumpFileName, ec) ||
-                           std::filesystem::file_size(kDumpFileName, ec) == 0;
-
-    std::ofstream out(kDumpFileName, std::ios::app);
-    if (!out) {
-        return;
+    // 每个**进程**第一次 dump 时写一次字段说明。
+    // ⚠️ 判据是 `m_dumpCount == 0`（计数器进程内从 0 起）。老实现用 `std::filesystem`
+    //    判断"文件是不是新的" —— 那正是 2026-10-08 那个"BOM 与表头被反复插进文件中间"的
+    //    bug 来源（① `tellp()` 在追加模式下未写入前不可靠；② `m_dumpCount == 1` 每次启动都成立）。
+    //    现在不需要那种判断了：**session 头由 Logger 在构造时写**（每个进程一条），
+    //    "本轮说明"由这个计数器守 —— 两件事各归各的，不会互相插队。
+    if (m_dumpCount == 0) {
+        mini::core::Log(mini::core::LogLevel::Info,
+                        "dump-doc: pos/tile/frac = player center, its cell, offset inside the cell (0..1)");
+        mini::core::Log(mini::core::LogLevel::Info,
+                        "dump-doc: now/E/W/S/N + solidNow/tryStepX/tryStepY: 0=empty 1=solid "
+                        "(out-of-bounds counts as solid; E=+x W=-x S=+y N=-y)");
     }
 
     ++m_dumpCount;
 
-    // 新文件（或空文件）→ 先写 **UTF-8 BOM**，再写一段字段说明（**只写一次**）。
-    //
-    // ⚠️ 为什么非写 BOM 不可：Windows PowerShell 的 `Get-Content` 不带 `-Encoding` 时按
-    //    **GBK(936)** 解码 UTF-8，中文表头就显示成 `鐜╁涓績` 这种乱码（2026-10-08 实测）。
-    //    有 BOM 它就会自动认成 UTF-8 —— 这是让"数据文件在默认命令下就能读"最省事的一次性修法。
-    //    代价：文件头多 3 个字节（`*.log` 已被 `.gitignore` 忽略，与仓库无关）。
-    if (isNewFile) {
-        out << "\xEF\xBB\xBF";   // UTF-8 BOM
-        out << "# MiniEngine 调试快照（按下 HUD 里显示的那个调试键；每按一次追加两行）\n"
-               "#   pos = 玩家中心的浮点坐标；tile = 它占的那一格（== 屏幕上 @ 所在的那一格）\n"
-               "#   frac = 在这一格里的位置（0~1）—— 离哪条边界还有多远看它\n"
-               "#   now/E/W/S/N = 自己那一格与四邻（E=+x  W=-x  S=+y  N=-y）：  '.'=空  '#'=实心（含越界）\n"
-               "#   solidNow = 现在站的这一格实心吗；tryStepX/tryStepY = 用本帧 v×dt 试算后占的那一格实心吗（1/0）\n"
-               "#   ⚠️ 新模型（2026-10-08 起）：实体占的**就是**它画出来的那一格 —— 挡路的一定是看得见的那一格\n";
-    }
-
     const mini::world::Entity* player = m_world.Find(m_player);
     if (player == nullptr) {
-        out << "dump=" << m_dumpCount << " (player not spawned)\n";
+        std::ostringstream line;
+        line << "dump=" << m_dumpCount << " (player not spawned)";
+        mini::core::Log(mini::core::LogLevel::Info, line.str());
         return;
     }
 
@@ -1298,33 +1303,40 @@ void Game::DumpSnapshot(const mini::core::FrameContext& ctx)
     const float dx = vx * ctx.deltaSeconds;
     const float dy = vy * ctx.deltaSeconds;
 
-    out << "dump=" << m_dumpCount
-        << " sumdt=" << m_elapsed
-        << " v=" << vx << ',' << vy
-        << " pos=" << px << ',' << py
-        << " tile=(" << tx << ',' << ty << ')'
-        << " frac=(" << fx << ',' << fy << ')'
-        << " canvas=" << ctx.screenWidth << 'x' << ctx.screenHeight
-        << " fps=" << ctx.fps
-        << " ms=" << ctx.frameMs
-        << " max=" << ctx.maxFrameMs
-        << " work=" << ctx.workMs
-        << " cam=" << m_camera.OriginCol() << ',' << m_camera.OriginRow() << '\n';
+    // 两行都先**拼成字符串**再交给 Logger（不是 `<<` 进文件）——
+    // 这样"格式"与"去哪里"彻底分开：换 sink（文件/终端/内存）不用碰格式（§8 坑 13 的口径）。
+    {
+        std::ostringstream line;
+        line << "dump=" << m_dumpCount
+             << " sumdt=" << m_elapsed
+             << " v=" << vx << ',' << vy
+             << " pos=" << px << ',' << py
+             << " tile=(" << tx << ',' << ty << ')'
+             << " frac=(" << fx << ',' << fy << ')'
+             << " canvas=" << ctx.screenWidth << 'x' << ctx.screenHeight
+             << " fps=" << ctx.fps
+             << " ms=" << ctx.frameMs
+             << " max=" << ctx.maxFrameMs
+             << " work=" << ctx.workMs
+             << " cam=" << m_camera.OriginCol() << ',' << m_camera.OriginRow();
+        mini::core::Log(mini::core::LogLevel::Info, line.str());
+    }
 
     // 自己那一格 + 四邻：新模型里"往某方向能不能走"就是看**那一格**实不实心
-    out << "  now(" << tx << ',' << ty << ")=" << CellMark(m_world.Map(), tx, ty)
-        << " E(" << (tx + 1) << ',' << ty << ")=" << CellMark(m_world.Map(), tx + 1, ty)
-        << " W(" << (tx - 1) << ',' << ty << ")=" << CellMark(m_world.Map(), tx - 1, ty)
-        << " S(" << tx << ',' << (ty + 1) << ")=" << CellMark(m_world.Map(), tx, ty + 1)
-        << " N(" << tx << ',' << (ty - 1) << ")=" << CellMark(m_world.Map(), tx, ty - 1)
-        << " solidNow="
-        << (mini::world::IsSolidAt(m_world.Map(), mini::math::Vec2{px, py}) ? 1 : 0)
-        << " tryStepX="
-        << (mini::world::IsSolidAt(m_world.Map(), mini::math::Vec2{px + dx, py}) ? 1 : 0)
-        << " tryStepY="
-        << (mini::world::IsSolidAt(m_world.Map(), mini::math::Vec2{px, py + dy}) ? 1 : 0) << '\n';
-
-    out.flush();
+    {
+        std::ostringstream line;
+        line << "  now(" << tx << ',' << ty << ")=" << CellMark(m_world.Map(), tx, ty)
+             << " E(" << (tx + 1) << ',' << ty << ")=" << CellMark(m_world.Map(), tx + 1, ty)
+             << " W(" << (tx - 1) << ',' << ty << ")=" << CellMark(m_world.Map(), tx - 1, ty)
+             << " S(" << tx << ',' << (ty + 1) << ")=" << CellMark(m_world.Map(), tx, ty + 1)
+             << " N(" << tx << ',' << (ty - 1) << ")=" << CellMark(m_world.Map(), tx, ty - 1)
+             << " solidNow=" << (mini::world::IsSolidAt(m_world.Map(), mini::math::Vec2{px, py}) ? 1 : 0)
+             << " tryStepX="
+             << (mini::world::IsSolidAt(m_world.Map(), mini::math::Vec2{px + dx, py}) ? 1 : 0)
+             << " tryStepY="
+             << (mini::world::IsSolidAt(m_world.Map(), mini::math::Vec2{px, py + dy}) ? 1 : 0);
+        mini::core::Log(mini::core::LogLevel::Info, line.str());
+    }
 }
 
 // ------------------------------------------------------------
