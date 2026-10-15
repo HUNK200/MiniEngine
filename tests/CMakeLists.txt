@@ -23,6 +23,8 @@
 #   test_logger.cpp      —— S11 的用例（不需要终端：Logger 只碰文件系统。
 #                             ⚠️ 用例自建自删 `miniengine_test_logger.log`，
 #                             不删的话第二次跑会读到上一次的内容 ⇒ "追加"那条会假绿）
+#   test_profiler.cpp    —— S11 的用例（不需要时钟：喂 `AddSample(name, ms)` 已知值即可，
+#                             所以环形缓冲/平均/峰值全是确定性断言）
 # 新加用例文件必须在这里手写进源文件列表（S0 明确禁用 file(GLOB)）。
 # ============================================================
 
@@ -42,6 +44,7 @@ add_executable(mini_tests
     test_bullet.cpp
     test_gamestate.cpp
     test_logger.cpp
+    test_profiler.cpp
 )
 
 target_include_directories(mini_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

@@ -33,6 +33,9 @@
 #   S11 src/core/Logger.cpp（分级日志：级别过滤 + 前缀 + 追加写文件 + 进程级 current 指针。
 #                            ⚠️ 它碰的是**文件系统**、不是终端 ⇒ 能被离线单测
 #                            （tests/test_logger.cpp 用临时文件，跑完自己删））
+#       src/core/Profiler.cpp（分段计时：本帧累加器 + 最近 120 帧的环形缓冲 + Snapshot。
+#                              纯算数 + steady_clock，**不分配、不长**；用例喂已知 ms
+#                              就能做确定性断言 ⇒ 不需要伪造时钟）
 # ============================================================
 
 add_library(engine STATIC
@@ -40,6 +43,7 @@ add_library(engine STATIC
     src/core/Time.cpp
     src/core/Application.cpp
     src/core/Logger.cpp
+    src/core/Profiler.cpp
     src/render/FrameBuffer.cpp
     src/render/RowDiff.cpp
     src/platform/ConsoleWindows.cpp
