@@ -482,24 +482,33 @@ std::string ReadWholeFile(const char* path)
 //       屏幕上的 `'E'` 个数  ==  面板里各行所占的**不同 tile** 数
 //   重叠会被自然算进去；而"渲染漏画了一只"照样会红（两边不等）。
 //
-// ⚠️ 代价（`ScreenText` 的注释里早就写过）：**面板格式一改，这里就失效**。
-//    所以"面板长什么样"这套知识只写在这一处 —— 改 `DrawAiPanel` 的格式串时，
-//    必须同时改这里，否则这几条用例会一起红。
-// ⚠️ **2026-10-10（S9 步骤 4）真删落地时又改过一次**：面板里不再有 `state=Dead` 行
-//    （敌人一死就**当场**从 `m_enemies` 里被 erase），所以"死了几个"改由**表头的 `n=`**
-//    说话 —— 它更准（`n=` 就是 `m_enemies.size()`）；同时多出 `hasIdGone`：
-//    `<id gone>` 行是**悬空 id 唯一能被看见的地方**，也就成了新用例的判据。
+// ⚠️⚠️ **2026-10-15（S11 步骤 5b）改口径：敌人数不再从面板读** ——
+//   表头 `n=` 与 `Game::EnemyCount()` 是**同一个表达式**（`m_enemies.size()`），
+//   而后者是 S11 加的**真接口**（同时兑现 `TECH_DEBT` **C23** 要的"公开观察面"）
+//   ⇒ 判据一律走 `game.EnemyCount()`，**本文件不再解析表头**。
+//   ✅ 好处：面板的**表头格式**从此与用例解耦（改表头不再红）；几个"每帧解析屏幕文本"的
+//      热循环（`WaveAdvancesWhenAllEnemiesDie`）也不必再逐帧拼整屏。
+//
+// ⚠️ 面板**保留**（2026-10-15 拍板：它在实战排障里确实有用，而 `T` 面板是**摘要**、
+//   不是**列表** —— 两者分工，重叠只有 `foes` 一项）⇒ 下面这两样仍然只有它能给，
+//   所以这套解析**不删**：
+//     · `aliveTiles`：逐敌一行里的 `t=(x,y)` ⇒ "每个活着的敌人该画在哪一格"；
+//     · `hasIdGone`：`<id gone>` 行是**悬空 id 唯一能被看见的地方**（S9 反向验证 R5 的靶子）。
+//   ⚠️ 代价（`ScreenText` 的注释里早就写过）：**这两样的面板格式一改，这里就失效**
+//      —— 所以"面板长什么样"这套知识只写在这一处，改 `DrawAiPanel` 的格式串必须同时改这里。
+// ⚠️ **2026-10-10（S9 步骤 4）真删落地时改过一次**：面板里不再有 `state=Dead` 行
+//    （敌人一死就**当场**从 `m_enemies` 里被 erase），"死了几个"改由面板说话
+//    （⏭ 2026-10-15 的 5b 起：**改由 `game.EnemyCount()` 说话**，见上）。
 struct PanelSummary {
-    int  enemyCount = 0;     // 表头 `n=`（= `m_enemies.size()`；真删之后就是"还活着几个"）
-    int  aliveTiles = 0;     // 各行占的**不同** tile 数（= 屏幕上该有几个 `'E'`）
+    int  aliveTiles = 0;     // 敌人行占的**不同** tile 数（= 屏幕上该有几个 `'E'`）
     bool hasIdGone  = false; // 出现过 `<id gone>` ⇔ 有 `EnemyData` 找不到它的 `Entity`
 };
 
-// 逐行解析。三种行**互斥**，靠行内特征区分（一律**不按列取** —— `ScreenText` 的注释
+// 逐行解析。两种行**互斥**，靠行内特征区分（一律**不按列取** —— `ScreenText` 的注释
 // 要求"别断言第几列第几个字"，所以按"词"和"子串"认，改列宽不影响）：
-//   · 含 `t=(`        → 敌人行（表头与 `<id gone>` 行都不含）
-//   · 含 `n=`         → 表头
+//   · 含 `t=(`        → 敌人行
 //   · 含 `<id gone>`  → 悬空 id 行
+//   ⚠️ 表头行（`F7 AI  n=…`）现在**谁也匹配不上** ⇒ 自然被忽略（这正是 5b 想要的效果）。
 //
 // ⚠️ 隐含前提：**所有还活着的敌人都在视口内**（`nBefore == kWaveBase` 已经在每条用例里钉过了）。
 //    不在视口里的敌人也占一格、但屏幕上看不见 ⇒ 两边不等。当前的场景满足：敌人都在
@@ -511,7 +520,6 @@ PanelSummary SummarizeEnemyPanel(const std::string& panelText)
     //    不会静默变绿。
     constexpr int kMaxTiles = 32;
     int  tileCount  = 0;
-    int  enemyCount = 0;
     bool hasIdGone  = false;
     int  tilesXPts[kMaxTiles] = {};   // 收集到的 tile（去重用）
     int  tilesYPts[kMaxTiles] = {};
@@ -553,10 +561,6 @@ PanelSummary SummarizeEnemyPanel(const std::string& panelText)
                     }
                 }
             }
-        } else if (const std::size_t nAt = line.find("n="); nAt != std::string::npos) {
-            // ── 表头（`F7 AI  n=%d`）──
-            std::istringstream tail(line.substr(nAt + 2));
-            tail >> enemyCount;
         } else if (line.find("<id gone>") != std::string::npos) {
             // ── 悬空 id 行 ──（`EnemyData` 还在，但它的 `Entity` 已经不在世界里）
             hasIdGone = true;
@@ -568,7 +572,7 @@ PanelSummary SummarizeEnemyPanel(const std::string& panelText)
         begin = end + 1;
     }
 
-    return PanelSummary{enemyCount, tileCount, hasIdGone};
+    return PanelSummary{tileCount, hasIdGone};
 }
 
 // 取证姿势：开 `F7` 面板 → 推一帧 → 返回**这一帧**的面板摘要。
@@ -919,7 +923,7 @@ MINI_TEST(Game, PlayerHpStopsAtZero)
 //   也就是说"死亡三件套"里最后一件（**不再绘制**）当时**零覆盖**。
 //
 // 【这条用例的判据必须落在哪】
-//   ✅ **屏幕上的 `'E'` 与面板真值对得上** ← 只有这个能守住 `active = false`
+//   ✅ **屏幕上的 `'E'` 与逐敌 tile 真值对得上** ← 只有这个能守住 `active = false`
 //      （`nAfter == panel.aliveTiles`：死掉的那个若**还在画**，屏幕上就会多一个字符 ⇒ 红）
 //   ⚠️ 面板里出现 `Dead` **不能单独替代它**：状态来自**另一套真相**（`EnemyData.state`），
 //      `active` 没置 false 时它照样成立（这正是 R6 全绿的直接原因）。
@@ -927,8 +931,10 @@ MINI_TEST(Game, PlayerHpStopsAtZero)
 //
 //   ⚠️ **2026-10-10（S9 步骤 3 收尾）改过一次判据**：原来屏幕那条是
 //      `nAfter == nBefore - 1`，它多隐含了一个**假前提**"一个敌人 = 屏幕上一个字符"
-//      —— 而敌人**会叠格**（没有推挤，`C12` → S10）。改成"与面板真值比"之后，
+//      —— 而敌人**会叠格**（没有推挤，`C12` → S10）。改成"与逐敌 tile 真值比"之后，
 //      重叠被算进期望值，守卫的力气没丢、假红没了（详见 `SummarizeEnemyPanel`）。
+//   ⚠️ **2026-10-15（S11 5b）复核**：`aliveTiles` 这一半**照旧**（`T` 面板是摘要、
+//      不列实体 ⇒ 逐敌 tile 仍然只有 `F7` 面板能给）；变的是"敌人个数"那一半改走 `EnemyCount()`。
 //
 // 【它顺便补上了施工图里写不出来的那半条】
 //   §10.1 用例 22 `RemovingEnemyLeavesNoDanglingId`（S8 拟的名）在 S8 无法实现（没有删除路径，
@@ -982,10 +988,12 @@ MINI_TEST(Game, EnemyDiesAndDisappears)
     // (2) 击杀计数（S9 新加的公开接口）：**打死了一个**（不是"打中了一次"）
     MINI_CHECK_EQ(game.Kills(), 1);
 
-    // (3) 真删落地（S9 步骤 4）：`EnemyData` 也**当场**被移除了 ⇒ 表头 `n=5` 变 `n=4`。
-    //     ⚠️ 判据从"面板里那一行还是 `Dead`"改成了"**行数少了一行**" —— 真删之后没有
-    //        `state=Dead` 行可看了（S8 的取证手段到此为止，C16 到期；面板的行数本身就是结果）。
-    MINI_CHECK_EQ(panel.enemyCount, nBefore - 1);
+    // (3) 真删落地（S9 步骤 4）：`EnemyData` 也**当场**被移除了 ⇒ `EnemyCount()` 由 5 变 4。
+    //     ⚠️ 判据从"面板里那一行还是 `Dead`"改成了"**少了一个**" —— 真删之后没有
+    //        `state=Dead` 行可看了（S8 的取证手段到此为止，C16 到期；个数本身就是结果）。
+    //     ⚠️ **2026-10-15（S11 5b）改口径**：这个数以前读面板表头 `n=`，现在读 `EnemyCount()`
+    //        （同一个表达式 `m_enemies.size()`，但那是**真接口** ⇒ 不再依赖面板文本）。
+    MINI_CHECK_EQ(game.EnemyCount(), nBefore - 1);
     MINI_CHECK(!panel.hasIdGone);   // 只删 Entity 不删 EnemyData 会留下 `<id gone>`
 }
 
@@ -1123,7 +1131,7 @@ MINI_TEST(Game, BulletDamagesEnemy)
     Pos       after[kMaxEnemies] = {};
     const int nAfter = CollectEnemies(fb, after, kMaxEnemies);
 
-    MINI_CHECK_EQ(panel.enemyCount, nBefore);  // 一个都没死（面板表头 = `m_enemies.size()`）
+    MINI_CHECK_EQ(game.EnemyCount(), nBefore);  // 一个都没死（真值 = `m_enemies.size()`）
     MINI_CHECK_EQ(nAfter, panel.aliveTiles);   // 屏幕画出来的 == 存活敌人占的不同格数
     MINI_CHECK_EQ(game.Kills(), 0);            // "打中"不等于"击杀"
 }
@@ -1160,7 +1168,7 @@ MINI_TEST(Game, ThreeHitsKillAnEnemy)
     Pos       after[kMaxEnemies] = {};
     const int nAfter = CollectEnemies(fb, after, kMaxEnemies);
 
-    MINI_CHECK_EQ(panel.enemyCount, nBefore - 1);   // 死了一个（面板表头少了 1）
+    MINI_CHECK_EQ(game.EnemyCount(), nBefore - 1);   // 死了一个（真值少了 1）
     MINI_CHECK(!panel.hasIdGone);                   // 且没留下悬空 id
     MINI_CHECK_EQ(nAfter, panel.aliveTiles);        // 屏幕画出来的与真值一致
     MINI_CHECK_EQ(game.Kills(), 1);                 // 而且只记了一次（不是"每发打中 +1"）
@@ -1236,7 +1244,7 @@ MINI_TEST(Game, BulletHitsEnemyEvenAtMaxDelta)
     Pos       after[kMaxEnemies] = {};
     const int nAfter = CollectEnemies(fb, after, kMaxEnemies);
 
-    MINI_CHECK_EQ(panel.enemyCount, nBefore - 1);   // 真死了一个（表头少了 1）
+    MINI_CHECK_EQ(game.EnemyCount(), nBefore - 1);   // 真死了一个（表头少了 1）
     MINI_CHECK_EQ(nAfter, panel.aliveTiles);        // 屏幕与真值一致
     // ★ **判据是下面这一行**：穿靶的实现在这里必红（`Kills() == 0`）。
     // ⚠️ 上面那条屏幕断言 2026-10-10 从 `nAfter == nBefore - 1` 改成了"与面板真值比" ——
@@ -1256,7 +1264,7 @@ MINI_TEST(Game, BulletHitsEnemyEvenAtMaxDelta)
 //            ② 只 erase `EnemyData`        → 实体还在，但**再没人驱动它**（原地当活靶子）。
 //          反向验证 **R5** 打①、**R5′** 打②，各有多条断言会红。
 //
-//     ⚠️ 判据一律"**重叠免疫**"：面板表头的 `n=` / `<id gone>` / "不同 tile 数" ——
+//     ⚠️ 判据一律"**重叠免疫**"：`EnemyCount()`（真值）/ 面板的 `<id gone>` / "不同 tile 数" ——
 //        屏幕上数 `'E'` 不能当敌人数用（敌人会叠格，见 `SummarizeEnemyPanel`）。
 //     ⚠️ **用例清单里它是 `Game` suite 的第 6 条，文件里排在最后**：不改既有 `G4`/`G5`/`G7`
 //        的编号，免得 `S9_CHECKLIST` 偏差 9 那些引用指错人。
@@ -1293,8 +1301,8 @@ MINI_TEST(Game, KilledEnemyIsRemovedAndLeavesNoDanglingId)
     Pos       after[kMaxEnemies] = {};
     const int nAfter = CollectEnemies(fb, after, kMaxEnemies);
 
-    // ① `m_enemies` 那边：表头 `n=` 真的少了一个（`EnemyData` 被 erase 了）
-    MINI_CHECK_EQ(panel.enemyCount, nBefore - 1);
+    // ① `m_enemies` 那边：`EnemyCount()` 真的少了一个（`EnemyData` 被 erase 了）
+    MINI_CHECK_EQ(game.EnemyCount(), nBefore - 1);
     // ② 没有悬空 id：面板**不该**出现 `<id gone>`（症状①，反向验证 R5）
     MINI_CHECK(!panel.hasIdGone);
     // ③ `m_world` 那边：屏幕上的 `'E'` == 面板各行占的**不同 tile** 数
@@ -1420,7 +1428,7 @@ MINI_TEST(Game, HudFitsInTwoLinesWithoutOverflow)
     //    `FindChar` / `CountChar(fb, 'E')` 是**全屏扫描**的，HUD 上一旦出现同名字符，
     //    那些"数画面上有几个"的用例会**静默失真**（不是红，是算错）。
     //    ★★ **2026-10-12（S10 步骤 6）实测踩过**：给提示段加了 `ESC` ⇒ 屏幕上多一个 `E`
-    //    ⇒ `CountChar(fb,'E')` 数出 4（3 个敌人 + 1 个 `ESC`），而面板真值是 3
+    //    ⇒ `CountChar(fb,'E')` 数出 4（3 个敌人 + 1 个 `ESC`），而当时从面板读到的真值是 3
     //    ⇒ `RestartThreeTimesDoesNotAccumulate` 红在 `drawn=4 rhs=3`。
     //    ⚠️ **就是下面这三行当场抓住的** —— 这条断言的唯一价值就是这个（它是"HUD 与字形
     //       命名空间冲突"的唯一机器守卫）。
@@ -1507,14 +1515,14 @@ MINI_TEST(Game, StartsInTitleAndEnterBeginsPlay)
 
     // ③b ★ **第 1 波已经刷出来了**（`S10_CHECKLIST` 落地偏差 5：这条断言原来是"留给步骤 4"的）
     //     ⚠️ 期望值由公开常量算（`kWaveBase`），不写死数字。
-    //     ⚠️ 判据用**面板的 `n=`**（= `m_enemies.size()` 真值）而不是屏幕上的 `'E'` 个数：
+    //     ⚠️ 判据用 `game.EnemyCount()`（= `m_enemies.size()` 真值）而不是屏幕上的 `'E'` 个数：
     //        敌人**会叠格**（没有推挤，`TECH_DEBT` C12）⇒ 数屏幕字符会少（`SummarizeEnemyPanel`）。
     MINI_CHECK_EQ(game.Wave(), 1);
     input.Press(Key::F7);                                  // 开面板（这一步之后一直开着）
     StepFrame(game, input, fb, kDt);
     input.Release(Key::F7);
     const PanelSummary panel = SummarizeEnemyPanel(ScreenText(fb));
-    MINI_CHECK_EQ(panel.enemyCount, Game::kWaveBase);
+    MINI_CHECK_EQ(game.EnemyCount(), Game::kWaveBase);
     MINI_CHECK(!panel.hasIdGone);
 
     // ④ **正向对照**：`Playing` 下世界真的会动
@@ -1773,12 +1781,12 @@ MINI_TEST(Game, GameOverFreezesWorld)
 //   —— 所以必须由用例把"清干净了"变成**可断言**的。
 //
 // 【观察面】
-//   ① 公开接口：`Kills()` / `PlayerHp()` / `State()`
+//   ① 公开接口：`Kills()` / `PlayerHp()` / `State()` / **`EnemyCount()`**（S11 加的真值口径）
 //   ② 屏幕：`CountChar(fb,'*')`（上一局的子弹）、`CountChar(fb,'E')`（敌人画出来了吗）、
 //      `CountChar(fb,'@')`（玩家在新 run 里是**新 id**、还被画得出来）
-//   ③ **F7 面板**：`n=`（= `m_enemies.size()` 的真值）+ `<id gone>`（悬空 id 唯一能被看见的地方）
+//   ③ **F7 面板**：`<id gone>`（悬空 id 唯一能被看见的地方）+ 逐敌 `t=(x,y)`（`aliveTiles` 的来源）
 //   ⚠️ ②与③要**一起**用（坑表 14）：屏幕上少画一个 `E` 可能是"真少了"也可能是"两只叠在一格"（C12），
-//      只有面板真值能区分。反过来面板也会说谎（它读的是 `m_enemies`，不看渲染）—— 两边都得对。
+//      只有真值（+ 逐敌 tile）能区分。反过来面板也会说谎（它读的是 `m_enemies`，不看渲染）—— 两边都得对。
 // ══════════════════════════════════════════════════════════════════════════
 
 // G8（§10.1 用例 8）：重开之后**不留上一局的任何东西**。
@@ -1838,11 +1846,11 @@ MINI_TEST(Game, RestartLeavesNoStaleState)
     // ← 第 1/2/3 步：实体清空后重铺 + `m_enemies` 清空 ⇒ 个数对、且**没有悬空 id**
     const PanelSummary panel = OpenPanelAndSummarize(game, input, fb, kDt);
     // ⚠️ 第 1 波几个（S10 步骤 4 起由波次决定）；同 `EnemiesPatrolUntilPlayerIsNear` 那条注释。
-    MINI_CHECK_EQ(panel.enemyCount, Game::kWaveBase);
+    MINI_CHECK_EQ(game.EnemyCount(), Game::kWaveBase);
     // ★ "上一局的 id 一个都查不到"在公开面上的直接体现：若 `m_enemies` 没清，
     //   那些残留 `EnemyData` 会指向**已经删掉的**实体 ⇒ 面板立刻印出 `<id gone>`
     MINI_CHECK(!panel.hasIdGone);
-    MINI_CHECK_EQ(panel.aliveTiles, panel.enemyCount);   // 屏幕画出来的与面板真值一致（渲染没漏）
+    MINI_CHECK_EQ(panel.aliveTiles, game.EnemyCount());   // 屏幕画出来的与面板真值一致（渲染没漏）
 
     // ★ 另一半：`m_player` 必须指向**新**那个实体。旧 id 已经删了，若 `m_player` 没跟着换，
     //   `Find(m_player)` 就是 nullptr ⇒ 玩家不画、`DrawHud` 早退 ⇒ 屏幕上根本没有 '@'。
@@ -1864,8 +1872,8 @@ MINI_TEST(Game, RestartThreeTimesDoesNotAccumulate)
     StartPlaying(game, input, fb);
 
     // 面板**一次打开到底**：`StartNewRun` 刻意不清 `m_showAiPanel`（坑表 9）
-    // ⇒ 之后每轮直接读，不必来回按 F7（`OpenPanelAndSummarize` 每次都会**翻转**，按第二次就关了，
-    //   那时读到的 `n=0` 会变成假红）。
+    // ⇒ 之后每轮直接从屏幕文本读，不必来回按 F7（`OpenPanelAndSummarize` 每次都会**翻转**，
+    //   按第二次就关了，那时面板不在屏上 ⇒ `aliveTiles` / `<id gone>` 都会变成假红）。
     input.Press(Key::F7);
     StepFrame(game, input, fb, kDt);
     input.Release(Key::F7);
@@ -1881,21 +1889,21 @@ MINI_TEST(Game, RestartThreeTimesDoesNotAccumulate)
         StepFrame(game, input, fb, kDt);
         MINI_CHECK(game.State() == GameState::Playing);
 
-        // 判据成对出现（坑表 14）：屏幕"画了几个 E" + 面板"真值几个 / 有没有悬空 id"
+        // 判据成对出现（坑表 14）：屏幕"画了几个 E" + `EnemyCount()` 真值 / 面板"有没有悬空 id"
         const int           drawn = CountChar(fb, 'E');
         const PanelSummary  panel = SummarizeEnemyPanel(ScreenText(fb));
 
         MINI_CHECK(!panel.hasIdGone);
-        MINI_CHECK_EQ(drawn, panel.enemyCount);
-        MINI_CHECK_EQ(panel.aliveTiles, panel.enemyCount);
+        MINI_CHECK_EQ(drawn, game.EnemyCount());
+        MINI_CHECK_EQ(panel.aliveTiles, game.EnemyCount());
 
         if (run == 0) {
-            enemiesAfterFirstRun = panel.enemyCount;
+            enemiesAfterFirstRun = game.EnemyCount();
             // 第 1 波几个（同上；S10 步骤 4 起由波次决定）
             MINI_CHECK_EQ(enemiesAfterFirstRun, Game::kWaveBase);
         } else {
             // ★ 核心：第 2、3 次重开之后，场上敌人个数与**第 1 次完全相同**（不累积）
-            MINI_CHECK_EQ(panel.enemyCount, enemiesAfterFirstRun);
+            MINI_CHECK_EQ(game.EnemyCount(), enemiesAfterFirstRun);
         }
     }
 
@@ -1934,19 +1942,20 @@ MINI_TEST(Game, WaveAdvancesWhenAllEnemiesDie)
     StartPlaying(game, input, fb);
 
     // 面板开一次**一直开着**（`StartNewRun`/`BeginWave` 都不清 `m_showAiPanel`，坑表 9）
-    // ⇒ 全程用 `n=` 读真值。⚠️ 不数屏幕上的 `'E'`：敌人会叠格（C12）。
+    // ⇒ 真值走 `game.EnemyCount()`（**不再逐帧解析屏幕**）；面板留着只为最后那条 `<id gone>`。
+    //   ⚠️ 不数屏幕上的 `'E'`：敌人会叠格（C12）。
     input.Press(Key::F7);
     StepFrame(game, input, fb, kDt);
     input.Release(Key::F7);
 
     MINI_CHECK_EQ(game.Wave(), 1);
-    MINI_CHECK_EQ(SummarizeEnemyPanel(ScreenText(fb)).enemyCount, Game::kWaveBase);
+    MINI_CHECK_EQ(game.EnemyCount(), Game::kWaveBase);
 
     // ── ① 站到"最近敌人 8 格"处 ─────────────────────────────────────────────
     //    停下来的那一行 = 前两个敌人的巡逻线（都是 y = 2.5）⇒ 向东开火必中。
     MINI_CHECK(WalkPlayerNextToEnemy(game, input, fb) > 0);
 
-    // ── ② 一直向东开枪，直到面板说敌人全没了 ─────────────────────────────────
+    // ── ② 一直向东开枪，直到 `EnemyCount()` 说敌人全没了 ──────────────────────
     //   ⚠️ 为什么"向东开火"能清完（三条几何事实，落地时逐条核过）：
     //     · 第 1 波 3 个出生在 `kPatrolPaths` 第 0/1/2 行 = (44.5,2.5) (60.5,2.5) (44.5,4.5)；
     //     · 前两个的 y 与玩家相同 ⇒ 占**同一格行** ⇒ 向东的子弹必中
@@ -1959,16 +1968,16 @@ MINI_TEST(Game, WaveAdvancesWhenAllEnemiesDie)
     //      （避免把"清不完"和"打光了"两种失败混成同一个症状）。
     constexpr int kMaxShots = Game::kStartAmmo;
     int shots = 0;
-    while (shots < kMaxShots && SummarizeEnemyPanel(ScreenText(fb)).enemyCount > 0) {
+    while (shots < kMaxShots && game.EnemyCount() > 0) {
         FireOnce(game, input, fb, kDt);
         ++shots;
         // 最多等 45 帧（够子弹飞到最远那个：24 格 ÷ 45 格/秒 ≈ 32 帧），一清空就立刻停
-        for (int f = 0; f < 45 && SummarizeEnemyPanel(ScreenText(fb)).enemyCount > 0; ++f) {
+        for (int f = 0; f < 45 && game.EnemyCount() > 0; ++f) {
             StepFrame(game, input, fb, kDt);
         }
     }
     MINI_CHECK(shots < kMaxShots);                                     // 没打光上限就打完了
-    MINI_CHECK_EQ(SummarizeEnemyPanel(ScreenText(fb)).enemyCount, 0);
+    MINI_CHECK_EQ(game.EnemyCount(), 0);
     MINI_CHECK_EQ(game.Kills(), Game::kWaveBase);                      // 全清 ⇒ 击杀数 = 第 1 波个数
     MINI_CHECK(game.State() == GameState::Playing);                    // ⚠️ 玩家还活着（不然下面没意义）
 
@@ -1979,12 +1988,12 @@ MINI_TEST(Game, WaveAdvancesWhenAllEnemiesDie)
     MINI_CHECK_EQ(game.Wave(), 1);
     StepFrames(game, input, fb, kDt, breakFrames - 6);      // 留 6 帧余量（浮点累减 + 帧边界）
     MINI_CHECK_EQ(game.Wave(), 1);                          // ★ 喘息中：还没刷
-    MINI_CHECK_EQ(SummarizeEnemyPanel(ScreenText(fb)).enemyCount, 0);
+    MINI_CHECK_EQ(game.EnemyCount(), 0);
 
     // ── ④ 到点 → 第 2 波：`Wave()` +1 **且**敌人重新出现（数量 = 第 2 波该有的）────────
     StepFrames(game, input, fb, kDt, 12);
     MINI_CHECK_EQ(game.Wave(), 2);
-    MINI_CHECK_EQ(SummarizeEnemyPanel(ScreenText(fb)).enemyCount,
+    MINI_CHECK_EQ(game.EnemyCount(),
                   Game::kWaveBase + Game::kWaveGrowth);
     MINI_CHECK(!SummarizeEnemyPanel(ScreenText(fb)).hasIdGone);        // 新一波没有悬空 id
 }
