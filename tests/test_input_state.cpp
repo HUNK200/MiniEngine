@@ -178,6 +178,9 @@ MINI_TEST(KeyCode, KeyFromVirtualKeyMapsUsedKeys)
     MINI_CHECK(KeyFromVirtualKey(kVkF1) == Key::F1);        // VK_F1
     MINI_CHECK(KeyFromVirtualKey(0x73) == Key::F4);         // VK_F4
     MINI_CHECK(KeyFromVirtualKey(kVkF7) == Key::F7);        // VK_F7（S8 的敌人面板；不连续所以要单独钉）
+    // S11（2026-10-15 加）：overlay 的开关是**字母键 `T`**（F1/F3 在本机被别的软件抢占，
+    // 见 `KeyCode.h` 那段注释）。镜像 S9 删 `K` 时的做法：枚举与映射一加，这里就补一条断言。
+    MINI_CHECK(KeyFromVirtualKey(0x54) == Key::T);          // 'T'  VK_T
 
     // 有意不映射：字母 B 与修饰键。映进来只会多出要维护的状态
     MINI_CHECK(KeyFromVirtualKey(kVkB) == Key::Unknown);

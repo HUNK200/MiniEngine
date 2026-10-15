@@ -1,6 +1,7 @@
 #pragma once
 
 #include "game/Bullet.h"      // S9：子弹的规则（朝向 + 命中判定纯函数）
+#include "game/DebugOverlay.h"   // S11：`BuildOverlayData` 的返回类型（overlay 的纯数据）
 #include "game/Enemy.h"
 #include "game/GameState.h"   // S10：游戏状态机（四态 + 策略表，纯函数、零依赖）
 #include "mini/core/Application.h"
@@ -86,6 +87,26 @@ public:
     // 剩余弹药（S10 步骤 5）。同 `State()`/`Wave()`：**真接口** —— HUD 上真的看得见（`ammo` 那一栏）。
     // ⚠️ 它只在 `Playing` 变化（`FireBullet` 扣、`ResolveBullets` 返还、`BeginWave` 回满）。
     [[nodiscard]] int Ammo() const noexcept;
+
+    // ── S11：Debug Overlay 的三个观察面（§10 分叉 C 取①、分叉 F 取甲）──────────────
+    // ⚠️ 三条都**不是"为测试而加"**：overlay 的表里真的显示它们（`foes` / `shots` 与开关状态）。
+    //    这也是 `TECH_DEBT` **C23**（"子弹数没有观察面"）的出路 —— 它的原话就是
+    //    "最省的是在面板上给一个公开观察面"。
+    // ⚠️ 分叉 C 选①的**另一半价值**：`tests/test_game.cpp` 从此可以问真值，
+    //    不必再去"数屏幕上 `E` 的个数"（那条路会被重叠与字形污染咬到，见 C31）。
+
+    // 还活着的敌人数。⚠️ 真删之后（S9 步骤 4）它就是"场上还有几个"的**唯一真值**
+    //（`F7` 面板的 `n=` 也是它）。
+    [[nodiscard]] int EnemyCount() const noexcept;
+
+    // 存活的子弹数：`m_bullets` 里那些**世界还找得到**的 id。
+    // ⚠️ 与 `m_bullets.size()` 的区别：表在 ⑨b 才自愈压缩，所以帧中途可能有已死的 id。
+    [[nodiscard]] int BulletCount() const noexcept;
+
+    // overlay 开关（键 = `kOverlayKey`，见 `Game.cpp` 顶部）。
+    // **真接口**：用例要断言"默认关"（那是 `TECH_DEBT` C31 的默认安全边界 ——
+    // 面板一开，屏幕上就多出一堆字符，既有"数屏幕字符"的判据会被扰动）。
+    [[nodiscard]] bool OverlayOn() const noexcept;
 
     // 敌人 HP 上限。⚠️ **2026-10-10 从 private 挪到 public**（S9 步骤 3）：
     //    子弹的"三发打死一个"必须由**公开常量**算出来（`kEnemyMaxHp / kDefaultBullet.damage`），
@@ -313,6 +334,13 @@ private:
     //    只写左边一条窄带（约 34 列），右边留给地图。理由详见 `Game.cpp` 的 `DrawAiPanel`。
     void DrawAiPanel(mini::render::FrameBuffer& fb) const;
 
+    // ── S11：正式 Debug Overlay（键 = `kOverlayKey`）──────────────────────────
+    // 把"引擎帧数据 + Profiler 表 + 游戏计数"装进一个纯数据结构，`OnRender` 里现装现画。
+    // ⚠️ `rows` 由调用方持有（`OnRender` 里的**栈数组**）⇒ 本函数不拥有它，只在一次绘制内有效。
+    // ⚠️ 它是 `const`：只读状态、不改进度（overlay 纯属"看"，不参与任何游戏逻辑）。
+    [[nodiscard]] OverlayData BuildOverlayData(const mini::core::Profiler::Row* rows,
+                                               int                                 rowCount) const noexcept;
+
     // ── S10 步骤 2：三个「状态专属画面」──────────────────────────────────
     // 分工：`OnRender` 按 `m_state` 决定**画什么**，这三个函数只管**自己那几行字**。
     // ⚠️ 全 ASCII + `fb.Draw`（逐格越界忽略）—— 代码页 936 下非 ASCII 会乱码（S8 的坑表）。
@@ -371,6 +399,31 @@ private:
     // S8：面板开关（键 = `kAiPanelKey`）。⚠️ 它只是"要不要画"，**不参与任何游戏逻辑** ——
     // 所以它不影响帧序、也不影响用例（用例从不按它）。
     bool m_showAiPanel = false;
+
+    // ── S11：overlay 开关 + 引擎帧数据快照（分叉 F 甲）───────────────────────────
+    // overlay 开关（键 = `kOverlayKey`，见 `Game.cpp` 顶部）。**默认关**：
+    //   · 它是**开发者工具**，不是玩法键（所以不进 HUD 提示行，见 §10-A 的附带决定）；
+    //   · 一开就往屏幕上多写一堆字符 ⇒ 既有"数屏幕字符"的判据会被扰动
+    //     （`TECH_DEBT` C31）。**默认关**就是那条纪律的安全边界。
+    // ⚠️ 与 `m_showAiPanel` 同作用域：**进程级**，不随 `StartNewRun()` 归零（它不参与游戏逻辑）。
+    bool m_showOverlay = false;
+
+    // 引擎帧数据的**只读标量快照**（分叉 F 甲：`IGame::OnRender` 拿不到 `FrameContext`）。
+    //   · 每帧在 `OnUpdate` 开头拷一次 ⇒ overlay 的**引擎侧**数字慢一帧
+    //     （⚠️ 顶栏的 `Rows` 也是这样，`S11_CHECKLIST` §16.3 ② 有实测）；
+    //   · **游戏侧**计数（`foes`/`shots`/`hp`…）在 `OnRender` 里当帧现读 ⇒ 两类新鲜度不同，
+    //     这是有意的：引擎那 4 项只有 `OnUpdate` 看得到，而游戏计数自己随时都有。
+    //   ⛔ **不要**往这个结构里塞 `const Input&` —— 那正是 S5 / `TECH_DEBT` C4 关掉的东西
+    //     （"`OnRender` 完全不碰输入"这条契约）。
+    struct FrameSnapshot {
+        float fps          = 0.0f;
+        float frameMs      = 0.0f;
+        float maxFrameMs   = 0.0f;
+        float workMs       = 0.0f;
+        int   screenWidth  = 0;
+        int   screenHeight = 0;
+    };
+    FrameSnapshot m_lastFrame{};
 
     // S8：玩家 HP。
     // ⚠️ **S10 步骤 2 起它有两个后果**（原来是"什么都不发生"）：

@@ -26,9 +26,17 @@ enum class Key : std::uint8_t {
     Unknown = 0,
 
     W, A, S, D, Q, E, R,          // 移动 + 交互（S5 起用）
+    // S11（2026-10-15 拍板，分叉 A）：**Debug Overlay 的开关用字母键 `T`**。
+    //   为什么不是 `F1`：`F1` 在本机被别的软件抢占（按下去我们的程序收不到），
+    //   而 `F3` 已经栽过两次（见下面 `F7` 那段注释的来历）。字母键不在那类全局热键的靶场上。
+    //   ⚠️ 它**不进 HUD 提示行** —— overlay 是开发者工具，不是玩法键（§10-A 的附带决定）。
+    T,
     Space, Enter, Escape, Tab,
     ArrowUp, ArrowDown, ArrowLeft, ArrowRight,
-    F1, F2, F3, F4,               // S11 的 Debug Overlay 用
+    // ⚠️ **2026-10-15 更正**：这一行原来是"`F1, F2, F3, F4, // S11 的 Debug Overlay 用`"，
+    //    而实际用到的只有 **`F2`**（几何层，C13）+ **`F4`**（快照，C14）。
+    //    `F1` / `F3` 在这台机器上**收不到**（被别的软件抢占）⇒ 别看到它们"有映射"就以为可用。
+    F1, F2, F3, F4,
 
     // ⚠️ **2026-10-10（S9 步骤 3）：`K` 已删除。**
     //    它是 S8 的临时调试键（"杀掉离玩家最近的敌人"），S9 接上真正的子弹之后它就是多余的
@@ -79,6 +87,7 @@ constexpr std::array<Key, 256> MakeKeyMap() noexcept
     map[0x51] = Key::Q;   // 'Q'  VK_Q
     map[0x45] = Key::E;   // 'E'  VK_E
     map[0x52] = Key::R;   // 'R'  VK_R
+    map[0x54] = Key::T;   // 'T'  VK_T（S11 的 Debug Overlay 开关，2026-10-15 加）
 
     // 控制键
     map[0x20] = Key::Space;    // VK_SPACE

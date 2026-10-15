@@ -1,8 +1,10 @@
 #include "MiniTest.h"
 
+#include <game/DebugOverlay.h>   // S11：`OverlayData` / `BuildOverlayLines`（C31 的字形守卫要用）
 #include <game/Game.h>
 
 #include <mini/ai/EnemyBrain.h>   // S8：用例要拿 kDefaultTuning::sightRange 算"该不该被追"
+#include <mini/core/Profiler.h>   // S11：`Profiler::Row`（overlay 表体的一行）
 #include <mini/core/Time.h>       // S9：`kMaxDelta`（dt 的上限，G7 的防穿靶用例要用它）
 #include <mini/platform/Input.h>
 #include <mini/platform/InputState.h>
@@ -413,6 +415,18 @@ void StepFrames(Game& game, FakeInput& input, FrameBuffer& fb, float dt, int n)
     for (int i = 0; i < n; ++i) {
         StepFrame(game, input, fb, dt);
     }
+}
+
+// 按一下**任意键**（`Pressed` 一帧 + `Released` 一帧）。
+// 用途：测"翻转类"开关（S11 的 overlay 用 `T`、暂停用 `ESC`）。
+// ⚠️ 与 `FireOnce` 分开写：那个是"开火"语义（写死 SPACE），这个收任意键 —— 名字不同才不会混。
+void PressOnce(Game& game, FakeInput& input, FrameBuffer& fb, Key key)
+{
+    constexpr float kDt = 1.0f / 60.0f;
+    input.Press(key);
+    StepFrame(game, input, fb, kDt);     // 这一帧看到 `Pressed` ⇒ 翻转发生在这一步
+    input.Release(key);
+    StepFrame(game, input, fb, kDt);     // 消化掉 `Released`（它不产生事件）
 }
 
 // 把整个屏幕拼成一个字符串（行优先，每行末尾补 '\n'）。
@@ -2153,4 +2167,136 @@ MINI_TEST(Game, AmmoIsCappedAtMax)
     //    （`Game.h` 里 `static_assert(kMaxAmmo >= kStartAmmo)`）；
     //    这里用运行时再说一遍语义，免得以后有人把静态断言删了还不知道少了什么。
     MINI_CHECK(Game::kStartAmmo <= Game::kMaxAmmo);
+}
+
+// ============================================================
+// S11：Debug Overlay（4 条）
+//
+// 这 4 条都刻意**不数屏幕字符**去推游戏状态 —— 那正是 `TECH_DEBT` C31 / S9 偏差 9 的教训：
+// 屏幕是共享命名空间，"数出来"的数会被重叠、字形、面板污染。
+// 需要真值时走 `EnemyCount()` / `BulletCount()` / `OverlayOn()`（§10 分叉 C 取①的兑现）。
+// ============================================================
+
+// 观察面与真值一致：`foes` 减 1 / `shots` 增 1（判据全部来自公开接口，不读屏幕）。
+MINI_TEST(Game, CountsMatchWorld)
+{
+    constexpr float kDt = 1.0f / 60.0f;   // 本文件惯例：每个用例自己声明 dt
+
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+    StartPlaying(game, input, fb);
+
+    // ① 开局：场上的敌人 = 本波该刷的个数；还没开过枪
+    MINI_CHECK_EQ(game.EnemyCount(), Game::WaveEnemyCount(game.Wave()));
+    MINI_CHECK_EQ(game.BulletCount(), 0);
+
+    // ② 开一枪 ⇒ 存活子弹 ≥ 1（它当帧就飞出去了）
+    FireOnce(game, input, fb, kDt);
+    MINI_CHECK(game.BulletCount() >= 1);
+
+    // ③ 打死一个 ⇒ `foes` 恰好减 1（用**真值**，不数屏幕上的 'E'）
+    const int foesBefore = game.EnemyCount();
+    MINI_CHECK(WalkPlayerNextToEnemy(game, input, fb) > 0);
+
+    constexpr int kShotsToKill = Game::kEnemyMaxHp / game::kDefaultBullet.damage;
+    for (int i = 0; i < kShotsToKill; ++i) {
+        FireOnce(game, input, fb, kDt);
+        StepFrames(game, input, fb, kDt, 30);
+    }
+
+    MINI_CHECK_EQ(game.Kills(), 1);
+    MINI_CHECK_EQ(game.EnemyCount(), foesBefore - 1);
+}
+
+// ★ `TECH_DEBT` C31 的**机器守卫**：面板的每一行都不许出现实体字形。
+//   为什么这条特别重要：`@` / `E` / `*` 同时是普通字母 ⇒ 面板写出其中一个，
+//   所有"数屏幕上 `E` 的个数"的判据会**静默算错**（不是变红，是算错）。
+MINI_TEST(Game, OverlayLinesAvoidReservedGlyphs)
+{
+    // 用**真实的 7 个段名**（它们是面板里唯一"人写的字符串"）——
+    // 以后谁加一个叫 `EnemyAI` 之类的段名，这条用例会立刻红。
+    const char* kNames[] = {"Frame",  "Game.Update", "Game.AI",    "Game.Bullets",
+                            "Game.Render", "StatsBar", "Present"};
+
+    mini::core::Profiler::Row rows[7]{};
+    for (int i = 0; i < 7; ++i) {
+        rows[i] = mini::core::Profiler::Row{kNames[i], 1.25f, 9.5f};
+    }
+
+    game::OverlayData d;
+    d.frameMs       = 16.7f;
+    d.maxFrameMs    = 33.2f;
+    d.workMs        = 1.42f;
+    d.fps           = 60.0f;
+    d.rows          = rows;
+    d.rowCount      = 7;
+    d.historyFrames = 120;
+    d.wave          = 2;
+    d.foes          = 3;
+    d.shots         = 1;
+    d.ammo          = 17;
+    d.hp            = 10;
+
+    game::OverlayLines lines{};
+    const int          n = game::BuildOverlayLines(d, lines);
+
+    MINI_CHECK(n > 0);
+    MINI_CHECK(n <= game::kOverlayMaxLines);
+    MINI_CHECK_EQ(n, game::kOverlayFixedLines + 7);   // 固定 5 行 + 表体 7 行
+
+    for (int i = 0; i < n; ++i) {
+        const std::string line = lines[static_cast<std::size_t>(i)].data();
+        MINI_CHECK(!line.empty());
+        MINI_CHECK(line.size() < static_cast<std::size_t>(game::kOverlayLineCap));   // 没被截断
+        MINI_CHECK(line.find('@') == std::string::npos);
+        MINI_CHECK(line.find('E') == std::string::npos);   // ★ 大写 E 是敌人字形
+        MINI_CHECK(line.find('*') == std::string::npos);
+    }
+}
+
+// 默认**关**：它是 C31 的安全边界（一开就往屏幕上多写一堆字符，既有判据会被扰动）。
+MINI_TEST(Game, OverlayIsOffByDefault)
+{
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+    StartPlaying(game, input, fb);
+
+    MINI_CHECK(!game.OverlayOn());
+    // 屏幕上不该有面板的痕迹（`profile` 是表头那一行里的词）
+    MINI_CHECK(ScreenText(fb).find("profile") == std::string::npos);
+}
+
+// `T` 能开关它，而且**关掉之后屏幕逐字节回到原样**。
+MINI_TEST(Game, OverlayTogglesWithT)
+{
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+    game.OnStart();
+    StartPlaying(game, input, fb);
+
+    // ★ 先按 `ESC` 暂停：世界与 HUD 全冻住 ⇒ 之后两次渲染的差异**只可能**来自 overlay。
+    //   没有这个前提，"屏幕变了"就不能证明是面板画的（敌人也在动）。
+    PressOnce(game, input, fb, Key::Escape);
+    MINI_CHECK(game.State() == GameState::Paused);
+
+    const std::string without = ScreenText(fb);
+    MINI_CHECK(without.find("profile") == std::string::npos);
+
+    // 开：`T` **不在策略表里** ⇒ 暂停状态下同样有效（④d 的理由）
+    PressOnce(game, input, fb, Key::T);
+    MINI_CHECK(game.OverlayOn());
+    const std::string with = ScreenText(fb);
+    MINI_CHECK(with != without);                                    // 面板真的画出来了
+    MINI_CHECK(with.find("profile") != std::string::npos);          // 且表头在
+    MINI_CHECK(with.find("frame") != std::string::npos);
+
+    // 关：逐字节回到原样（这条同时证明"面板没有留下残影"）
+    PressOnce(game, input, fb, Key::T);
+    MINI_CHECK(!game.OverlayOn());
+    MINI_CHECK_EQ(ScreenText(fb), without);
 }

@@ -1,6 +1,7 @@
 #include "game/Game.h"
 
 #include "game/Bullet.h"           // S9：朝向 ↔ 向量、线段命中判定（纯函数）
+#include "game/DebugOverlay.h"     // S11：overlay 的纯数据 + 绘制（`BuildOverlayLines` 可离线测）
 #include "game/GameState.h"         // S10：四态 + 策略表 + 纯函数 NextState / PolicyOf
 #include "mini/ai/EnemyBrain.h"   // S8：敌人每帧的"决策"（纯函数；只输出速度）
 #include "mini/math/Vec2.h"
@@ -148,6 +149,15 @@ constexpr mini::platform::Key kRestartKey = mini::platform::Key::R;
 // ⚠️ 它治的是"**能查到**"，不是"能一起改"：提示文本是给玩家看的**字面量**、没法用常量渲染
 //    ⇒ 那两处靠"旁边的注释指向 `kQuitKey`"来兜住（grep 常量名即可找全）。
 constexpr mini::platform::Key kQuitKey = mini::platform::Key::Q;
+
+// ── `kOverlayKey`：正式 Debug Overlay 的开关（S11，2026-10-15 拍板）──────────────────
+// ⚠️ **它是字母键 `T`，不是 `F1`**：`F1` / `F3` 在本机被别的软件抢占（按下去我们的程序收不到），
+//    `F3` 已经栽过两次（见 `kDumpKey` 与 `kAiPanelKey` 那两段注释的来历）。
+//    ⇒ 教训：**F 行不是自由区**，新键优先选字母键。
+// ⚠️ **键字母在代码里只有这一处** —— 与其它键不同，overlay 键**不进 HUD 提示行**
+//    （§10-A 的附带决定：它是开发者工具，不是玩法键）。所以"换键"在这里真的是一行的事。
+//    ⛔ 别顺手把它加进 `DrawHud` 的提示段：那一行的精确串与列宽被用例钉着（`TECH_DEBT` C24）。
+constexpr mini::platform::Key kOverlayKey = mini::platform::Key::T;
 
 // 子弹画什么字符。⚠️ 它就是普通实体的 `symbol`（分叉 ①：子弹没有额外字段）——
 // 绘制走 `DrawEntities` 的既有规则（玩家黄 / 敌人红 / **其余白**）⇒ 子弹自动是白的，绘制零改动。
@@ -687,6 +697,16 @@ void Game::OnUpdate(const mini::core::FrameContext& ctx)
 
     const mini::platform::Input& input = ctx.input;
 
+    // ── ★ S11：拷一份引擎帧数据的**只读快照**（分叉 F 甲；后面 `OnRender` 要靠它）───────
+    // 为什么需要它：`IGame::OnRender` 只收 `(FrameBuffer&)`，**拿不到 `FrameContext`**
+    //   （`engine/include/mini/core/Application.h:99`）。而 overlay 要显示这四项 ⇒ 只能在这儿留一份。
+    // ⚠️ **代价是有意的**：overlay 的引擎侧数字**慢一帧** —— 顶栏的 `Rows` 也是这个毛病
+    //   （`S11_CHECKLIST` §16.3 ② 有实测）。观测工具不在乎 16ms 的延迟，而在意"改接口"的代价。
+    // ⚠️ 放在 OnUpdate **最前面**：它在任何状态下都执行（`Title` / `Paused` / `GameOver` 也要有数
+    //   可看），而且必须在 `OnRender` 之前。
+    m_lastFrame = FrameSnapshot{ctx.fps,         ctx.frameMs,     ctx.maxFrameMs,
+                                ctx.workMs,      ctx.screenWidth, ctx.screenHeight};
+
     // ── ⓪ 造「状态事件」（S10 步骤 2）──────────────────────────────────────
     // ⚠️ **优先级：死亡 > 其他** —— 死亡那一帧的按键不算数（`S10_CHECKLIST` §7.1 理由 1）。
     // ⚠️ 除了那条必须的 `m_state == Playing`，这里**不再多判状态**：
@@ -777,6 +797,15 @@ void Game::OnUpdate(const mini::core::FrameContext& ctx)
     //     ⚠️ 连带影响：S8 的用例 `Game.EnemyDiesAndDisappears` 原来按 `F7`+`K`，
     //        本步同步改写成"朝敌人开火把它打死"（不然它会因为键没了而变红）。
 
+    // ④d `kOverlayKey` 开/关正式 Debug Overlay（S11）。
+    //     只在 `Pressed` 翻转（同 ④b：用 `Held` 会每帧闪）。
+    //     ⚠️ **不在策略表里** ⇒ 冻结状态下也跑：暂停时看 profiler 表恰恰最有意义
+    //        （画面冻住了，表也冻住了，正好读数）。
+    //     ⚠️ 它**只影响画不画**：不动世界、不动帧序、不参与任何游戏逻辑。
+    if (input.Get(kOverlayKey) == KeyState::Pressed) {
+        m_showOverlay = !m_showOverlay;
+    }
+
     // ⑤ Σdt（**只在 `Playing` 加**）：HUD 拿它自证 `pos ≈ v × sum dt`（10.2 的运行时验收）。
     //    ⚠️ 冻结状态下**一点也不加** —— 否则"暂停 1 分钟"会让 `sumdt` 凭空多 60 秒，
     //       那条自证就废了（S10_CHECKLIST 决策 D9）。⚠️ 恢复那一帧用的就是**本帧的正常 dt**，
@@ -789,6 +818,7 @@ void Game::OnUpdate(const mini::core::FrameContext& ctx)
     //     所以两边的速度都得先写好（与 ③ 是同一条帧序约束）。
     //     反过来的现象：敌人慢一帧，或（若挪到 ⑥ 之后并写了速度）完全不产生位移。
     if (policy.simulate) {
+        MINI_PROFILE_SCOPE("Game.AI");   // S11：段名只在**真的跑**的时候才登记
         DriveEnemyAi(ctx);
     }
 
@@ -803,6 +833,7 @@ void Game::OnUpdate(const mini::core::FrameContext& ctx)
     //     理由写在 `Game.h` 的 `ResolveBullets` 注释里（挪到 ⑥ 之后就要存"上一帧位置"，
     //     而反推在被墙夹住时是错的）。
     if (policy.simulate) {
+        MINI_PROFILE_SCOPE("Game.Bullets");   // S11：同 ⑤b —— 只在真的跑的时候才登记
         ResolveBullets(ctx);
     }
 
@@ -1163,6 +1194,24 @@ void Game::OnRender(mini::render::FrameBuffer& fb)
         if (m_showAiPanel) {
             DrawAiPanel(fb);
         }
+
+        // ── S11：正式 Debug Overlay（键 = `kOverlayKey`）─────────────────────────
+        // 位置：**在 `DrawHud` 与 `F7` 面板之后**（§8 坑 10）—— 它是浮层，读数优先于底下的东西。
+        // ⚠️ 但状态横幅（`PAUSED` / `GAME OVER`）仍然画在它**之上**（下面那段 switch）：
+        //    那是玩家必须先看到的信息，抢不过它。
+        // ⚠️ `rows` 是**栈上数组**（8 行小结构），不分配、不缓存进 `Game`：
+        //    Profiler 自己拥有数据，这里每帧问一次快照（`Snapshot` 写进调用方数组的取舍）。
+        if (m_showOverlay) {
+            mini::core::Profiler::Row rows[mini::core::Profiler::kMaxScopes]{};
+            int                        rowCount = 0;
+            if (mini::core::Profiler* profiler = mini::core::CurrentProfiler();
+                profiler != nullptr) {
+                rowCount = profiler->Snapshot(rows, mini::core::Profiler::kMaxScopes);
+            }
+            // ⚠️ 未装 profiler（单测里就是这样）⇒ rowCount 保持 0：overlay 照画，只是没有表体。
+            //    这条路径是**默认情形**（`Game` 能在没有 `Application` 的情况下被构造）。
+            DrawDebugOverlay(fb, BuildOverlayData(rows, rowCount));
+        }
     }
 
     // 状态横幅**最后画**（压在 HUD / 面板之上）。
@@ -1322,6 +1371,61 @@ int Game::Wave() const noexcept
 int Game::Ammo() const noexcept
 {
     return m_ammo;
+}
+
+// ------------------------------------------------------------
+// S11：Debug Overlay 的三个观察面 + 数据装配
+// ------------------------------------------------------------
+
+int Game::EnemyCount() const noexcept
+{
+    return static_cast<int>(m_enemies.size());   // 真删之后这里就是"场上还有几个"
+}
+
+int Game::BulletCount() const noexcept
+{
+    // "存活"的判据是**世界还找得到它**（同 ⑨b 自愈压缩用的那条判据）：
+    // 表里可能有已死的 id（帧中途标删的），它们不算数。
+    // ⚠️ 所以这个数**不是** `m_bullets.size()` —— 后者要等帧末才收敛。
+    int alive = 0;
+    for (const mini::world::EntityId id : m_bullets) {
+        if (m_world.Find(id) != nullptr) {
+            ++alive;
+        }
+    }
+    return alive;
+}
+
+bool Game::OverlayOn() const noexcept
+{
+    return m_showOverlay;
+}
+
+OverlayData Game::BuildOverlayData(const mini::core::Profiler::Row* rows, int rowCount) const noexcept
+{
+    OverlayData d;
+
+    // ── 引擎侧：来自 `OnUpdate` 开头拷下的快照 ⇒ **慢一帧**（分叉 F 甲）──
+    d.frameMs    = m_lastFrame.frameMs;
+    d.maxFrameMs = m_lastFrame.maxFrameMs;
+    d.workMs     = m_lastFrame.workMs;
+    d.fps        = m_lastFrame.fps;
+
+    // ── Profiler 那张表：调用方给的（`OnRender` 的栈数组）──
+    d.rows     = rows;
+    d.rowCount = rowCount;
+    // 已收帧数：让表头显示**真实**窗口大小（首屏不满 120 时若恒显示 120 就是骗人，§8 坑 8）
+    d.historyFrames =
+        (mini::core::CurrentProfiler() != nullptr) ? mini::core::CurrentProfiler()->HistoryFrames() : 0;
+
+    // ── 游戏侧：**当帧**现读（这些 `Game` 自己随时都有）──
+    d.wave  = m_wave;
+    d.foes  = EnemyCount();
+    d.shots = BulletCount();
+    d.ammo  = m_ammo;
+    d.hp    = m_playerHp;
+
+    return d;
 }
 
 bool Game::ShouldQuit() const
