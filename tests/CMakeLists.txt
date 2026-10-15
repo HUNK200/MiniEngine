@@ -20,6 +20,9 @@
 #                             纯函数；命中判定收的是"敌人位置"而不是实体指针，所以不需要世界）
 #   test_gamestate.cpp   —— S10 的用例（不需要终端：GameState 只有枚举 + 布尔策略表 + 纯函数，
 #                             连自己都不 include 任何 mini/ 头 ⇒ 能穷举"4 状态 × 5 事件"整张表）
+#   test_logger.cpp      —— S11 的用例（不需要终端：Logger 只碰文件系统。
+#                             ⚠️ 用例自建自删 `miniengine_test_logger.log`，
+#                             不删的话第二次跑会读到上一次的内容 ⇒ "追加"那条会假绿）
 # 新加用例文件必须在这里手写进源文件列表（S0 明确禁用 file(GLOB)）。
 # ============================================================
 
@@ -38,6 +41,7 @@ add_executable(mini_tests
     test_enemy.cpp
     test_bullet.cpp
     test_gamestate.cpp
+    test_logger.cpp
 )
 
 target_include_directories(mini_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

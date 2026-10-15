@@ -29,12 +29,17 @@
 #       src/world/World.cpp（实体容器：Spawn / Find / 索引 / dt 积分 / 延迟删除。
 #                            一份扫描 IndexOf 服务 Find 两版 + FlushRemovals）
 #       后面 S6/S7 会往 world/ 加文件时，同样**在这里手写一行**。
+#
+#   S11 src/core/Logger.cpp（分级日志：级别过滤 + 前缀 + 追加写文件 + 进程级 current 指针。
+#                            ⚠️ 它碰的是**文件系统**、不是终端 ⇒ 能被离线单测
+#                            （tests/test_logger.cpp 用临时文件，跑完自己删））
 # ============================================================
 
 add_library(engine STATIC
     src/core/Version.cpp
     src/core/Time.cpp
     src/core/Application.cpp
+    src/core/Logger.cpp
     src/render/FrameBuffer.cpp
     src/render/RowDiff.cpp
     src/platform/ConsoleWindows.cpp
