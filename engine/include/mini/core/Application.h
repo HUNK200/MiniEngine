@@ -1,5 +1,6 @@
 #pragma once
 
+#include "mini/core/Profiler.h"   // S11：它是 Application 的**成员** ⇒ 要完整定义
 #include "mini/core/Time.h"
 #include "mini/platform/Console.h"
 #include "mini/render/FrameBuffer.h"
@@ -12,7 +13,7 @@
 // 从前到后一条线：**拥有子系统 → 跑循环 → 不认识具体游戏**。
 //
 //   main 只有几十行：造一个 IGame，交给 Application::Run()
-//   Application 负责：时间、输入推进、画布尺寸对齐、提交、退出判定、顶栏
+//   Application 负责：时间、输入推进、画布尺寸对齐、提交、退出判定、顶栏、**分段计时（S11）**
 //   game 只负责：读 ctx 更新自己的状态 + 往 FrameBuffer 上画
 //
 // 三条硬规矩（都是踩出来的，别改）：
@@ -124,8 +125,15 @@ public:
     void Run(IGame& game);
 
     // 统一退出入口。谁想让循环停下来都走这里：
-    //   终端死了（Present 返回 false）、输入说该退了、游戏说该退了。
-    // S10 的"死亡重开"、S11 的覆盖层开关也会从这里走。
+    //   终端死了（Present 返回 false）、输入说该退了（Ctrl+C / 关窗口）、游戏说该退了。
+    //
+    // ⚠️ **2026-10-15 更正**：这里原先写着"S10 的死亡重开、S11 的覆盖层开关也会从这里走" ——
+    //    **两条都不成立**：
+    //      · 死亡 → 重开（`R` 键）与覆盖层开关（`T` 键）都是**纯 game 侧状态**
+    //        （`Game::m_state` / `Game::m_showOverlay`），一次都不碰这条边；
+    //      · 真正走这条边的只有三条：终端没了、进程级 Ctrl+C/关窗口、以及
+    //        `game.ShouldQuit()`（`Q` 键那条）。
+    //    这条更正与 `S11_CHECKLIST` §12/§13 记的"过期注释"是同一处。
     void RequestQuit() noexcept { m_quit = true; }
 
     [[nodiscard]] bool QuitRequested() const noexcept { return m_quit; }
@@ -140,6 +148,13 @@ private:
     platform::ConsoleSize              m_size{};    // 先于 FrameBuffer：画布尺寸来源
     render::FrameBuffer                m_frameBuffer;
     Time                               m_time;
+
+    // S11：分段计时器。`Application` 构造时把自己**装到进程级 current 指针**上
+    //（见 .cpp），于是 `game/` 里的 `MINI_PROFILE_SCOPE` 不必拿到 Application 就能记账。
+    // ⚠️ 它**不进 `FrameContext`** —— 那条"只给值快照"的硬规矩不破：覆盖层要显示的
+    //    引擎帧数据由分支 F 甲的 `Game` 侧快照带回渲染路径（`S11_CHECKLIST` §4.5）。
+    Profiler                           m_profiler;
+
     bool                               m_quit = false;
 };
 

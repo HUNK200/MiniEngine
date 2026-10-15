@@ -11,6 +11,8 @@
 // 整个循环在 Run() 里，顺序是硬约束（S3_CHECKLIST 第 6.5 节）：
 //
 //   ① m_time.BeginFrame()      ← 帧首，早于一切。放到别处会让 dt 只量"干活耗时"
+//   ①b m_profiler.BeginFrame() ← S11：与帧首**同一拍**（两者的"帧首"必须是同一个点，
+//                                否则表格里各段之和与顶栏的 `Work` 对不上）
 //   ② m_input->Poll()          ← 抓事件，让本帧能看见按键
 //   ③ 对齐画布尺寸             ← 必须在 game.OnUpdate **之前**，否则游戏这一帧
 //                                拿到旧尺寸算出来的位置
@@ -18,7 +20,15 @@
 //   ⑤ Clear → game.OnRender → 顶栏
 //   ⑥ Present（失败 = 终端没了 → 请求退出）
 //   ⑦ 输入帧尾推进 + EndFrame + LimitFPS
+//      └ ⑦b m_profiler.EndFrame() 插在 `m_input->BeginFrame()` 与 `m_time.EndFrame()` **之间**
+//         （S11）—— 这样它和 `Work` 是同一口径；**绝不能**挪到 `LimitFPS` 之后，
+//         那会把 sleep 算进每一段（`S11_CHECKLIST` §8 坑 6）
 //   ⑧ 退出判定（放最后：本帧该干的活一件都不能少）
+//
+// S11 加进来的 5 个 PROFILE_SCOPE（都在 Run 里，花括号即作用域）：
+//   Frame（②~⑥ 整段）· Game.Update · Game.Render · StatsBar · Present
+//   ⚠️ 另外两个段名（Game.AI / Game.Bullets）在 `game/` 里 —— 本文件看不到它们，
+//      `engine` 不认识游戏（`PLAN` A.3）。
 //
 // 本文件**不出现任何 `<windows.h>`**：终端细节全在 platform 里。
 // ============================================================
@@ -74,9 +84,21 @@ Application::Application(AppConfig cfg)
 {
     // 构造完就进备用屏、隐藏光标（Console 构造函数里做的）。
     // 之后由 main 负责保证这个对象活得够久 —— 它的析构就是"恢复终端"。
+
+    // S11：把自己装成"进程级 current profiler"，这样 `game/` 里的 `MINI_PROFILE_SCOPE`
+    // 不必拿到 Application 就能记账。
+    // ⚠️ 未装时那些宏**空转** —— 单测里就是这种情形（`tests/test_profiler.cpp` 最后一条
+    //    专门钉了这条路径），所以它必须是安全的。
+    SetCurrentProfiler(&m_profiler);
 }
 
-Application::~Application() = default;
+Application::~Application()
+{
+    // 卸掉 current 指针：**必须发生在成员析构之前**（Application 的析构体先跑、
+    // 成员再逆序析构），否则别处再问 `CurrentProfiler()` 会拿到一个半死的对象。
+    // Profiler 自己没有别的清理动作，所以这里不做第二件事。
+    SetCurrentProfiler(nullptr);
+}
 
 void Application::Run(IGame& game)
 {
@@ -86,56 +108,92 @@ void Application::Run(IGame& game)
         // ① 帧首：dt 从这里算起
         m_time.BeginFrame();
 
-        // ② 抓事件 → 本帧就能看见按键
-        m_input->Poll();
+        // ①b S11：Profiler 与帧首**同一拍**（理由见文件头那句"两者必须是同一个点"）
+        m_profiler.BeginFrame();
 
-        // ③ 画布对齐（**必须在 OnUpdate 之前**）
-        //
-        // 为什么要自己再问一次尺寸，而不是等 Console 报告：
-        //   Console 只在 Present 时才发现尺寸变了（那时帧已经画完了），
-        //   而游戏需要"这一帧就是新尺寸"。所以这里主动问，问了就重建。
-        //
-        // 拒绝过小的尺寸：FrameBuffer 会抛 invalid_argument（w/h 必须为正），
-        // 而且 1 列的画面没有意义。**别拿异常当控制流** —— 拖窗口到极窄时
-        // 会连续触发 resize，用异常处理既慢又难查。跳过这一次，下一帧再说。
-        const platform::ConsoleSize now = m_console->Size();
-        if (now.width != m_size.width || now.height != m_size.height) {
-            // 两轴**一起**判断（与启动路径的逐轴替换不同）：条件成立才接受新尺寸，
-            // 否则跳过这一帧、保留旧尺寸。这段逻辑现在有机器用例守着（Core.CanvasSizeAcceptanceIsBoundarySafe）
-            if (IsUsableCanvasSize(now.width, now.height)) {
-                m_frameBuffer.Resize(now.width, now.height);
-                m_size = now;
+        // ★ S11 的计时块：`Frame` 覆盖 ②~⑥ 整段。
+        //   ⚠️ 它**必须在这里收口**（块结束即析构）—— 若让它活到 while 体末尾，
+        //      `LimitFPS` 的 sleep 就会被算进 `Frame`（`S11_CHECKLIST` §8 坑 6）。
+        //   ⚠️ 本块**不含** ⑦ 的 `m_input->BeginFrame()`：所以 `Frame` 会比顶栏的
+        //      `Work` 略小一点点（那一步的成本 = 每键一个 bool 的复位，量级可忽略）。
+        {
+            MINI_PROFILE_SCOPE("Frame");
+
+            // ② 抓事件 → 本帧就能看见按键
+            m_input->Poll();
+
+            // ③ 画布对齐（**必须在 OnUpdate 之前**）
+            //
+            // 为什么要自己再问一次尺寸，而不是等 Console 报告：
+            //   Console 只在 Present 时才发现尺寸变了（那时帧已经画完了），
+            //   而游戏需要"这一帧就是新尺寸"。所以这里主动问，问了就重建。
+            //
+            // 拒绝过小的尺寸：FrameBuffer 会抛 invalid_argument（w/h 必须为正），
+            // 而且 1 列的画面没有意义。**别拿异常当控制流** —— 拖窗口到极窄时
+            // 会连续触发 resize，用异常处理既慢又难查。跳过这一次，下一帧再说。
+            // ⚠️ 注意它**不 `continue`**（只是不接受新尺寸）⇒ 每帧必然走到 ⑦ 的
+            //    `m_profiler.EndFrame()`，"每帧恰好一次"这条契约因此成立。
+            const platform::ConsoleSize now = m_console->Size();
+            if (now.width != m_size.width || now.height != m_size.height) {
+                // 两轴**一起**判断（与启动路径的逐轴替换不同）：条件成立才接受新尺寸，
+                // 否则跳过这一帧、保留旧尺寸。这段逻辑现在有机器用例守着（Core.CanvasSizeAcceptanceIsBoundarySafe）
+                if (IsUsableCanvasSize(now.width, now.height)) {
+                    m_frameBuffer.Resize(now.width, now.height);
+                    m_size = now;
+                }
             }
-        }
 
-        // ④ 一帧的输入快照 + 更新
-        const FrameContext ctx{
-            m_time.Delta(),
-            m_time.FrameMs(),
-            m_time.MaxFrameMs(),   // 自启动以来最差的一帧（MaxFrameMs 仅有的生产调用点）
-            m_time.WorkMs(),
-            m_time.Fps(),
-            m_frameBuffer.Width(),
-            m_frameBuffer.Height(),
-            *m_input
-        };
+            // ④ 一帧的输入快照 + 更新
+            const FrameContext ctx{
+                m_time.Delta(),
+                m_time.FrameMs(),
+                m_time.MaxFrameMs(),   // 自启动以来最差的一帧（MaxFrameMs 仅有的生产调用点）
+                m_time.WorkMs(),
+                m_time.Fps(),
+                m_frameBuffer.Width(),
+                m_frameBuffer.Height(),
+                *m_input
+            };
 
-        game.OnUpdate(ctx);
+            {
+                // 只包住 `OnUpdate`：`ctx` 的构造算"引擎的账"，不算游戏更新（§6 的段名表）
+                MINI_PROFILE_SCOPE("Game.Update");
+                game.OnUpdate(ctx);
+            }
 
-        // ⑤ 画：Clear 由引擎负责，游戏只管往上写
-        m_frameBuffer.Clear();
-        game.OnRender(m_frameBuffer);
-        if (m_cfg.showStats) {
-            DrawStatsBar(ctx);   // 在游戏之后 → 游戏盖不掉
-        }
+            // ⑤ 画：Clear 由引擎负责，游戏只管往上写
+            //     ⚠️ `Clear` **不进任何 scope**：它是引擎自己的全屏填充，每帧成本恒等于
+            //        画布面积 —— 混进 `Game.Render` 会把"游戏到底画了多少"糊掉。
+            m_frameBuffer.Clear();
 
-        // ⑥ 提交。false = 终端已经没了（Console 被销毁 / 写失败）
-        if (!m_console->Present(m_frameBuffer)) {
-            RequestQuit();
-        }
+            {
+                MINI_PROFILE_SCOPE("Game.Render");
+                game.OnRender(m_frameBuffer);
+            }
+
+            if (m_cfg.showStats) {
+                MINI_PROFILE_SCOPE("StatsBar");
+                DrawStatsBar(ctx);   // 在游戏之后 → 游戏盖不掉
+            }
+
+            // ⑥ 提交。false = 终端已经没了（Console 被销毁 / 写失败）
+            {
+                MINI_PROFILE_SCOPE("Present");
+                if (!m_console->Present(m_frameBuffer)) {
+                    RequestQuit();
+                }
+            }
+        }   // ← `Frame` 在这里结束（析构即落库，进的是**本帧**的累加器）
 
         // ⑦ 帧尾推进 + 计时收尾 + 限帧（**最后一步**：上面的活一件都不能少）
         m_input->BeginFrame();
+
+        // ⑦b S11：**必须紧贴在 `m_time.EndFrame()` 之前** —— 这两句是"同一拍"的：
+        //     `Work`（顶栏）量到 EndFrame 为止，Profiler 的窗口也必须量到同一个点，
+        //     否则两组数字永远差一截、而且差在哪查不出来。
+        //     ⚠️ 挪到 `LimitFPS` 之后 = 把 sleep 算进每一段（§8 坑 6）。
+        m_profiler.EndFrame();
+
         m_time.EndFrame();
         m_time.LimitFPS(m_cfg.targetFps);
 
