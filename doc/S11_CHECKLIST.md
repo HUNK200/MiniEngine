@@ -22,9 +22,9 @@
 | 项 | 状态 |
 | --- | --- |
 | 本文件 | ✅ **2026-10-14 落纸**（施工图 + 前置事实 + 坑表 + 测试计划 + 正反向验收 + commit 切分） |
-| 方案评审 | 🔵 **待本人审核** —— 见 §14「请审的 4 个重点」与 §10「5 个待拍板分叉」 |
-| 代码 | ⬜ **未开工**（本文件不含任何实现；**未构建、未运行** —— 按 `AGENTS.md` §1.4，构建与运行归本人） |
-| 涉及引擎改动面 | `engine/core/`（新增 2 对 .h/.cpp）+ `engine/src/core/Application.cpp` 插桩 + 1 处注释修正；**`engine/render/` 不新增类** |
+| 方案评审 | ✅ **2026-10-15 审完并拍板** —— §14 的 4 个重点逐条有结论；§10 的 **A~E 全部定案**，并**新增分叉 F（取甲）** |
+| 代码 | ⬜ **未开工**（本文件不含任何实现；**未构建、未运行** —— 按 `AGENTS.md` §1.4，构建与运行归本人）。⚠️ 2026-10-15：**拍板已完成，只等本人说「开工」** |
+| 涉及引擎改动面 | `engine/core/`（新增 2 对 .h/.cpp）+ `engine/src/core/Application.cpp` 插桩 + 1 处注释修正 + **`engine/include/mini/platform/KeyCode.h`**（分叉 A 的新键 `T`：枚举 + `map[0x54]` + 改 `:31` 那句过期注释）；**`engine/render/` 不新增类** · **`IGame` 接口不动**（分叉 F 取甲） |
 | 同时关闭的债 | C13（F2 几何层）· C14（快照搬出 `game/`）· C15（删 F7 临时面板）· C23（子弹数观察面）· C31 补一条机器守卫 |
 | 规模预估 | engine ≈ 310 行 + game ≈ 120 行 + 测试 ≈ 15 条用例 ≈ **400 行量级**（与 `PLAN` 估的一致） |
 
@@ -68,6 +68,8 @@
 | ⛔ 动 C25 / C26（屏幕尺寸依赖、颜色归属） | 触发条件是"真有第二个后端"；现在不成立 |
 | ⛔ 换碰撞实现 / DDA / A* | S12 / S14 的事 |
 | ⛔ 给 `FrameContext` 加 `Logger&`/`Profiler&` 字段 | 会破坏"只给值快照"这条已定硬规矩（前置事实 2） |
+| ⛔ **改 `IGame::OnRender` 的签名**（**分叉 F 取甲**，2026-10-15 拍板） | 那会把 `FrameContext`（最后一个是 `const Input&`）交到渲染路径手里 ⇒ **输入漏进 `OnRender`**，与 S5/C4 的既定契约冲突；而且它是 S11 里唯一会改引擎公共接口的分叉（§4.5 有详细对比） |
+| ⛔ 把 overlay 的开关键写进 HUD 提示行（**分叉 A 拍板的附带决定**） | overlay 是**开发者工具**、不是玩法键 ⇒ 提示行只留"玩的时候真会用到"的键（该行已被 `HudFitsInTwoLinesWithoutOverflow` 精确钉住，改它要连列宽一起改） |
 
 ---
 
@@ -85,7 +87,7 @@
 | `tests/test_logger.cpp` | ~5 用例 | 见 §6 |
 | `tests/test_profiler.cpp` | ~7 用例 | 见 §6 |
 
-**改动（8 处）**
+**改动（9 处）**
 
 | 文件 | 改什么 | 为什么必须改 |
 | --- | --- | --- |
@@ -93,10 +95,28 @@
 | `engine/src/core/Application.cpp` | `Run` 里插 `BeginFrame/EndFrame` + 6 个 `PROFILE_SCOPE` | 计时点必须落在主循环 |
 | `engine/include/mini/core/Application.h` | **改 `:128` 那条过期注释** | 它预测覆盖层开关走 `RequestQuit`，与 §10 分叉 B 取法冲突 |
 | `engine/include/mini/render/FrameBuffer.h` | `DrawRect` 的"0 生产调用"注释 | S11 起它**有**生产调用者（前置事实 7） |
-| `game/src/Game.cpp` | overlay 开关 + 绘制 + `kDumpKey` 改走 Logger + 删 `DrawAiPanel` | 接线 |
-| `game/include/game/Game.h` | 加 `EnemyCount()/BulletCount()/OverlayOn()` 声明 | 观察面（消 C23） |
+| `game/src/Game.cpp` | overlay 开关（**`T`**）+ 绘制 + `kDumpKey` 改走 Logger + 删 `DrawAiPanel` + **提示段删 `F7`**（§3.1）+ **`m_lastFrame` 快照**（§4.5） | 接线；提示段与键位必须**同一 commit 内**改完，否则屏幕上会留一个按了没反应的键 |
+| `game/include/game/Game.h` | 加 `EnemyCount()/BulletCount()/OverlayOn()` 声明 + **私有 `FrameSnapshot m_lastFrame`**（§4.5） | 观察面（消 C23）+ 分叉 F 甲的落点 |
 | `tests/CMakeLists.txt` | 加两个测试文件 | 否则不进 runner |
-| `tests/test_game.cpp` | `SummarizeEnemyPanel` 相关判据改走新访问器 | F7 面板删了，旧判据会**红一片**（坑 17） |
+| `tests/test_game.cpp` | `SummarizeEnemyPanel` 相关判据改走新访问器 + **提示段精确串与 58/64 列宽断言**（§3.1 的 2/3 两条） | F7 面板删了、提示段字面量也改了 ⇒ 旧判据会**红一片**（坑 17 + `TECH_DEBT` C24） |
+| `engine/include/mini/platform/KeyCode.h` | 加 `Key::T` + `map[0x54] = Key::T`；改 `:31` 那句 `F1, F2, F3, F4 // S11 的 Debug Overlay 用` | 不加映射 ⇒ 新键**收不到任何事件**（`KeyFromVirtualKey` 返回 `Unknown`）；注释不改 ⇒ 留下**假信息**（§3.1 第 6 条） |
+
+### 3.1 分叉 A 的连带改动清单（**2026-10-15 补**）
+
+⚠️ 施工图原稿只写了"删 F7 面板"**一处**。实际上 `F7` 现在**在 HUD 提示段里**（S10 步骤 6 加进去的）⇒ 改键位要扫 **6 处**：
+
+| # | 位置 | 改什么 |
+| --- | --- | --- |
+| 1 | `game/src/Game.cpp` `DrawHud` 行 2 的字面量（`:1012-1015`） | 去掉 `F7`（**不加 `T`** —— 见下） |
+| 2 | `tests/test_game.cpp:1381` | `MINI_CHECK(hint == "WASD SPC Q F4")` 的精确串 |
+| 3 | `tests/test_game.cpp:1311-1312` | 两行真实宽度 **58 / 64 → 58 / 61**（删掉 `" F7"` 三个字符）。⚠️ **以落地时的实测为准** —— 这条断言本来就是"数出来的真实宽度"，不是推导出来的（C24 的纪律） |
+| 4 | `game/src/Game.cpp:974-976` 的列宽注释 | 里面逐段数了 64 列，要重数 |
+| 5 | `Game.cpp:996-1005`"提示段恰好那五个键"的**注释** | 段落理由跟着改（断言本体是第 2 条） |
+| 6 | `engine/include/mini/platform/KeyCode.h:31` | `F1, F2, F3, F4, // S11 的 Debug Overlay 用` → 改成实际用到的键，并注明"F1/F3 在本机被别的软件抢占" |
+
+**⚠️ 提示段不写 `T`（2026-10-15 与键位一起拍板）**：overlay 是**开发者工具**，不是玩法键。
+好处：第 1~5 条全部退回"只删 `F7`"，改动面最小；代价：屏幕上没有 overlay 的提示，靠你记。
+（`TECH_DEBT` **C15** 当年记的"面板键不在 HUD 提示行里"这条已因 S10 步骤 6 失效 —— 现在它在。）
 
 ---
 
@@ -250,6 +270,33 @@ void DrawDebugOverlay(mini::render::FrameBuffer& fb, const OverlayData& d) noexc
 
 ⚠️ 三条都**不是"为测试而加"**：overlay 的表里真的显示它们。这也是 `TECH_DEBT` **C23** 的出路（"给一个公开观察面"）。
 
+### 4.5 分叉 F 取甲：`Game` 的帧数据快照（**2026-10-15 新增**）
+
+⚠️ **施工图原稿漏了一环**：`IGame::OnRender` **只有 `(render::FrameBuffer&)`**（`Application.h:99`）
+⇒ `frameMs / maxFrameMs / workMs / fps` **送不进渲染路径**，§6 原来写的 `BuildOverlayData(ctx)` **根本写不出来**。
+
+**取甲**：`Game` 在 `OnUpdate` 里拷一份**只读标量快照**，`OnRender` 读它。
+
+```cpp
+// game/Game.h（私有）
+struct FrameSnapshot {                 // ⛔ 故意**不放** const Input& —— 那正是 C4 关掉的东西
+    float fps = 0, frameMs = 0, maxFrameMs = 0, workMs = 0;
+    int   screenWidth = 0, screenHeight = 0;
+};
+FrameSnapshot m_lastFrame{};
+```
+
+| 项 | 结论 |
+| --- | --- |
+| 数据新鲜度 | **引擎 4 项滞后一帧**（⚠️ 与顶栏 `Rows` 同款，见 §16.3 ② —— 已实测确认顶栏也滞后）；**游戏计数当帧**（`OnRender` 里现读 `m_enemies.size()`、`m_ammo` 等） |
+| 为什么不用**乙**（把 `ctx` 传给 `OnRender`） | `FrameContext` 的最后一个成员是 **`const Input&`** ⇒ 等于**把输入交到渲染路径手里**，与 S5/C4 的既定契约（`Game.h:25-43`："`OnRender` 完全不碰输入"）冲突；且它是 S11 唯一会改引擎**公共接口**的分叉（连带 `tests/test_game.cpp` **8 处** `game.OnRender(fb)` 调用点） |
+| 为什么不用**乙′**（新窄结构体，不带 Input） | 干净，但**多一个只有一处使用的公共结构体** ⇒ 同 C18/C25 那类"给不存在的病吃药" |
+| 为什么不用**丙**（引擎画面板） | 引擎要画 `foes/shots` 就必须认识游戏概念 ⇒ 破坏单向依赖（`AGENTS.md` §3 / `PLAN` A.3）；只画 Profiler 那半则**功能残缺** |
+| `engine/` 改动 | **0 行** ← 这是甲的主要价值（§3 的"engine 改动面小"因此重新成立） |
+| Profiler 表从哪来 | **不需要 ctx**：`CurrentProfiler()->Snapshot(rows, cap)` —— §4.2 那两个全局访问器的**第一个真实用途** |
+| 新增测试面 | **0 条**（`BuildOverlayLines` 是纯函数、不进这一层；`Game` suite 那 3 条只碰 `OverlayOn()` / `EnemyCount()` / `BulletCount()`） |
+| 何时会后悔 | 若将来要让 overlay 显示"**本帧内**刚发生的东西"（例：本帧击杀数）—— 解法已内建：**引擎 4 项走滞后快照，游戏计数当帧现读** |
+
 ---
 
 ## 5. 数据结构与所有权
@@ -262,6 +309,7 @@ void DrawDebugOverlay(mini::render::FrameBuffer& fb, const OverlayData& d) noexc
 | 段名字符串 | 调用方 | **静态存储** | Profiler 只存指针 ⇒ 头文件写明"只接受字面量"契约（坑 1） |
 | overlay 文本 | 栈上定长 `char[14][48]` | 一帧 | 不缓存进 `Game`、不堆分配 |
 | `m_showOverlay` / `m_showGeometry` | `Game` | **进程**（不随重开归零，同 `m_showAiPanel` 的作用域） | 纯"要不要画"，不参与游戏逻辑 |
+| `FrameSnapshot m_lastFrame`（分叉 F 甲） | `Game` | **一帧**（每帧被 `OnUpdate` 覆盖） | **只读标量**：引擎 4 项滞后一帧、游戏计数当帧现读；⛔ 结构体里不放 `Input`（§4.5） |
 
 Profiler 内存：`120 × 8 × 4B = 3.84 KB` + 小头 ⇒ 成员即可。
 
@@ -283,9 +331,12 @@ Profiler 内存：`120 × 8 × 4B = 3.84 KB` + 小头 ⇒ 成员即可。
 ```
 
 `Game::OnUpdate` **不新增帧序步骤**，只在既有"④ 按键处理"里加三条：
-`F1 → m_showOverlay 取反` / `F2 → m_showGeometry 取反` / `F4 → 走 Logger 写快照`
+**`T` → `m_showOverlay` 取反** / `F2 → m_showGeometry 取反` / `F4 → 走 Logger 写快照`
 （与 `④Q` / `④bF7` 同级，**冻结状态下照跑**，同 `④bF7` 的理由）。
-`Game::OnRender` 末尾：`if (m_showOverlay) DrawDebugOverlay(fb, BuildOverlayData(ctx));`
+⚠️ **不是 `F1` / `F3`** —— 两个都在本机被别的软件占用（`F1` 是 2026-10-15 的新证据，见 §3.1 / 坑 14）。
+`OnUpdate` 里还多**一行**：拷 `m_lastFrame`（§4.5 分叉 F 甲）。
+`Game::OnRender` 末尾：`if (m_showOverlay) DrawDebugOverlay(fb, BuildOverlayData(m_lastFrame, rows, rowCount));`
+⚠️ **原稿这里写的 `BuildOverlayData(ctx)` 是错的**：`OnRender` 拿不到 `ctx`（`Application.h:99`）—— 见 §4.5。
 
 **overlay 内容（示例形态；标签全部规避保留字形，见坑 11）**：
 
@@ -306,7 +357,7 @@ Profiler 内存：`120 × 8 × 4B = 3.84 KB` + 小头 ⇒ 成员即可。
 
 ---
 
-## 7. 测试计划（约 15 条；**判据一律不写死数字**，能用常量算就用常量算 —— `S5_CHECKLIST` 10.4 的纪律）
+## 7. 测试计划（**16 条**：Logger 5 + Profiler 7 + Game 4；**判据一律不写死数字**，能用常量算就用常量算 —— `S5_CHECKLIST` 10.4 的纪律）
 
 ### 7.1 Logger suite（5）
 
@@ -330,13 +381,14 @@ Profiler 内存：`120 × 8 × 4B = 3.84 KB` + 小头 ⇒ 成员即可。
 | `DisabledIsNoOp` | `SetEnabled(false)` ⇒ `AddSample`/`EndFrame` 不改任何数 |
 | `UnbalancedScopeIsReported` | `m_depth > 0` 时 `EndFrame` 留下可观察标志 |
 
-### 7.3 Game suite（3）
+### 7.3 Game suite（4）
 
 | 用例 | 判据 |
 | --- | --- |
 | `CountsMatchWorld` | 杀 1 个 ⇒ `foes` 减 1；开 1 枪 ⇒ `shots` 增 1（与 `EnemyCount/BulletCount` 一致） |
 | `OverlayLinesAvoidReservedGlyphs` | 对 `BuildOverlayLines` 的**每一行**断言不含 `'@' / 'E' / '*'`（C31 的机器守卫） |
 | `OverlayIsOffByDefault` | 不按键时 `OverlayOn()==false`，且世界行的屏幕字符数与按键前一致 |
+| `OverlayTogglesWithT`（**2026-10-15 补，配分叉 A**） | 按 `T` ⇒ `OverlayOn()` 变 `true`、再按变 `false`；并在 `tests/test_input_state.cpp` 加一条 `KeyFromVirtualKey(0x54) == Key::T`（**镜像 S9 删 `K` 时的做法**：那时删的是那条断言） |
 
 反向验证（预测 → 实测 → 比对 → 还原）**不属于用例，属于 §9 流程**。
 
@@ -359,10 +411,14 @@ Profiler 内存：`120 × 8 × 4B = 3.84 KB` + 小头 ⇒ 成员即可。
 | 11 | **C31：overlay 写出 `@`/`E`/`*`** | `CountChar(fb,'E')` 静默多算 ⇒ 既有用例假红/假绿（不是红，是**算错**）。定死标签表 + §7.3 那条字形用例 |
 | 12 | `F4` 写盘污染那一帧 `workMs` | 保持"只有手动按才写"；默认 `Info`，**绝不**每帧刷盘 |
 | 13 | C14 的格式兼容 | 快照正文**保持逐行 `key=value`**，Logger 只加前缀 ⇒ 老文件仍可 grep |
-| 14 | `Key::F3` 本机被别的软件占用（已栽两次） | **不映射 F3**；"按了没反应"是**假提示**（C15 的教训），留空更好 |
+| 14 | **F 行的键会被别的软件抢走**：`F3` 栽过两次；**`F1` 2026-10-15 实测也被占** | ⇒ overlay 改用**字母键 `T`**；`F3` 仍**不映射**。"按了没反应"是**假提示**（C15 的教训），留空比映射一个收不到的键好 |
 | 15 | `DrawRect` 注释写"等 S12+" | S11 成了首个生产调用者 ⇒ 注释必须同步，否则后人当死代码删 |
 | 16 | overlay 默认**关** | 保持关，既有 197 条"数屏幕字符"判据不受影响（这是 C31 的默认安全边界） |
 | 17 | `SummarizeEnemyPanel`（`tests/test_game.cpp`）依赖 F7 面板 | 删面板会**红一片**；必须先让判据改走 `EnemyCount()`，**再**删面板（顺序不能反） |
+| 18 | **新键 `T` 的可达性只能到 commit 4 才验** | 它需要一个**可观察效果**才有"收到没收到"的判据 ⇒ commit 4 的验收项里必须有"**按 `T` 出现/消失 overlay**"。万一也收不到 ⇒ 走 fallback 阶梯 `O` → `I` → `Tab` → `F6`（每个 +2 行） |
+| 19 | `KeyCode.h:31` 注释写 `F1, F2, F3, F4 // S11 的 Debug Overlay 用` | 键位一改它就是**假信息**（"看起来配好了"那一类，同 A4b 的教训）⇒ 必须同步；实际只用到 `F2`（`F4` 是快照） |
+| 20 | 改了 HUD 提示段字面量 ⇒ **列宽断言**（58 / 64）会红 | 那是**安全的失败方向**（C24）：按实测值改成 58 / 61 即可，**别以为是 bug**（§3.1 第 3 条） |
+| 21 | **overlay 常驻会污染读数**：它自己每帧都在变 ⇒ 顶栏 `Rows` / `Work` 被永久抬高 | 所以 §16 的基线是**插桩前 + overlay 前**采的；对比数字时别把"开了 overlay 的 Work"与 §16.2 的 0.5ms 直接比 |
 
 ---
 
@@ -372,7 +428,7 @@ Profiler 内存：`120 × 8 × 4B = 3.84 KB` + 小头 ⇒ 成员即可。
 
 ```powershell
 cmake --build build --config Debug                     # 期望 0 warning
-.\build\bin\Debug\mini_tests.exe                       # 期望 197 + ~15 = ~212 passed, 0 failed
+.\build\bin\Debug\mini_tests.exe                       # 期望 197 + 16 = 213 passed, 0 failed
 ctest --test-dir build -C Debug --output-on-failure    # 期望 1/1
 ```
 
@@ -390,17 +446,21 @@ ctest --test-dir build -C Debug --output-on-failure    # 期望 1/1
 
 | # | 看什么 |
 | --- | --- |
-| 1 | `F1` 开 overlay：右侧出现 `frame/max/work/fps` + profile 表，数字随场景变 |
+| 1 | **`T`** 开 overlay（⚠️ **不是 `F1`** —— `F1`/`F3` 本机被别的软件占）：右侧出现 `frame/max/work/fps` + profile 表，数字随场景变。★ **这一条同时是"新键没被别的软件抢走"的验证**（坑 18） |
 | 2 | **v0.4 判定**：能指着表说出"渲染/更新占了多少 ms"；`Game.Render` 或 `Game.Update` 是最大项之一 |
-| 3 | 开/关 overlay 前后，`work` 与顶栏 `Max` 的差 **< 0.2ms**（Profiler 自身开销） |
+| 3 | 开/关 overlay 前后，`work` 与顶栏 `Max` 的差 **< 0.2ms**（Profiler 自身开销）；⚠️ 对照物是 §16.2 的 **0.5ms**（那次是**没有 overlay** 时采的） |
 | 4 | `F2`：实心格 / 实体占格用不同底色可见（C13） |
 | 5 | `F4`：`miniengine_debug.log` 仍有完整 `key=` 行、且新增 `[时间][LEVEL]` 前缀（C14 未破坏） |
-| 6 | `F7`：按下去**没反应**（C15 删净，含枚举映射、常量、面板表头提示） |
+| 6 | `F7`：按下去**没反应**，且 **HUD 提示行里也不再出现 `F7`**（C15 删净：枚举映射、常量、面板表头提示、提示段字面量） |
 | 7 | overlay 满屏时 `@` 仍可见（层级正确） |
+| 8 | **开了 overlay 之后既有观察面不变**：世界行里 `@` / `E` / `*` 的个数与关掉时**一致**（C31 的肉眼侧；机器侧是 §7.3 的字形用例 + §9.2 的 R3） |
 
 ---
 
-## 10. 待拍板的 5 个分叉（🔵 本次落纸时尚未定；括号内为推荐）
+## 10. 拍板记录（**2026-10-15 定案**）—— 原「待拍板的 5 个分叉」
+
+> 下半张表**保留原推荐与理由** —— 半年后回看"当时为什么这么选"比"选了什么"更重要。
+> ⚠️ **2026-10-15 的新证据**：`F1` 在本机**也被别的软件占用**（`F3` 早有两次记录）⇒ A 的键位从 `F1` 改为字母键 **`T`**。
 
 | 分叉 | 选项 | 推荐与理由 |
 | --- | --- | --- |
@@ -409,8 +469,21 @@ ctest --test-dir build -C Debug --output-on-failure    # 期望 1/1
 | **C. 观察面** | ① 加 `EnemyCount()/BulletCount()`；② 继续解析面板文本 | **①**：一次性消掉 C23，并把 `tests/test_game.cpp` 从"数字符"迁走（判据更稳）。代价：两个新公开接口（但 overlay 真用） |
 | **D. 日志文件** | ① 沿用 `miniengine_debug.log` + 前缀；② 另开 `miniengine.log` | **①**：C14 明写"格式别改、老文件要还能读" |
 | **E. Profiler 可测性** | ① `AddSample(name,ms)` 走生产路径；② 注入时钟函数 | **①**：无"测试专用接口"，用例确定性也更好；② 会引入一个只有测试用的函数指针 |
+| **F. overlay 的帧数据从哪来**（**2026-10-15 新增，原稿漏了**） | **甲** `Game` 缓存只读标量快照；**乙** 改 `IGame::OnRender` 签名传 `ctx`；**乙′** 传一个新的窄结构体；**丙** 引擎画面板 | **甲**：唯一"`engine/` 0 行 + 测试 0 处 + 不把 `Input` 漏进渲染路径"的选项；代价只有滞后一帧（与顶栏 `Rows` 同款，§16.3 ② 已实测）。详见 §4.5 |
 
-⚠️ **这 5 条不定，施工图的开关表、文件清单与测试计划就无法冻结** ⇒ 建议先拍 A，其余可按推荐值走。
+### 拍板结论（2026-10-15，本人）
+
+| 分叉 | 拍板 |
+| --- | --- |
+| **A** | ✅ **取 ①，但 overlay 改用 `T`**（`F1` 在本机也被占）⇒ 定案：**`T`=overlay · `F2`=几何 · `F4`=写快照 · `F3` 不映射 · 删 `F7`**；**提示行不加 `T`**；`PLAN` 的 S11 表改一处 |
+| **B** | ✅ ① `game/DebugOverlay.h` |
+| **C** | ✅ ① 加 `EnemyCount()/BulletCount()`（同时消 C23） |
+| **D** | ✅ ① 沿用 `miniengine_debug.log` + 前缀 |
+| **E** | ✅ ① `AddSample` 走生产路径 |
+| **F** | ✅ **甲**（`Game` 侧只读快照；**不动 `IGame`**） |
+
+⚠️ 两条连带：**A 有 6 处 ripple**（原稿只列 1 处 ⇒ 见 §3.1）· **F 是原稿漏掉的一环**（`OnRender` 拿不到 `ctx` ⇒ 见 §4.5）。
+⇒ 原稿那句"这 5 条不定…无法冻结"到此解除：**§3 的文件清单、§7 的测试计划、§11 的 commit 切分现在都是冻结状态**。
 
 ---
 
@@ -421,8 +494,8 @@ ctest --test-dir build -C Debug --output-on-failure    # 期望 1/1
 | 1 | `feat: core/Logger（分级 + 写文件 + 用例）` | `Logger.h/.cpp` + `test_logger.cpp` + `engine/CMakeLists.txt` + `tests/CMakeLists.txt` |
 | 2 | `feat: core/Profiler（累加器 + 120 帧环形缓冲 + 用例）` | `Profiler.h/.cpp` + `test_profiler.cpp` |
 | 3 | `feat: Application 接线 PROFILE_SCOPE` | `Application.cpp` 插桩 + `Application.h:128` 注释修正 |
-| 4 | `feat: game 侧 Debug Overlay（F1）+ EnemyCount/BulletCount` | `DebugOverlay.h` + `Game` 接线 + 3 条用例 |
-| 5 | `refactor: C14 快照改走 Logger + 删 F7 面板（C15）+ F2 几何层（C13）` | ⚠️ **必须按坑 17 的顺序**：先迁判据、再删面板 |
+| 4 | `feat: game 侧 Debug Overlay（`T` 开关）+ EnemyCount/BulletCount` | `DebugOverlay.h` + `Game` 接线（含 §4.5 的 `m_lastFrame`）+ **`KeyCode.h` 的 `T` 映射** + `FrameSnapshot` 的填/读 + **4 条用例**（§7.3） |
+| 5 | `refactor: C14 快照改走 Logger + 删 F7 面板（C15）+ F2 几何层（C13）` | ⚠️ **必须按坑 17 的顺序**：**先迁判据 → 再删面板**；**并把 §3.1 的 6 处 ripple 一起改完**（提示段字面量 / 精确串 / 58·61 列宽 / 两处注释 / `KeyCode.h:31`） |
 | 6 | `docs: S11 收口（PLAN/TECH_DEBT/SHOWCASE/README/AGENTS + 版本 bump）` | — |
 
 ---
@@ -431,10 +504,10 @@ ctest --test-dir build -C Debug --output-on-failure    # 期望 1/1
 
 | 文档 | 改什么 |
 | --- | --- |
-| `doc/MiniEngine_PLAN.md` | S11 小节标 ✅ + 落地偏差；G 节 v0.4 判定回填 |
-| `doc/TECH_DEBT.md` | 关 **C13 / C14 / C15**；改 **C23**（观察面 = 新访问器）；更新 **C31**（overlay 纪律 + R3）；新增条目（"Logger 用 current 指针"等） |
+| `doc/MiniEngine_PLAN.md` | S11 小节标 ✅ + 落地偏差；G 节 v0.4 判定回填；⚠️ **S11 表的键位要按分叉 A 改**（`F1~F4 开关` / `F4 切换` → 实际的 `T` / `F2` / `F4`）—— 这是本阶段唯一与 `PLAN` 正面冲突处 |
+| `doc/TECH_DEBT.md` | 关 **C13 / C14 / C15**；改 **C23**（观察面 = 新访问器）；更新 **C31**（overlay 纪律 + R3）；新增条目（"Logger 用 current 指针"、"overlay 数据走 Game 侧快照（分叉 F 甲）"等） |
 | `doc/SHOWCASE_PLAN.md` | 动作 4 状态 + §2 / §5 |
-| `README.md` | 操作表加 `F1 / F2`；状态行版本 → `0.4.0-dev` |
+| `README.md` | 操作表加 **`T`**（overlay）与 `F2`（几何）；状态行版本 → `0.4.0-dev` |
 | `engine/src/core/Version.cpp` + `tests/test_smoke.cpp` | 版本 bump（**4 处落点 + 1 处举例注释**，同 C3 的口径） |
 | `AGENTS.md` §2 | 本文件的一行（**落纸时已加**） |
 
@@ -442,22 +515,34 @@ ctest --test-dir build -C Debug --output-on-failure    # 期望 1/1
 
 ## 13. 与 `PLAN` 的偏差预告（落地时登记进偏差表）
 
-1. **F3 不启用**：`PLAN` 写"F1~F4 开关"，实际 F3 本机被占 ⇒ 只有 F1/F2/F4。
+1. **`F1` / `F3` 都不启用，overlay 走字母键 `T`**：`PLAN` 写"F1~F4 开关"，它的 S11 表还写"F4 切换" ⇒ 实际是 **`T`**（overlay）/ **`F2`**（几何）/ **`F4`**（写快照）。⚠️ 依据是**本机实测**：`F3` 栽过两次、**`F1` 2026-10-15 也被占用**。
 2. **overlay 放 `game/`**：`PLAN` 没写归属；按"引擎不认识游戏"落到 game 侧。
 3. **不引 `std::format`**：`PLAN` 的 S11 表里列了它，实际用 `string_view` + 调用方拼接。
 4. **`AddSample` 是正式 API**：`PLAN` 只写 `ScopedTimer`，本方案多一层以换取可测性。
 5. **`Application.h:128` 的预测落空**：覆盖层开关**不走** `RequestQuit`（它是 game 侧状态）。
+6. **`IGame` 接口不变**（分叉 F 甲）：`PLAN` 没写 overlay 的数据通路；本方案**不**改 `OnRender` 签名，改用 `Game` 侧只读快照。⚠️ 它同时是一次**修正** —— 原稿 §6 写的 `BuildOverlayData(ctx)` 在 `OnRender` 里**根本写不出来**。
+7. **HUD 提示段不含 overlay 键**：`PLAN` 没说要不要进提示行；本方案**不进**（开发者工具；且那一行被 `HudFitsInTwoLinesWithoutOverflow` 的列宽断言钉住）。
 
 ---
 
-## 14. 请审的 4 个重点（本次落纸时登记的评审焦点）
+## 14. 评审重点 —— **2026-10-15 已审，结论如下**
 
-> 2026-10-14 本人要求：把方案与「审核内容」一起落纸，**之后**再决定。以下 4 条是评审时的第一优先。
+> 2026-10-14 本人要求：把方案与「审核内容」一起落纸，之后再决定。
+> 2026-10-15 审完并拍板；每题保留**原问题的表述**，前面加**结论**。
 
-1. **§10 分叉 A（键位）** —— 唯一与 `PLAN` 原文正面冲突处；不定它，§3 的开关表与 §7 的测试计划写不下去。
-2. **§4.2 的拆法**（累加器 / 时钟分家）—— 是不是多余的一层：它换来"不用伪造时钟也能做确定性断言"，代价是多一个公开方法 `AddSample`。
-3. **§8 坑 11 + §9.2 的 R3（C31）** —— overlay 往屏幕写字会静默污染既有"数屏幕字符"判据；**不认这条，overlay 只能在默认关的状态下存在**。
-4. **§11 的 commit 5 顺序**（坑 17）—— 必须"先迁判据、再删面板"，否则那一步会红一片。
+1. **§10 分叉 A（键位）** ⇒ ✅ **取 ①，但 overlay 改用 `T`**（`F1` 本机也被占）。
+   落地时必须**同时改 `PLAN` 的 S11 表**（唯一正面冲突处），并按 **§3.1 扫 6 处 ripple**。
+2. **§4.2 的拆法**（累加器 / 时钟分家）⇒ ✅ **保留**。"是不是多余的一层"这个怀疑**不成立**：
+   `AddSample` 在**生产路径**上（`ScopedTimer` 析构调它）⇒ 用例可以注入已知 ms 做**确定性**断言。
+   砍掉它，Profiler 只能测"跑过没有"、测不到"数对不对" —— 同 `TECH_DEBT` **C34** 那种
+   "看着有守卫、其实顶不到边界"的坑。
+3. **§8 坑 11 + §9.2 的 R3（C31）** ⇒ ✅ **认，而且比原稿更硬**。§16.3 ① 刚实测证明
+   "屏幕是共享命名空间"这类问题会**静默失真**（`Rows` 就是被顶栏自己污染的）。
+   ⇒ overlay **默认关**（坑 16）+ 标签定死（用 `foes`/`shots`，**不写 `Enemy`**）+ §7.3 字形用例 + **R3 必须真跑**。
+4. **§11 的 commit 5 顺序**（坑 17）⇒ ✅ **同意，且范围要扩**：除"先迁判据、再删面板"，
+   还要带上 **§3.1 的 6 处 ripple**（至少提示段精确串与列宽断言），否则 commit 5 会红一片。
+5. **（本步新增）§10 分叉 F**（overlay 的帧数据通路）⇒ ✅ **取甲**（§4.5）。
+   ⚠️ 它是**原稿漏掉的一环**：不动它，commit 4 根本写不完。
 
 ---
 
@@ -465,9 +550,11 @@ ctest --test-dir build -C Debug --output-on-failure    # 期望 1/1
 
 | 步 | 谁 | 做什么 |
 | --- | --- | --- |
-| 1 | 本人 | 审 §14 的 4 个重点 + 拍 §10 的 A~E |
-| 2 | 本人 | 说一声"开工"；此后按 §11 的 6 个 commit 逐条推进（AI 只编辑文件，本人构建/跑测/看现象） |
+| 1 | 本人 | ✅ **已完成（2026-10-15）**：审 §14 的重点 + 拍 §10 的 A~E **与新增分叉 F**（记录见 §10 的「拍板结论」） |
+| 2 | 本人 | 说一声「开工」；此后按 §11 的 6 个 commit 逐条推进（AI 只编辑文件，本人构建 / 跑测 / 看现象） |
 | 3 | 本人 | S11 收口时按 §12 同步文档 + 版本 bump 到 `0.4.0-dev` |
+
+⚠️ **开工前的最后一道约定**（`AGENTS.md` §1.1）：**即使已经拍板，AI 也要先问一句「要我开始写代码吗」**再动源文件。
 
 ⚠️ 与展示层的关系：`SHOWCASE_PLAN` §2 明写「**不要为了做 1~3 而暂停 S11**」；本文件的落纸**不改任何代码**，也就不占 S11 的施工预算。
 
