@@ -1020,6 +1020,41 @@ MINI_TEST(Game, EnemyDiesAndDisappears)
 // ============================================================
 
 // ------------------------------------------------------------
+// M1. 2026-10-16（临时需求 · 档 1）：**地图不许再"空旷"** —— 视口内每一行都要看得到墙
+//
+// 判据（从屏幕反推，不需要新 API）：`DrawMap` 把实心格画成 `#`（含越界）；
+// 画布 80×25 下相机整数原点恒为 (0,0)（地图 200×200 比视口大得多）⇒
+// 屏幕行 `row` ↔ 世界行 `row - kHudRow` ⇒ "**世界区每一行都有 `#`**"就等于"墙围住了整个视口"。
+// ⚠️ 从 `kTestHudRow + 1` 起扫：行 `kTestHudRow` 是 HUD 的第二行，`DrawHud` 会把它**整行铺满**
+//    （先铺空格、再写字）⇒ 那一行看不见地图 ⇒ 拿它判"有没有墙"会**假红**。
+// ⚠️ 反向验证（R）：把 `Game::OnStart` 里"全图填墙"那段注掉 ⇒ 地图退回旧的稀疏点阵 ⇒ 这条会红。
+// ------------------------------------------------------------
+MINI_TEST(Game, EveryVisibleRowSeesAWall)
+{
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+
+    game.OnStart();
+    StartPlaying(game, input, fb);
+
+    int rowsWithoutWall = 0;
+    for (int row = kTestHudRow + 1; row < fb.Height(); ++row) {
+        int wallCount = 0;
+        for (int col = 0; col < fb.Width(); ++col) {
+            if (AsciiCell(fb, col, row) == '#') {
+                ++wallCount;
+            }
+        }
+        if (wallCount == 0) {
+            ++rowsWithoutWall;
+        }
+    }
+
+    MINI_CHECK_EQ(rowsWithoutWall, 0);   // ★ 一行都看不到墙 ⇒ 地图又变回"空旷"了
+}
+
+// ------------------------------------------------------------
 // G1b. 子弹的**飞行与收尾**：飞够远之后必须已经消失；**飞行期间不许出现在实心格上**
 //
 // ⚠️ **2026-10-16 修正（本用例的第一版写错了，错在预算）**：
