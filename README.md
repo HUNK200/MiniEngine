@@ -4,7 +4,7 @@
 >
 > *A dependency-free 2D game engine in C++20 that renders a playable game entirely inside a terminal. Windows only.*
 
-**状态**：**v0.4「看得清」已达成**（可玩的一局 + 三个调试出口：`T` 面板 / `F2` 几何层 / `F7` 列表）· `VersionString()` = `0.4.0-dev` · 用例 **216 条**（23 个 suite）· 反向验证 **12 场**（S10）· 人眼验收 **28 条**（S10）。
+**状态**：**v0.4「看得清」已达成**（可玩的一局 + 三个调试出口：`T` 面板 / `F2` 几何层 / `F7` 列表）· `VersionString()` = `0.4.0-dev` · 用例 **220 条**（23 个 suite）· 反向验证 **17 场**（S10 的 12 + S11 的 5）· 人眼验收 **47 条**（S10 的 28 + S11 的 19）· 可试玩 demo（S11.5）。
 
 [![CI](https://github.com/HUNK200/MiniEngine/actions/workflows/ci.yml/badge.svg)](https://github.com/HUNK200/MiniEngine/actions/workflows/ci.yml)
 
@@ -26,6 +26,24 @@ ctest --test-dir build -C Debug --output-on-failure
 ```
 
 ⚠️ 生成器是**多配置**的：`--build` 与 `ctest` 都必须带配置（`--config Debug` / `-C Debug`），漏了会得到"找不到可执行文件"。
+
+## 给别人试玩（不用装编译环境）
+
+包是**一个 zip**：`MiniEngine-Demo-v0.4.0-windows-x64.zip`（exe + 启动器 + 玩家卡，约 **174 KB**）。
+
+- **拿包**：本仓库 **Releases 页面**（`v0.4.0` 的资产）；或自己打一个：
+
+  ```powershell
+  powershell -File tools\pack_demo.ps1     # ⇒ dist\MiniEngine-Demo-v0.4.0-windows-x64.zip
+  ```
+
+- **对方要做的**：解压 → 双击 **`开始试玩.cmd`**。不需要 Visual Studio / CMake / VC++ 可再发行组件
+  （exe 用**静态 CRT** 编译，依赖表里只有系统 DLL）。
+- **正文**（键位表、已知限制、反馈方式）在 `doc/RELEASE_NOTES_v0.4.md`；包里那份叫 `玩法与已知限制.txt`。
+
+⚠️ 两点如实说明：**未做数字签名**（首次运行可能弹 SmartScreen ⇒ 点"更多信息 → 仍要运行"）；
+**ConPTY 终端**（Windows Terminal / VS Code）里"按住移动"会退化、窗口也不会自动放大
+⇒ 所以启动器**优先用经典控制台**（`conhost.exe`），在那里面长按与自动放大都正常。
 
 ## 操作
 
@@ -84,7 +102,8 @@ HUD 两行（**58 / 64 列**）：`pos / tile / sumdt / v` + `hp / ammo / kills 
 
 - `engine/` —— 引擎：终端 IO（Windows 控制台 + ANSI）、帧缓冲与**行差分**渲染、时间与限帧、数学（`Vec2`/`AABB`/`Ray`）、世界与碰撞、相机、敌人 AI 状态机。**不认识任何游戏概念**。
 - `game/` —— 一个具体的游戏：地图、波次、弹药、HUD、状态机接线。**只 include 引擎的公共头**。
-- `tests/` —— 自研的 MiniTest 框架 + **216 条用例**（23 个 suite）。
+- `tests/` —— 自研的 MiniTest 框架 + **220 条用例**（23 个 suite）。
+- `tools/` —— 开发侧脚本：**打包 demo**（`pack_demo.ps1`：构建 → `dumpbin` 零依赖自检 → zip）+ 打进包里的启动器与玩家卡。**不进 CMake、不参与构建**。
 - `doc/` —— 施工图与台账：前置事实、坑表、逐条落地偏差、反向验证记录、技术债。**判断过程都在这里**。
 
 ## 已知限制（照实写）

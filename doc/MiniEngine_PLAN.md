@@ -206,6 +206,10 @@ c++_simple_engine/
 │   │   │               #   （D18：用例要拿它们算期望值）、HUD 就是 `DrawHud` 一个函数。
 │   └── src/                    # S5：Game.cpp
 │
+├── tools/                      # **S11.5 新建**：开发侧脚本（**不进 CMake、不参与构建**）
+│   ├── pack_demo.ps1           #   打包 demo：构建 → `dumpbin` 零依赖自检 → 组目录 → zip
+│   └── demo/                   #   打进 zip 的三件套模板（启动器 `.cmd` + 玩家卡 `.txt`）
+│
 └── tests/
     ├── CMakeLists.txt
     ├── MiniTest.h              # 自制极简断言框架（~80 行）
@@ -709,6 +713,18 @@ AI 不会自己跑构建或 exe。一个步骤的 commit 由本人在验证通�
 | 坑 | 计时器本身被编译器优化掉；每帧分配内存污染测量结果（用固定缓冲） |
 | **落地（2026-10-15，9 个 commit）** | **键位改了**：`T` = Debug Overlay（不是 `F1`/`F4`：本机 `F1`/`F3` 都被别的软件抢占）· `F2` = 几何层（C13）· `F4` = 写快照（沿用）· `F7` = 敌人面板（沿用，见下）。**`thread_local` 没用到**（单线程，改用"匿名命名空间的进程级 current 指针"，走 `SetCurrentProfiler/CurrentProfiler`）。**没引 `std::format`/`source_location`**（零依赖 ⇒ 宏只传名字字符串）。**它只是 120 帧环形缓冲 + 一张表**，不是 Tracy 那套。 |
 | 落地偏差（详见 `S11_CHECKLIST`） | ① `F1`/`F4` 都被占 ⇒ overlay 走字母键 `T`；② `IGame::OnRender` 拿不到 `ctx` ⇒ overlay 的引擎数字靠 `Game::m_lastFrame` 快照带回（**慢一帧**）；③ 原计划的"6 个 `PROFILE_SCOPE`"实际是**引擎侧 5 + 游戏侧 2**；④ `F7` 面板**不删**（改判为常驻列表类工具，`TECH_DEBT` C15）；⑤ `C13` 的"碰撞盒"改走**底色通道**；⑥ 定位覆盖到 **9 条用例**（216 总用例）。 |
+
+### S11.5「送得出去」—— 交付一个别人能试玩的 demo（🚧 2026-10-16 开工）
+
+| 项 | 内容 |
+| --- | --- |
+| 目标 | 一个**没装 VS / CMake** 的人在 Windows 上"**解压 → 双击 → 5 分钟玩起来**"，并且能把问题带回来（按 `F4` 生成日志） |
+| 为什么插在 S12 之前 | S12 是 v0.5 的正主；"送得出去"属**展示/交付层**（与 `SHOWCASE_PLAN` 同源）⇒ 不占 S12 的预算 |
+| 实现 | ① `MINI_STATIC_CRT` 选项 + `ms-msvc-release-static` 预设（**零运行库依赖**）② 启动时把窗口放大到 `kDefaultCanvas`（100×30）③ `tools/pack_demo.ps1` 一条命令打包 ④ `tools/demo/` 启动器 + 玩家卡 |
+| 关键事实 | 静态 CRT ⇒ 依赖表里只剩 `KERNEL32.dll` 一类**系统 DLL**（无 `VCRUNTIME140`/`MSVCP140`）· 自动放大**只在经典控制台生效**（ConPTY 不让改窗口）· 启动器优先 `conhost.exe` —— 它**同时**解决 key-up 长按与窗口尺寸两件事 |
+| 验收 | 一条命令产出 zip（实测 **174 KB** / 3 个文件）· **另一台机器或另一个 Windows 账户**解压双击能玩 · 2 场反向验证（关静态 CRT ⇒ `dumpbin` 应重现 vcruntime；跳过 `TryResizeWindow` ⇒ 小窗口下应看到 HUD 折行） |
+| 发布 | `git tag v0.4.0` + GitHub Release（资产 = zip）· 正文 `doc/RELEASE_NOTES_v0.4.md` · ⚠️ 前置：仓库要**公开**（否则 Release 外人拿不到） |
+| 施工图 | `doc/S11_5_DEMO_CHECKLIST.md`（前置事实 14 条 · 坑表 15 条 · 6 步切分 · 完成的定义） |
 
 ### S12 Ray Casting —— 伪 3D
 
@@ -1313,7 +1329,7 @@ while (!shouldQuit) {
 | **v0.1 "看得见"** | ① 现代 CMake 骨架 + ctest 能跑<br>② 终端出现一个带边框的 2D 画面<br>③ WASD 能控制 `@` 移动 | S0~S5 | 三条命令构建成功；终端里有 `@` 且能用 WASD 推着走 |
 | **v0.2 "走得动"** | ① 200×200 地图 + 相机跟随<br>② 不能穿墙<br>③ 顶栏 FPS/FrameTime 实时显示 | S3,S6,S7 | 在比屏幕大得多的地图上自由走动，撞墙不穿模，FPS 数字稳定 |
 | **v0.3 "玩得起来"** | ① 敌人会追会打（**S8 ✅ 2026-10-09**）<br>② 能射击、能击杀（**S9 ✅ 2026-10-11**）<br>③ HP/Ammo/Kills/Wave + 死亡重开（**S10 ✅ 2026-10-12**：代码与机器验收全绿；**2026-10-13 全部收口** —— 重建后 `197 passed, 0 failed` · 反向验证 12 场 + 补充场 R8′ · 人眼 28 条通过，见 `S10_CHECKLIST` 步骤 8） | S8~S10 | **一个外人可以上手玩 5 分钟的完整游戏**（这是全项目最重要的一次验收）<br>✅ **2026-10-12 达成** —— 至此 `H.1` 的**保底路径走完**，后面的 S11~S14 全是加分项 |
-| **v0.4 "看得清"** | ① Debug Overlay（**键是 `T`**，不是"F1~F4"）（**S11 ✅ 2026-10-15**）<br>② `PROFILE_SCOPE` 各子系统耗时表（**S11 ✅**：引擎 5 段 + 游戏 2 段，120 帧窗口）<br>③ 单元测试覆盖 math/collision/gamestate（**S4 起就有**） | S4,S11 | 能说出"渲染占了多少 ms"；`ctest` 全绿<br>✅ **2026-10-15 达成** —— 至此 v0.4 三条全部落地（`216 passed, 0 failed`；`Application` 插桩前后同画布可比的 `work` 读数见 `S11_CHECKLIST` §16） |
+| **v0.4 "看得清"** | ① Debug Overlay（**键是 `T`**，不是"F1~F4"）（**S11 ✅ 2026-10-15**）<br>② `PROFILE_SCOPE` 各子系统耗时表（**S11 ✅**：引擎 5 段 + 游戏 2 段，120 帧窗口）<br>③ 单元测试覆盖 math/collision/gamestate（**S4 起就有**） | S4,S11 | 能说出"渲染占了多少 ms"；`ctest` 全绿<br>✅ **2026-10-15 达成** —— 至此 v0.4 三条全部落地（`216 passed, 0 failed`；`Application` 插桩前后同画布可比的 `work` 读数见 `S11_CHECKLIST` §16）<br>📦 **2026-10-16**：v0.4 的**可试玩 demo**（S11.5）产出 —— ⚠️ **不发新版本号**（版本串仍是 `0.4.0-dev`，`-dev` 的含义见 `Version.cpp`）；`v0.4.0` 只是**给"包"用的 tag**，正文见 `doc/RELEASE_NOTES_v0.4.md` |
 | **v0.5 "像 3D"** | ① DDA 射线投射的走廊画面<br>② 无鱼眼扭曲<br>③ `F5` 在 2D/3D 视角间切换 | S12 | 同一个世界两种视角自由切换，走位在两个视角下一致 |
 | **v1.0 "收得起来"** | ① 精灵 + z-buffer 遮挡正确<br>② README + GIF + CI（**只跑 MSVC**）<br>③ 干净克隆后三条命令能跑 | S13,S14 | 别人按 README 能复现；`git tag v1.0` |
 | **v1.x+（不收口，纯玩）** | 颜色/雾、粒子、A*、行为树、Braille 渲染、关卡编辑器、Chrome Trace 导出…… | 弹性 | 想玩就开分支，不做完也不算失败 |
