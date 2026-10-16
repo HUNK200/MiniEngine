@@ -63,6 +63,66 @@ MINI_TEST(Core, CanvasSizeAcceptanceIsBoundarySafe)
     MINI_CHECK(!IsUsableCanvasSide(0));
 }
 
+// ── S11.5：启动时"把窗口放大到至少 kDefaultCanvas"的**决策**（4 条）────────────
+//
+// 与上面那条的分工：上面管"这个尺寸**能不能用**"，这一条管"**要不要请求**改成另一个尺寸"。
+// 决策是纯函数 ⇒ 可以离线钉住；真正调 Windows API 的那一半（`Console::TryResizeWindow`）
+// 只能靠人眼/真终端验（同 `TECH_DEBT` C7 的口径）。
+//
+// ⚠️ 为什么要把"不许缩小"单列一条：这是最容易写错、且错了**最讨人嫌**的一条
+//（把用户调好的大窗口拉成 100×30）。写成用例之后，它就不再靠"我记得我写了 max"。
+
+MINI_TEST(Core, DefaultCanvasRequestKeepsLargerWindow)
+{
+    using mini::core::ComputeSizeRequest;
+    using mini::core::kDefaultCanvas;
+    using mini::platform::ConsoleSize;
+
+    // 两轴都比默认大 ⇒ **原样返回**（一个像素都不许动）
+    const ConsoleSize big = ComputeSizeRequest(ConsoleSize{ 200, 60 }, kDefaultCanvas);
+    MINI_CHECK_EQ(big.width, 200);
+    MINI_CHECK_EQ(big.height, 60);
+}
+
+MINI_TEST(Core, DefaultCanvasRequestGrowsSmallWindow)
+{
+    using mini::core::ComputeSizeRequest;
+    using mini::core::kDefaultCanvas;
+    using mini::platform::ConsoleSize;
+
+    // 两轴都小（本机实测的小窗口 60×18）⇒ 请求 = 默认尺寸
+    const ConsoleSize small = ComputeSizeRequest(ConsoleSize{ 60, 18 }, kDefaultCanvas);
+    MINI_CHECK_EQ(small.width, kDefaultCanvas.width);
+    MINI_CHECK_EQ(small.height, kDefaultCanvas.height);
+}
+
+MINI_TEST(Core, DefaultCanvasRequestGrowsOnlyTheSmallAxis)
+{
+    using mini::core::ComputeSizeRequest;
+    using mini::core::kDefaultCanvas;
+    using mini::platform::ConsoleSize;
+
+    // 宽小、高够 ⇒ **只补宽**，高保持 40
+    const ConsoleSize narrow = ComputeSizeRequest(ConsoleSize{ 40, 40 }, kDefaultCanvas);
+    MINI_CHECK_EQ(narrow.width, kDefaultCanvas.width);
+    MINI_CHECK_EQ(narrow.height, 40);
+
+    // 宽够、高小 ⇒ **只补高**，宽保持 150（这一条正是"整体判断"写法会写错的地方）
+    const ConsoleSize flat = ComputeSizeRequest(ConsoleSize{ 150, 10 }, kDefaultCanvas);
+    MINI_CHECK_EQ(flat.width, 150);
+    MINI_CHECK_EQ(flat.height, kDefaultCanvas.height);
+}
+
+MINI_TEST(Core, DefaultCanvasIsBigEnoughForHudAndPanel)
+{
+    using mini::core::kDefaultCanvas;
+
+    // 默认尺寸不是随手取的数：**宽**要放得下 HUD 第 2 行（64 列，见 `DrawHud`），
+    // **高**要放得下 顶栏 1 + HUD 2 + `F7` 面板（表头 + 8 个敌人的量级）。
+    MINI_CHECK(kDefaultCanvas.width >= 64);
+    MINI_CHECK(kDefaultCanvas.height >= 25);
+}
+
 MINI_TEST(Build, SourceIsCompiledAsUtf8)
 {
     // 源文件里"中"是 UTF-8 的 E4 B8 AD 三个字节。

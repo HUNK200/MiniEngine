@@ -117,6 +117,7 @@ public:
 
     bool        Present(const render::FrameBuffer& fb) override;
     ConsoleSize Size() const override;
+    bool        TryResizeWindow(ConsoleSize want) override;
     int         LastFrameRowsSent() const override;
 
 private:
@@ -274,6 +275,40 @@ ConsoleSize ConsoleWindows::Size() const
     // 缓冲区通常比窗口高得多（滚动条那部分不算"屏幕"）
     return ConsoleSize{ static_cast<int>(info.srWindow.Right  - info.srWindow.Left + 1),
                         static_cast<int>(info.srWindow.Bottom - info.srWindow.Top  + 1) };
+}
+
+bool ConsoleWindows::TryResizeWindow(ConsoleSize want)
+{
+    // 三件事想清楚再写这几行（S11.5 施工图 §6 坑 5/6/7）：
+    //   ① "屏幕"是**可视区**（srWindow），所以最后改的是它 —— 不是缓冲区（`Size()` 同理）；
+    //   ② 但 `SetConsoleWindowInfo` 要求目标矩形**落在缓冲区里** ⇒ 缓冲区不够大时
+    //      必须**先**扩缓冲区，否则拿到 ERROR_INVALID_PARAMETER(87)；
+    //   ③ 一切都**尽力而为**：ConPTY（Windows Terminal / VS Code 终端）里这些调用
+    //      可能失败。失败**不是错** —— 调用方忽略返回值继续跑（见 `Console.h` 的四条）。
+    if (g_hOut == INVALID_HANDLE_VALUE || want.width <= 0 || want.height <= 0) {
+        return false;
+    }
+
+    CONSOLE_SCREEN_BUFFER_INFO info{};
+    if (::GetConsoleScreenBufferInfo(g_hOut, &info) == 0) {
+        return false;
+    }
+
+    // ① 让缓冲区"至少够用"：**只扩不缩** —— 缓冲区高度会被用户当成滚动历史，
+    //    由我们随手改小是越界（也是 `SetConsoleScreenBufferSize` 最容易失败的方向）
+    if (info.dwSize.X < want.width || info.dwSize.Y < want.height) {
+        const COORD bigger{ static_cast<short>(info.dwSize.X > want.width  ? info.dwSize.X : want.width),
+                            static_cast<short>(info.dwSize.Y > want.height ? info.dwSize.Y : want.height) };
+        if (::SetConsoleScreenBufferSize(g_hOut, bigger) == 0) {
+            return false;
+        }
+    }
+
+    // ② 再改可视区：左上角归到 (0,0)（滚动过屏的窗口也一起归位）
+    const SMALL_RECT window{ 0, 0,
+                             static_cast<short>(want.width - 1),
+                             static_cast<short>(want.height - 1) };
+    return ::SetConsoleWindowInfo(g_hOut, TRUE, &window) != 0;
 }
 
 int ConsoleWindows::LastFrameRowsSent() const

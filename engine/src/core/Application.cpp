@@ -70,13 +70,31 @@ platform::ConsoleSize ResolveCanvasSize(const AppConfig& cfg, const platform::Co
     return platform::ConsoleSize{ w, h };
 }
 
+// S11.5「送得出去」：demo 的"一启动就有个能看的尺寸"。
+//
+// ⚠️ **为什么必须在这里做**（而不是 `Application` 的构造体里）：`ResolveCanvasSize`
+//    与 `m_frameBuffer` 都在**初始化列表**里按 `console.Size()` 定尺寸 ⇒ 改窗口必须
+//    发生在 `m_console` 构造之后、`m_size` 构造之前。写成"构造体里再改"会变成
+//    "第一帧是旧尺寸、下一帧才被 resize 轮询追上"（画面先闪一下）。
+//
+// 失败**不致命**（Windows Terminal / ConPTY 里可能不让改窗口）：返回值**直接丢掉** ——
+// 尺寸另有 `ResolveCanvasSize`（启动）与 `IsUsableCanvasSize`（每帧 resize）两道守卫兜住。
+std::unique_ptr<platform::Console> MakeConsoleWithDefaultSize()
+{
+    std::unique_ptr<platform::Console> console = platform::MakeConsole();
+    (void)console->TryResizeWindow(ComputeSizeRequest(console->Size(), kDefaultCanvas));
+    return console;
+}
+
 } // namespace
 
 Application::Application(AppConfig cfg)
     : m_cfg(cfg)
       // 顺序不能反：输入模式（关 QUICK_EDIT、开 WINDOW_INPUT）是 Console 构造时设的，
       // Input 只负责读事件。反过来会在 Input 构造时抛异常。
-    , m_console(platform::MakeConsole())
+      // S11.5：这里用"造完就把窗口放大到 `kDefaultCanvas`"的版本 —— 必须在
+      //        `m_size` / `m_frameBuffer` **之前**生效，否则第一帧的画布是旧尺寸。
+    , m_console(MakeConsoleWithDefaultSize())
     , m_input(platform::MakeInput())
       // 尺寸这两个都依赖 *m_console，所以必须排在它后面（声明顺序也是这个顺序）
     , m_size(ResolveCanvasSize(m_cfg, *m_console))

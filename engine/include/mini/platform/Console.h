@@ -52,6 +52,20 @@ public:
     // S2 没用它（main 按固定 80x25 建 FrameBuffer）；S3 每帧比较它来响应窗口缩放。
     virtual ConsoleSize Size() const = 0;
 
+    // 把**可视区**改成 `want`（S11.5：让 demo 一启动就有个能看的尺寸）。
+    //
+    // 【语义】尽力而为，四条别搞错：
+    //   1. **"只放大不缩小"不是这里的事** —— 那是**调用方**的策略，落在纯函数
+    //      `core::ComputeSizeRequest`（可离线测）；这一层只负责"把要求的尺寸设下去"。
+    //   2. 缓冲区不够大时**先扩缓冲区、再改窗口** —— 顺序反了系统会拒绝
+    //      （`SetConsoleWindowInfo` 要求窗口落在缓冲区里）。
+    //   3. **失败不致命**：`false` = 没改成（ConPTY / Windows Terminal 里可能不让改、
+    //      或窗口被固定在某个尺寸）。调用方**应当忽略返回值**继续跑 ——
+    //      画布尺寸另有守卫（`core::IsUsableCanvasSize`），不会因为改不动就崩。
+    //   4. 改了之后**画布尺寸不会自动跟着变**：`Application::Run` 第 ③ 步每帧比较
+    //      `Size()`，下一帧就会 `Resize` 画布（并用一次清屏收尾）。
+    [[nodiscard]] virtual bool TryResizeWindow(ConsoleSize want) = 0;
+
     // 上一帧真正**发出去**的行数（脏行 diff 的结果）。顶栏的 "Rows: n/总行数" 用它。
     //
     // 为什么是"上一帧"：本帧到底发了多少行，要等 Present() 之后才知道，

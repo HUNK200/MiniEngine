@@ -58,6 +58,31 @@ inline constexpr int kMinUsableCanvasSide = 2;   // 1 列/1 行画不出东西�
     return IsUsableCanvasSide(w) && IsUsableCanvasSide(h);
 }
 
+// ── S11.5「送得出去」：启动时的**默认画布尺寸**（2026-10-16 加）──────────────────
+//
+// 为什么需要它：终端**默认窗口**往往偏小（本机实测过 **60×18**），而这一版游戏
+// 光两行 HUD 的第 2 行就有 **64 列**、`F7` 敌人面板打开时底部还要约 **12 行**
+// ⇒ 尺寸不够时会出现"HUD 折行 / 世界被面板盖住"这类**看起来像 bug 的现象**。
+// demo 是陌生人双击就跑的东西 ⇒ 启动时主动把窗口**放大到至少这么大**。
+//
+// ⚠️ **只放大，不缩小**（见 `ComputeSizeRequest`）：别人把窗口拖得很大是他的选择，
+//    程序不该自作主张拉窄。⇒ 它只在 `Application` 构造时用一次，之后不再干预。
+inline constexpr platform::ConsoleSize kDefaultCanvas{ 100, 30 };
+
+// 上面那条"要不要请求改尺寸"的**决策**。放公共头 + `constexpr` 是为了能离线测
+//（同 `IsUsableCanvasSize` 的理由，见上面那段说明）。
+//
+// 语义：**逐轴取 max**（`current` 与 `want` 谁大用谁）⇒ 某轴已经够大就**原样返回**。
+// 为什么不做成"整体判断"（要么全要 want、要么全不动）：同 `ResolveCanvasSize`
+// 那条教训（见上方 43-48 行）—— 宽 200 高 10 的窗口只需要**补高**，
+// 把宽一起拉到 100 反而是坏事。
+[[nodiscard]] constexpr platform::ConsoleSize ComputeSizeRequest(platform::ConsoleSize current,
+                                                                 platform::ConsoleSize want) noexcept
+{
+    return platform::ConsoleSize{ (current.width  > want.width)  ? current.width  : want.width,
+                                  (current.height > want.height) ? current.height : want.height };
+}
+
 struct AppConfig {
     // 画布尺寸。**0 = 用终端可视区**（推荐）。终端读不到尺寸时退回 80x25。
     int width  = 0;

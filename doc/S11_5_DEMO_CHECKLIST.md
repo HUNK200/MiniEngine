@@ -49,7 +49,7 @@
 
 | 分叉 | 决定 | 落地形态 |
 | --- | --- | --- |
-| **A** 静态 CRT 怎么给 | **选项 + 预设**（默认 OFF） | 根 `CMakeLists.txt` 加 `option(MINIENGINE_STATIC_CRT ... OFF)`；打开时设 `CMAKE_MSVC_RUNTIME_LIBRARY = "MultiThreaded$<$<CONFIG:Debug>:Debug>"`。⚠️ **必须在 `add_subdirectory` 之前设**（变量在目标创建时被捕获） |
+| **A** 静态 CRT 怎么给 | **选项 + 预设**（默认 OFF） | 根 `CMakeLists.txt` 加 `option(MINI_STATIC_CRT ... OFF)`；打开时设 `CMAKE_MSVC_RUNTIME_LIBRARY = "MultiThreaded$<$<CONFIG:Debug>:Debug>"`。⚠️ **必须在 `add_subdirectory` 之前设**（变量在目标创建时被捕获） |
 | **B** 窗口尺寸谁设 | **程序侧设，默认 100×30** | 见下面的分层表；启动器**不再**设尺寸（避免两个真相） |
 | **C** 调试键 | **保留** | 同一份 exe；卡上不宣传调试键，只留一句"按 `F4` 生成反馈日志" |
 | **D** 发布 | **git tag + GitHub Release**（不只是 `.gitignore`） | tag `v0.4.0`（annotated）；资产 = 打包好的 zip；⚠️ 前置 = **仓库转 public**（事实 12） |
@@ -100,7 +100,7 @@
 
 | 文件 | 改什么 | 为什么 |
 | --- | --- | --- |
-| `CMakeLists.txt`（根） | `MINIENGINE_STATIC_CRT` 选项 | 零运行库依赖 |
+| `CMakeLists.txt`（根） | `MINI_STATIC_CRT` 选项 | 零运行库依赖 |
 | `CMakePresets.json` | `ms-msvc-release-static` 配置预设 + `release-static` 构建预设 | 一条命令拿到可分发的构建 |
 | `engine/include/mini/core/Application.h` | `kDefaultCanvas` + `ComputeSizeRequest` | 默认尺寸的策略（纯函数、可测） |
 | `engine/include/mini/platform/Console.h` | `TryResizeWindow` 纯虚 | 机制契约 |
@@ -116,7 +116,7 @@
 | 步 | 内容 | 产物 | 谁做 | 验收 |
 | --- | --- | --- | --- | --- |
 | **1** | 静态 CRT：选项 + Release 静态预设；顺手把 `dumpbin` 自检写成脚本里的一个函数 | **零依赖 exe** | AI 写 / 本步你构建 | `dumpbin /dependents` 里**无** vcruntime/msvcp；`216 passed` 不变 |
-| **2** | 分叉 B：`kDefaultCanvas` + `ComputeSizeRequest` + `TryResizeWindow` + 初始化列表接线 + 4 条用例 | 启动即 ≥100×30 | AI 写 / 你构建 | 新用例 4 条绿；exe 启动后窗口变成 100×30；`216 → 220` |
+| **2** | 分叉 B：`kDefaultCanvas` + `ComputeSizeRequest` + `TryResizeWindow` + 初始化列表接线 + 4 条用例 | 启动即 ≥100×30（⚠️ **只在经典控制台**） | AI 写 / 你构建 | ✅ 已验：新用例 4 条绿（216→220）；**`conhost.exe` 里**窗口变成 100×30 ✓；⚠️ ConPTY 里改不动（坑 5，预期） |
 | **3** | `pack_demo.ps1` + `开始试玩.cmd` + 玩家卡 + `.gitignore` 加 `dist/` | **可发的 zip** | AI 写 / 你跑 | 一条命令产出 zip + 打印体积 |
 | **4** | 验收：**换机器 / 换 Windows 账户**实跑；2 场反向验证 | 验收记录 | 你跑 | 见 §8 |
 | **5** | 转 public 复核 → `git tag v0.4.0` → 建 Release → 传 zip | 可下载的 demo | 你（tag 我可代跑） | ① Release **匿名可打开** ② 下载包 SHA256 与本地一致 |
@@ -129,10 +129,10 @@
 | # | 坑 | 会怎样 | 判据/对策 |
 | --- | --- | --- | --- |
 | 1 | **`CMAKE_MSVC_RUNTIME_LIBRARY` 设晚了** | 目标已创建 ⇒ 选项**静默无效**，你以为静态了其实还是 `/MD` | `dumpbin /dependents` 里**必然**还能看到 `VCRUNTIME140.dll` ⇒ 就是它 |
-| 2 | 静态 CRT 与 **ASan** 不兼容 | `-DMINIENGINE_STATIC_CRT=ON` + `ms-asan` 预设 ⇒ 配置期/链接期报错 | 两者**永不组合**（脚本固定用 Release 静态、CI 的 asan 保持默认） |
+| 2 | 静态 CRT 与 **ASan** 不兼容 | `-DMINI_STATIC_CRT=ON` + `ms-asan` 预设 ⇒ 配置期/链接期报错 | 两者**永不组合**（脚本固定用 Release 静态、CI 的 asan 保持默认） |
 | 3 | **中文写进 `.cmd`**（936 代码页解析 UTF-8 批处理） | `echo` 出乱码，甚至**命令解析错** | `.cmd` 正文**只写 ASCII**；中文全放 `.txt`（事实 11 已解决换行，**没解决编码**） |
-| 4 | `conhost.exe <exe>` 起法未必给到经典控制台 | 长按移动可能仍退化 | **30 秒实测**：`start "" conhost.exe "<exe 路径>"`，看是否经典窗口 + 按住 `W` 是否连续走 |
-| 5 | Windows Terminal / ConPTY 里 `SetConsoleWindowInfo` 失败 | 尺寸不生效（**不是错**） | `TryResizeWindow` 返回 `false` ⇒ **忽略**；卡里写明"Terminal 里可能不自动放大" |
+| 4 | `conhost.exe <exe>` 起法未必给到经典控制台 | 长按移动可能仍退化 | ✅ **2026-10-16 实测：给到经典控制台**（`start "" conhost.exe "<exe>"` ⇒ 经典窗口 + 尺寸功能生效）⇒ **启动器优先 conhost 这条从"nice to have"升格为必需**（它一次解决**两个**问题：key-up 长按 + 窗口尺寸） |
+| 5 | Windows Terminal / ConPTY 里 `SetConsoleWindowInfo` 失败 | 尺寸不生效（**不是错**） | ✅ **2026-10-16 实测确认**（本人回报：`conhost.exe` 起来**能放大**、**PowerShell 里直接跑不变** —— 那个会话是 ConPTY）。机制：窗口归**客户端**（WT）管，pseudo console 不认这类调用 ⇒ `TryResizeWindow` 返回 `false`，调用方**忽略**（不崩、不报错）。⇒ **兜底三件套**：① 启动器优先 `conhost.exe`（见坑 4）；② 启动器里 `mode con: cols=100 lines=30`（经典控制台有效、ConPTY 下无害）；③ 若画布仍小到放不下 HUD，**标题屏多打一行提示**（"窗口太小：建议 ≥100×30"） |
 | 6 | 只放大不缩小的边界 | 用户窗口 200 列时被**拉窄**了 | 用例钉"某轴已够就保持"（§7 第 4 条） |
 | 7 | 缓冲区 < 窗口 | `SetConsoleWindowInfo` 返回 `ERROR_INVALID_PARAMETER(87)` | 顺序：**先** `SetConsoleScreenBufferSize`（只在不够时）**再** `SetConsoleWindowInfo` |
 | 8 | `dumpbin` 不在 PATH（别人机器/精简环境） | 自检步骤失败或静默跳过 | 脚本里：找不到就**打印警告并继续**，但**不许**当成"通过" |
@@ -163,7 +163,7 @@
 
 | 场 | 改坏什么 | 预测 |
 | --- | --- | --- |
-| **R1** | 把 `MINIENGINE_STATIC_CRT` 关掉重跑打包 | `dumpbin` 输出里**应当重新出现** `VCRUNTIME140.dll` ⇒ 证明这道自检**真的在看东西** |
+| **R1** | 把 `MINI_STATIC_CRT` 关掉重跑打包 | `dumpbin` 输出里**应当重新出现** `VCRUNTIME140.dll` ⇒ 证明这道自检**真的在看东西** |
 | **R2** | 跳过 `MakeConsoleWithDefaultSize` 里的 `TryResizeWindow` 调用 | 小窗口启动 ⇒ **应当看到 HUD 折行 / 画布很小** ⇒ 证明"默认尺寸"不是空话 |
 
 ---
@@ -173,7 +173,7 @@
 | 类型 | 内容 |
 | --- | --- |
 | **一条命令** | `powershell -File tools\pack_demo.ps1` ⇒ `dist\MiniEngine-Demo-v0.4.0-windows-x64.zip` + 打印文件数/体积 |
-| **一个现象** | **另一台机器 / 另一 Windows 账户**（不装 VS/CMake）：解压 → 双击 `开始试玩.cmd` → 标题屏 → `ENTER` → 能玩 5 分钟（移动/开火/暂停/死亡/重开）；**窗口自动 ≥100×30** |
+| **一个现象** | **另一台机器 / 另一 Windows 账户**（不装 VS/CMake）：解压 → 双击 `开始试玩.cmd` → 标题屏 → `ENTER` → 能玩 5 分钟（移动/开火/暂停/死亡/重开）；**窗口自动 ≥100×30**（⚠️ 靠启动器的 `conhost.exe` + `mode con` 保证 —— **ConPTY 里程序自己改不动**，见坑 5） |
 | **一个数字** | exe 依赖表 **0 个 vcruntime/msvcp**；用例 **220**；zip ≈ **300~600 KB** |
 | **发布验收** | ① Release 页面**匿名可打开**、资产可下载（转 public 后）② 下载包 **SHA256 与本地 `dist/` 一致**（证明"发出去的确实是那个包"） |
 | **反向验证** | §7.2 的 R1 / R2（预测 → 实测 → 逐条比对 → 还原） |
