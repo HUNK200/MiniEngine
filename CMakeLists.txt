@@ -24,6 +24,46 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 option(MINI_BUILD_TESTS "Build unit tests" ON)
 option(MINI_SANITIZE    "Enable MSVC AddressSanitizer (/fsanitize=address)" OFF)
 
+# ── S11.5「送得出去」：静态 CRT（可分发构建）────────────────────────────────
+#
+# 为什么要有这个开关：默认的 MSVC 构建是 **动态 CRT（/MD）**，exe 依赖
+#   VCRUNTIME140.dll / MSVCP140.dll（来自"VC++ 2015-2022 可再发行组件"）。
+# 别人机器上**没装**那个运行库时，双击 exe 会直接报"缺少 DLL" —— 这是把 demo
+# 送出去时的**头号风险**。静态 CRT（/MT）把这些代码链进 exe，换来自包含。
+#
+# ⚠️ 三条硬约束（写下来是因为踩了都不报错）：
+#   1. **默认 OFF** ⇒ 现有 Debug / Release / CI / asan 四条路径行为一字不变；
+#   2. 必须在 `add_subdirectory()` **之前**设置 —— 这个变量在**目标创建时**被
+#      捕获进 `MSVC_RUNTIME_LIBRARY` 目标属性；放在后面就是**静默无效**
+#      （症状：dumpbin 里照样有 VCRUNTIME140.dll）；
+#   3. 依赖策略 **CMP0091 = NEW**（由 `cmake_minimum_required(VERSION 3.20)` 保证）——
+#      否则 CMake 会往 `CMAKE_CXX_FLAGS_*` 里塞 `/MD`/`/MDd`，把这里的设置盖掉。
+#      ⇒ 别把最低版本改回 3.15 以下。
+#
+# 生成器表达式让"单配置 + 多配置"两种生成器都对：Debug 用静态调试 CRT，
+# 其余配置（Release / RelWithDebInfo / MinSizeRel）用静态发布 CRT。
+option(MINI_STATIC_CRT "Link the MSVC runtime statically (/MT) for a redistributable binary" OFF)
+
+if(MINI_STATIC_CRT AND MINI_SANITIZE)
+    # ASan 需要动态 CRT（runtime 要能替换分配器）⇒ 组合起来链接期会报一堆奇怪的话。
+    # 与其让人去猜，不如在**配置期**给一句人话。
+    message(FATAL_ERROR "MINI_STATIC_CRT 与 MINI_SANITIZE 不能同时开：ASan 需要动态 CRT（/MD）。")
+endif()
+
+if(MINI_STATIC_CRT)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
+# 把"这一份 build 用的是哪种 CRT"打在配置输出里 —— 它是**可观察的验证点**
+#（比"我记得我开了"可靠；S11.5 的验收里 dumpbin 那一步靠它定位）。
+if(MSVC)
+    if(MINI_STATIC_CRT)
+        message(STATUS "MiniEngine: MSVC 运行时 = **静态 /MT**（可分发：不依赖 VC++ 可再发行组件）")
+    else()
+        message(STATUS "MiniEngine: MSVC 运行时 = 动态 /MD（默认：运行目标机需要 VC++ 2015-2022 可再发行组件）")
+    endif()
+endif()
+
 # 编译选项做成 INTERFACE 库，避免每个 target 复制粘贴一遍。
 # NOMINMAX / WIN32_LEAN_AND_MEAN 现在还用不上，但等 S2 引入 <windows.h> 时，
 # 少了这两个宏 std::max/std::min 会被宏打爆（风险 E-17）。

@@ -14,12 +14,20 @@
       "inherits": "ms-msvc-debug",
       "binaryDir": "${sourceDir}/build-asan",
       "cacheVariables": { "MINI_SANITIZE": "ON" }
+    },
+    {
+      "name": "ms-msvc-release-static",
+      "displayName": "MSVC Release + 静态 CRT（可分发，S11.5 demo 用）",
+      "inherits": "ms-msvc-debug",
+      "binaryDir": "${sourceDir}/build-demo",
+      "cacheVariables": { "MINI_STATIC_CRT": "ON" }
     }
   ],
   "buildPresets": [
     { "name": "debug",   "configurePreset": "ms-msvc-debug", "configuration": "Debug" },
     { "name": "release", "configurePreset": "ms-msvc-debug", "configuration": "Release" },
-    { "name": "asan",    "configurePreset": "ms-asan",       "configuration": "Debug" }
+    { "name": "asan",    "configurePreset": "ms-asan",       "configuration": "Debug" },
+    { "name": "release-static", "configurePreset": "ms-msvc-release-static", "configuration": "Release" }
   ],
   "testPresets": [
     {
@@ -38,6 +46,12 @@
       "name": "asan",
       "configurePreset": "ms-asan",
       "configuration": "Debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "release-static",
+      "configurePreset": "ms-msvc-release-static",
+      "configuration": "Release",
       "output": { "outputOnFailure": true }
     }
   ]
