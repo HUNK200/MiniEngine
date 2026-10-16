@@ -14,9 +14,11 @@
 namespace mini::render {
 namespace {
 
-// 每格最坏输出量：1 个字符 + 前景色码最长 11 字节 + 背景色码最长 11 字节。
-// 取 20 留点余量，避免 Serialize 过程中反复扩容（那是最容易吃到性能的地方）
-constexpr std::size_t kBytesPerCellGuess = 20;
+// 每格最坏输出量：1 个字形（S12 起最多 **4 字节** UTF-8）+ 前景色码最长 11 字节
+// + 背景色码最长 11 字节。
+// 取 32 留点余量，避免 Serialize 过程中反复扩容（那是最容易吃到性能的地方）。
+// ⚠️ 名字里的 "Guess" 是认真的：给少了只是多几次 realloc，给多了只是白占 1 帧的缓冲。
+constexpr std::size_t kBytesPerCellGuess = 32;
 
 void ValidateSize(int w, int h)
 {
@@ -62,6 +64,41 @@ void AppendBg(std::string& out, Color c)
     out += 'm';
 }
 
+// 把一个码位按 UTF-8 写进 out（S12：`Cell::ch` 扩宽后新增的唯一编码点）。
+//
+// ⚠️ 三条纪律：
+//   1. **ASCII（< 0x80）走原来那一条 `push_back`** —— 输出字节与扩宽前完全一致。
+//      这是 `FrameBuffer.AsciiSerializationIsByteIdentical` 盯着的契约，
+//      也是"扩宽 `Cell` 不会悄悄改掉 `Rows` / 屏幕表现"的**唯一**保证。
+//   2. 非法值（代理区 0xD800..0xDFFF、或 ≥ 0x110000）→ **U+FFFD**：
+//      不让坏字节流进终端（`Set` 收到负的 `char` 时也会落到这里）。
+//   3. 不查表、不分配：就地按位拼字节（这是每帧热路径）。
+void AppendGlyph(std::string& out, char32_t c)
+{
+    if (c >= 0xD800u && c <= 0xDFFFu) { c = 0xFFFDu; }   // 代理区：UTF-8 里非法
+    if (c > 0x10FFFFu)                { c = 0xFFFDu; }   // 超出 Unicode 范围
+
+    if (c < 0x80u) {
+        out.push_back(static_cast<char>(c));             // 0xxxxxxx（与扩宽前同一条路径！）
+        return;
+    }
+    if (c < 0x800u) {                                    // 110xxxxx 10xxxxxx
+        out.push_back(static_cast<char>(0xC0u | (c >> 6)));
+        out.push_back(static_cast<char>(0x80u | (c & 0x3Fu)));
+        return;
+    }
+    if (c < 0x10000u) {                                  // 1110xxxx 10xxxxxx 10xxxxxx（█▓▒░ 走这条）
+        out.push_back(static_cast<char>(0xE0u | (c >> 12)));
+        out.push_back(static_cast<char>(0x80u | ((c >> 6) & 0x3Fu)));
+        out.push_back(static_cast<char>(0x80u | (c & 0x3Fu)));
+        return;
+    }
+    out.push_back(static_cast<char>(0xF0u | (c >> 18))); // 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+    out.push_back(static_cast<char>(0x80u | ((c >> 12) & 0x3Fu)));
+    out.push_back(static_cast<char>(0x80u | ((c >> 6) & 0x3Fu)));
+    out.push_back(static_cast<char>(0x80u | (c & 0x3Fu)));
+}
+
 } // namespace
 
 FrameBuffer::FrameBuffer(int w, int h)
@@ -92,7 +129,7 @@ void FrameBuffer::Clear(Cell fill)
     std::fill(m_cells.begin(), m_cells.end(), fill);
 }
 
-void FrameBuffer::Set(int x, int y, char c, Color fg, Color bg)
+void FrameBuffer::Set(int x, int y, char32_t c, Color fg, Color bg)
 {
     if (!InBounds(x, y)) {
         return;   // 越界静默忽略：调用方不需要到处写边界判断
@@ -166,7 +203,7 @@ void FrameBuffer::AppendRowTo(std::string& out, int y, Color& curFg, Color& curB
             AppendBg(out, cell.bg);
             curBg = cell.bg;
         }
-        out.push_back(cell.ch);
+        AppendGlyph(out, cell.ch);
     }
 }
 

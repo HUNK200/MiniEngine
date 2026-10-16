@@ -34,9 +34,17 @@ public:
     void Clear(Cell fill = {});
 
     // 越界**静默忽略**：S5 之后实体天天走出屏幕边缘，靠的就是这条（不报错、不裁剪调用方）
-    void Set(int x, int y, char c, Color fg = Color::Default, Color bg = Color::Default);
+    //
+    // ⚠️ **2026-10-16（S12）：参数从 `char` 改成 `char32_t`。**
+    //    调用点**一处不用改**（`'#'` 这种字面量会自动提升），但从此可以直接传 `U'█'`
+    //    —— S12 的伪 3D 要按距离画 `█▓▒░`，而它们 UTF-8 是 3 字节，`char` 装不下。
+    //    ⚠️ 传进来的值若 ≥ 0x110000 或落在代理区（0xD800..0xDFFF），序列化时会被
+    //       换成 U+FFFD（见 `FrameBuffer.cpp` 的 `AppendGlyph`）—— 不让坏值写进终端。
+    void Set(int x, int y, char32_t c, Color fg = Color::Default, Color bg = Color::Default);
 
-    // 逐格写一串文本（用默认颜色），逐格越界忽略
+    // 逐格写一串文本（用默认颜色），逐格越界忽略。
+    // ⚠️ **仍然是"一个字节 = 一个格"**（ASCII-only 语义）：传 UTF-8 的非 ASCII 会被
+    //    拆成多个格子。要画非 ASCII 单字请用 `Set(x, y, U'█')`。
     void Draw(int x, int y, std::string_view text);
 
     // 只画**四条边**（不填充内部），按矩形自身的边坐标裁剪：

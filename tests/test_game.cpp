@@ -154,7 +154,21 @@ struct Pos {
     bool found = false;
 };
 
-Pos FindChar(const FrameBuffer& fb, char wanted)
+// ⚠️ 仅 ASCII：按格取一个字符（S12 起 `Cell::ch` 是 `char32_t`，**一个格可能是 3~4 字节**，
+//    例如伪 3D 的 `█`）。所以"1 格 = 1 字节"这个前提**只在内容全是 ASCII 时**成立：
+//      · 需要按格拼文本的判据一律走这里，别写 `static_cast<char>(...)` 悄悄截断；
+//      · 非 ASCII 一律退化成 `'?'` —— 免得"看不见的坏值"让判据**静默**算错；
+//      · **3D 模式的屏幕不许用按格拼串的判据**（`doc/S12_CHECKLIST.md` §7 坑 9）。
+char AsciiCell(const FrameBuffer& fb, int x, int y)
+{
+    const char32_t c = fb.At(x, y).ch;
+    return c < 0x80 ? static_cast<char>(c) : '?';
+}
+
+// ⚠️ 形参是 `char32_t`（不是 `char`）：`Cell::ch` 在 S12 扩宽后是 `unsigned` 语义的类型，
+//    拿它跟 `char` 比在 `/W4` 下会报 C4018（signed/unsigned mismatch）。
+//    调用点照旧写 `FindChar(fb, '@')` —— 字面量会自动提升，一处都不用改。
+Pos FindChar(const FrameBuffer& fb, char32_t wanted)
 {
     for (int y = 0; y < fb.Height(); ++y) {
         for (int x = 0; x < fb.Width(); ++x) {
@@ -166,7 +180,7 @@ Pos FindChar(const FrameBuffer& fb, char wanted)
     return Pos{};
 }
 
-int CountChar(const FrameBuffer& fb, char wanted)
+int CountChar(const FrameBuffer& fb, char32_t wanted)
 {
     int count = 0;
     for (int y = 0; y < fb.Height(); ++y) {
@@ -295,7 +309,7 @@ int CollectEnemies(const FrameBuffer& fb, Pos* out, int cap)
     int count = 0;
     for (int y = kTestFirstWorldRow; y < fb.Height() && count < cap; ++y) {
         for (int x = 0; x < fb.Width() && count < cap; ++x) {
-            if (fb.At(x, y).ch == 'E') {
+            if (fb.At(x, y).ch == U'E') {
                 out[count++] = Pos{x, y, true};
             }
         }
@@ -315,7 +329,7 @@ int MinEnemyDistanceSq(const FrameBuffer& fb)
     int best = -1;
     for (int y = kTestFirstWorldRow; y < fb.Height(); ++y) {   // 同 `CollectEnemies`：跳过顶栏 + HUD
         for (int x = 0; x < fb.Width(); ++x) {
-            if (fb.At(x, y).ch != 'E') {
+            if (fb.At(x, y).ch != U'E') {
                 continue;
             }
             const int dx = x - player.x;
@@ -447,7 +461,7 @@ std::string ScreenText(const FrameBuffer& fb)
 
     for (int y = 0; y < fb.Height(); ++y) {
         for (int x = 0; x < fb.Width(); ++x) {
-            text.push_back(fb.At(x, y).ch);
+            text.push_back(AsciiCell(fb, x, y));
         }
         text.push_back('\n');
     }
@@ -702,7 +716,7 @@ MINI_TEST(Game, PlayerIsDrawnAtItsCell)
     //    下面两条断言都从 `startRow` 派生，所以只改这一个表达式就够。
     const int startRow = mini::world::TileMap::ToIndex(Game::kSpawnY) + kTestHudRow;   // floor(2.5) + 2 = 4
 
-    MINI_CHECK(fb.At(startCol, startRow).ch == '@');
+    MINI_CHECK(fb.At(startCol, startRow).ch == U'@');
     MINI_CHECK_EQ(CountChar(fb, '@'), 1);   // 屏幕上只能有一个 '@'
 
     input.BeginFrame();
@@ -724,7 +738,7 @@ MINI_TEST(Game, PlayerIsDrawnAtItsCell)
     if (end.found) {
         MINI_CHECK_EQ(end.x, expectedCol);
         MINI_CHECK_EQ(end.y, startRow);                                 // 没往 y 走
-        MINI_CHECK(fb.At(expectedCol + 1, startRow).ch != '@');         // round 版会画到右边那一列
+        MINI_CHECK(fb.At(expectedCol + 1, startRow).ch != U'@');         // round 版会画到右边那一列
     }
 }
 
@@ -1365,7 +1379,7 @@ MINI_TEST(Game, HudFitsInTwoLinesWithoutOverflow)
     const auto readLine = [&probe](int row) {
         std::string line;
         for (int x = 0; x < kProbeW; ++x) {
-            line.push_back(probe.At(x, row).ch);
+            line.push_back(AsciiCell(probe, x, row));
         }
         const std::size_t end = line.find_last_not_of(' ');
         return (end == std::string::npos) ? std::string{} : line.substr(0, end + 1);
@@ -1712,7 +1726,7 @@ MINI_TEST(Game, GameOverIgnoresMoveInput)
     const int posRow = kTestHudRow - 1;
     std::string posBefore;
     for (int x = 0; x < fb.Width(); ++x) {
-        posBefore.push_back(fb.At(x, posRow).ch);
+        posBefore.push_back(AsciiCell(fb, x, posRow));
     }
     MINI_CHECK(posBefore.find("pos") != std::string::npos);   // 这一行真的是 pos 栏
 
@@ -1722,7 +1736,7 @@ MINI_TEST(Game, GameOverIgnoresMoveInput)
 
     std::string posAfter;
     for (int x = 0; x < fb.Width(); ++x) {
-        posAfter.push_back(fb.At(x, posRow).ch);
+        posAfter.push_back(AsciiCell(fb, x, posRow));
     }
 
     // ★ 按住 D 推 1 秒，`pos` **一个字符都不许变**（`readMoveKeys` 关 ⇒ 连速度都不重写）

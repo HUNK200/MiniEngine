@@ -44,11 +44,15 @@ std::size_t CountOccurrences(std::string_view haystack, std::string_view needle)
 
 } // namespace
 
-// S1 决策 2「尽量单字节」的运行时镜像（编译期那份是 Cell.h 里的 static_assert）
-MINI_TEST(FrameBuffer, CellIsThreeBytes)
+// S1 决策 2「尽量单字节」的运行时镜像（编译期那份是 Cell.h 里的 static_assert）。
+// ⚠️ **2026-10-16（S12）**：`Cell::ch` 从 `char` 扩到 `char32_t` ⇒ 3 字节 → **8 字节**
+//    （`char32_t` 4 + 两个 `Color` 各 1 + 2 字节对齐填充）。下面这两条是那条"刹车"的
+//    运行时那一半：**改 Cell 的代价必须被显式看见**，不许悄悄涨。
+//    `Color` 仍是 1 字节（它只是不再是决定 Cell 大小的那一项了）。
+MINI_TEST(FrameBuffer, CellIsEightBytes)
 {
-    MINI_CHECK_EQ(sizeof(Cell), std::size_t{3});
-    MINI_CHECK_EQ(alignof(Cell), std::size_t{1});
+    MINI_CHECK_EQ(sizeof(Cell), std::size_t{8});
+    MINI_CHECK_EQ(alignof(Cell), std::size_t{4});
     MINI_CHECK_EQ(sizeof(Color), std::size_t{1});
 }
 
@@ -179,4 +183,61 @@ MINI_TEST(FrameBuffer, SerializeEmitsColorOnlyOnChange)
     // 再来一次：结果必须逐字节相同（幂等 —— 每帧内容一致时输出也一致）
     const std::string again(fb.Serialize());
     MINI_CHECK(again == s);
+}
+
+// ★ 分叉 A 的护栏（S12）：`Cell` 扩宽**不许**改变 ASCII 画面的序列化结果。
+//
+// 期望串是**手写死的**（按 `AppendRowTo` 的规则逐条推出来，不是"先调一遍再抄结果"）：
+//   帧首重置 `ESC[39;49m` → 第 1 行前两格 fg=Red ⇒ `ESC[38;5;1m` → "AB"
+//   → 行尾 `\r\n` → 第 2 行第 1 格回默认前景 ⇒ `ESC[39m` → ' '
+//   → 第 2 格 fg=Blue ⇒ `ESC[38;5;4m`、bg=Red ⇒ `ESC[48;5;1m` → 'C'
+//
+// ⚠️ 这段字节一旦变了，说明"扩宽"动到了**老路径** —— 那是本项目最危险的一类改动：
+//    它不会让任何用例红，只会让 `Rows` 画像与屏幕表现**悄悄**变样。
+MINI_TEST(FrameBuffer, AsciiSerializationIsByteIdentical)
+{
+    FrameBuffer fb(2, 2);
+    fb.Clear();
+    fb.Set(0, 0, 'A', Color::Red);
+    fb.Set(1, 0, 'B', Color::Red);
+    fb.Set(1, 1, 'C', Color::Blue, Color::Red);
+
+    const std::string expected =
+        "\x1b[39;49m"
+        "\x1b[38;5;1m"
+        "AB"
+        "\r\n"
+        "\x1b[39m"
+        " "
+        "\x1b[38;5;4m"
+        "\x1b[48;5;1m"
+        "C";
+
+    MINI_CHECK_EQ(std::string(fb.Serialize()), expected);
+}
+
+// `█`（U+2588）必须编码成 UTF-8 的 3 字节，而且**仍然只占 1 格**（列宽不变）。
+MINI_TEST(FrameBuffer, NonAsciiGlyphEncodesAsUtf8)
+{
+    FrameBuffer fb(2, 1);
+    fb.Clear();
+    fb.Set(0, 0, U'█');
+
+    const std::string s(fb.Serialize());
+    MINI_CHECK(s.find("\xE2\x96\x88") != std::string::npos);                 // U+2588 的 UTF-8
+    MINI_CHECK_EQ(CountOccurrences(s, "\xE2\x96\x88"), std::size_t{1});
+    MINI_CHECK_EQ(ChAt(fb, 0, 0), static_cast<int>(U'█'));                   // 读回来还是同一个码位
+    MINI_CHECK_EQ(ChAt(fb, 1, 0), Ch(' '));                                  // 只占 1 格，没溢到下一格
+}
+
+// 非法码位（代理区 / 超出 Unicode）→ **U+FFFD**：不许把坏字节写进终端。
+// （`Set` 的参数是 `char` 时传负数也会落到这条路径上 —— 见 `AppendGlyph` 的纪律 2。）
+MINI_TEST(FrameBuffer, InvalidCodePointBecomesReplacement)
+{
+    FrameBuffer fb(2, 1);
+    fb.Clear();
+    fb.Set(0, 0, static_cast<char32_t>(0xD800u));    // 代理区：非法
+    fb.Set(1, 0, static_cast<char32_t>(0x110000u));  // 超出 U+10FFFF：非法
+
+    MINI_CHECK_EQ(CountOccurrences(fb.Serialize(), "\xEF\xBF\xBD"), std::size_t{2});
 }
