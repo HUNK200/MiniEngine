@@ -178,7 +178,7 @@ for (row = max(top, kHudRow) .. min(bottom, h) - 1)
 
 | 看什么 | 为什么值得看 |
 | --- | --- |
-| **Amanatides & Woo, 1987**（Eurographics） | 我们 DDA 的**原始论文**：增量式格遍历，为什么"一次只跨一格"是对的。<br>📄 **本地副本**：`study/papers/Amanatides_Woo_1987_FastVoxelTraversal.pdf`（6 页；⚠️ 被 `.gitignore` 忽略 —— 第三方版权材料，**本地保存、不入库**）。<br>🔗 官方 OA 版：`https://doi.org/10.2312/egtp.19871000`（EG 数字图书馆，标注 Open Access；⚠️ 自动下载要鉴权，**用浏览器打开**即可）<br>🔗 作者主页（本地这份的来源，2026-10-16 实测 HTTP 200）：`http://www.cse.yorku.ca/~amana/research/grid.pdf` |
+| **Amanatides & Woo, 1987**（Eurographics） | 我们 DDA 的**原始论文**：增量式格遍历，为什么"一次只跨一格"是对的。<br>📄 **本地副本**：`study/papers/Amanatides_Woo_1987_FastVoxelTraversal.pdf`（`PDF v1.2, 6 页, 17322 字节`；SHA256 `05254dd9bed9a81d2c9da60e40bfe77b89e6b757428cc363a802a91ae835e5d5`。⚠️ 被 `.gitignore` 忽略 —— 第三方版权材料，**本地保存、不入库**）。<br>🔁 **"怎么来的 + 换台机器怎么复现同一个文件"** ⇒ `study/papers/README.md`（含原样可粘贴的下载命令 + 校验命令）<br>🔗 官方 OA 版：`https://doi.org/10.2312/egtp.19871000`（EG 数字图书馆，标注 Open Access；⚠️ 自动下载要鉴权，**用浏览器打开**即可）<br>🔗 作者主页（本地这份的来源，2026-10-16 实测 HTTP 200）：`http://www.cse.yorku.ca/~amana/research/grid.pdf` |
 | **Lode Vandevenne, "Raycasting"**（lodev.org 的 CG 教程） | 最常被参照的教程；我们的 `dir + plane×cameraX` / `deltaDist` / `sideDist` 命名与结构同源 |
 | **Fabien Sanglard《Game Engine Black Book: Wolfenstein 3D》** | 把 1992 那套渲染器（含 `wl_draw.c` 的按列跨格）逐段拆开讲 |
 | **Fabien Sanglard《Game Engine Black Book: DOOM》** | 看"高一档"长什么样：BSP + segs + visplane |
