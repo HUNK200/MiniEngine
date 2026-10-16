@@ -11,6 +11,9 @@ bin/
 obj/
 [Oo]bj/
 
+# ---- S11.5：demo 打包产物（zip 走 Release 资产 / 手动传，二进制不进仓库）----
+dist/
+
 # ---- CMake ----
 CMakeCache.txt
 CMakeFiles/
