@@ -127,6 +127,7 @@ HUD 两行（**58 / 64 列**）：`pos / tile / sumdt / v` + `hp / ammo / kills 
 | --- | --- |
 | 整体设计与 15 个阶段的路线 | `doc/MiniEngine_PLAN.md` |
 | 最近一个阶段是怎么做的（含 20 条落地偏差） | `doc/S10_CHECKLIST.md` |
-| 测试框架为什么这么写 | `doc/MINITEST_SPEC.md` · `doc/CTEST_NOTES.md` |
+| 测试框架为什么这么写 | `doc/MINITEST_SPEC.md` · `study/CTEST_NOTES.md` |
+| **伪 3D（ray casting）是什么、业界有哪些经典案例** | `study/RAYCASTING_NOTES.md` |
 | 已知的坑与各自的触发条件 | `doc/TECH_DEBT.md` |
 | 协作约定（AI 做什么、不做什么） | `AGENTS.md` |

@@ -2,7 +2,7 @@
 
 > 用途：S0 阶段要手写的三份文件（`tests/MiniTest.h`、`tests/test_main.cpp`、`tests/test_smoke.cpp`）的**方案层规格**。
 > 本文只描述接口、机制、行为与验收，**不含实现代码**（`AGENTS.md` 约定）。
-> 配套：`doc/CTEST_NOTES.md`（CTest 是调度器，不懂断言）、`doc/S0_CHECKLIST.md`（S0 缺口与 CMake 补丁清单）。
+> 配套：`study/CTEST_NOTES.md`（CTest 是调度器，不懂断言）、`doc/S0_CHECKLIST.md`（S0 缺口与 CMake 补丁清单）。
 >
 > **实现状态（2026-09-24）：已按本规格落地**，代码在 `tests/MiniTest.h`（宏与声明）、`tests/test_main.cpp`（注册表 + runner）、`tests/test_smoke.cpp`（用例）。落地时补了两处规格没写到的细节，已在第 1、3、6 节标注（`ToString` 模板、"suite 名不存在"要报错、C4127 对策）。
 
@@ -186,4 +186,4 @@ ctest --test-dir build -C Debug --output-on-failure
 
 换 gtest 的判据（见 `doc/MiniEngine_PLAN.md` 的 E-18）：需要 fixture、参数化测试、death test、mock，或 CI 需要标准报告格式时，再用 `FetchContent` 引入。
 
-**届时 CTest 那层不用改**——它只管调度，不管断言库。详见 `doc/CTEST_NOTES.md`。
+**届时 CTest 那层不用改**——它只管调度，不管断言库。详见 `study/CTEST_NOTES.md`。

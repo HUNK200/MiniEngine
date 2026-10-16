@@ -3,7 +3,7 @@
 > **用法**：在"进度板"里勾进度。复习阶梯 `R1`~`R8` 是**可选路径**（想彻底弄懂 CMake/CTest 时再走）。
 > 本文件只描述**要什么、怎么验证**，不含实现代码（`AGENTS.md` 约定：AI 默认只出方案）。
 >
-> 相关文件：`doc/MiniEngine_PLAN.md`（阶段定义、附录 A 命令速查）、`doc/CTEST_NOTES.md`（CTest 入门，与 GoogleTest 的分工）、`doc/MINITEST_SPEC.md`（要手写的测试框架规格）、`AGENTS.md`（项目约定）。
+> 相关文件：`doc/MiniEngine_PLAN.md`（阶段定义、附录 A 命令速查）、`study/CTEST_NOTES.md`（CTest 入门，与 GoogleTest 的分工）、`doc/MINITEST_SPEC.md`（要手写的测试框架规格）、`AGENTS.md`（项目约定）。
 >
 > **环境提醒**：默认 shell 是 **PowerShell**。退出码用 `$LASTEXITCODE`（不是 `echo $?`），路径用反斜杠。
 

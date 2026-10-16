@@ -399,7 +399,7 @@ cmake --build build --config Debug ; .\build\bin\Debug\mini_tests.exe ; ctest --
 | `doc/TECH_DEBT.md` | ① "提前扩宽 `Cell`"的记录（理由 + 影响面）② "连续转身"列为**后续项**（触发条件：想要顺滑转身）③ 3D 下 `Rows` 顶满（观感/性能说明） |
 | `README.md` | 键位表加 `V`（视角）、`Z`/`C`（转身）；"状态"行加 3D |
 | `doc/AGENTS.md §2` | 加本图一行（`doc/S12_CHECKLIST.md`） |
-| `doc/RAYCASTING_NOTES.md` | ✅ **2026-10-16 已建**（本人问"这是一般游戏的实现方式么"⇒ 落成技术笔记）：本文的**背景与延伸阅读**（三档对比 · 算法 8 步 · 业界案例年代表 · 真 3D 升级清单） |
+| `study/RAYCASTING_NOTES.md` | ✅ **2026-10-16 已建**（本人问"这是一般游戏的实现方式么"⇒ 落成技术笔记；同日按本人要求移到 `study/`）：本文的**背景与延伸阅读**（三档对比 · 算法 8 步 · 业界案例年代表 · 真 3D 升级清单） |
 | Release 正文 | 下一版（`v0.5.0`）时加"伪 3D"一节（本阶段不发布） |
 
 ---

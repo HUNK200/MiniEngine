@@ -14,6 +14,10 @@ obj/
 # ---- S11.5：demo 打包产物（zip 走 Release 资产 / 手动传，二进制不进仓库）----
 dist/
 
+# ---- study/ 下的论文副本（2026-10-16）：第三方版权材料 ⇒ 本地保存、不入库 ----
+# 出处与链接写在 study/RAYCASTING_NOTES.md §7（正文只放"出处 + 链接"，不复制原文）
+study/papers/*.pdf
+
 # ---- CMake ----
 CMakeCache.txt
 CMakeFiles/

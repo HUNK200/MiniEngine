@@ -142,8 +142,12 @@ c++_simple_engine/
 │   ├── S5_CHECKLIST.md         # S5 施工图：world/ + game/ + 13 条落地偏差 + 4 条反向验证实测
 │   ├── TECH_DEBT.md            # 技术债：A/B/C/D 四组，**每阶段收口时更新**
 │   ├── MINITEST_SPEC.md        # 测试框架 MiniTest 的规格
-│   ├── CTEST_NOTES.md          # CTest 入门与 GoogleTest 分工
 │   └── WORK_MODE.md            # 上班模式开关正文
+│
+├── study/                       # **技术学习材料**（2026-10-16 建；⛔ 不改代码、不进构建）
+│   ├── CTEST_NOTES.md          # CTest 入门与 GoogleTest 分工
+│   ├── RAYCASTING_NOTES.md     # 伪 3D：grid ray casting 是什么 + 业界案例 + 升级路径
+│   └── papers/                 # 论文副本（⚠️ *.pdf 被 .gitignore 忽略：第三方版权，本地保存）
 │
 ├── .agents/skills/work-mode/    # 上班模式开关的 skill 入口（转发到 doc/WORK_MODE.md）
 │
@@ -1386,7 +1390,7 @@ while (!shouldQuit) {
 | **房间群 / 关卡布局**（房间 + 门 + 一个 `Level.h` 数据表） | 2h | 任一空档；**S12 之后更合适**（3D 里最看得出来） | 2026-10-16 的"临时需求"只做了**档 1**（"默认全墙 + 挖一个家厅"）⇒ 房间群是**档 2**、还没做。见 `TECH_DEBT` **C40** 与 `S12_CHECKLIST` §16 |
 | A* 寻路（解决 S8 的卡墙）| 2.5h | **S14**（原写"S8 之后"；S8 已完成 → "卡墙"现在**亲眼可见**了，但按 S8 的设计意留到 S14 再解） | BFS 打底，顺手在 Debug Overlay 里画路径 |
 | 装 Ninja 提速构建 | 0.5h | 任一空档（与阶段无关） | `winget install Ninja-build.Ninja`，一条命令，别折腾 |
-| 给 `mini_tests` 加 `LABELS` 与 `TIMEOUT` 属性 | 1h | 用例总数 > 50 之后 | 让 `ctest -L fast` 与超时保护可用，见 `doc/CTEST_NOTES.md` |
+| 给 `mini_tests` 加 `LABELS` 与 `TIMEOUT` 属性 | 1h | 用例总数 > 50 之后 | 让 `ctest -L fast` 与超时保护可用，见 `study/CTEST_NOTES.md` |
 | Profiler 导出 Chrome Trace JSON | 1.5h | S11 之后 | `chrome://tracing` 里看火焰图，成就感很强 |
 | Braille 字符渲染（2×4 点阵）| 3h | 任一空档 | 纯玩，风险高收益也高，做不完就当实验 |
 | 行为树替换 FSM | 2h | **不建议** | D.1 已说明：5 个状态的 FSM 更好维护 |
