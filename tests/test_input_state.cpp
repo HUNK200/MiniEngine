@@ -182,6 +182,13 @@ MINI_TEST(KeyCode, KeyFromVirtualKeyMapsUsedKeys)
     // 见 `KeyCode.h` 那段注释）。镜像 S9 删 `K` 时的做法：枚举与映射一加，这里就补一条断言。
     MINI_CHECK(KeyFromVirtualKey(0x54) == Key::T);          // 'T'  VK_T
 
+    // S12（2026-10-16 加）：**原地转身键** `Z` / `C`（分叉 B = 甲′）。
+    // 镜像同一条纪律：`KeyCode.h` 的枚举与映射一加，这里就补断言 —— 否则"加了枚举但忘了映射"
+    // 这类错机器测不到（`KeyFromVirtualKey` 返回 `Unknown` ⇒ 程序里表现为"按了没反应"，
+    // 而"按了没反应"和"功能坏了"在屏幕上长得一模一样）。
+    MINI_CHECK(KeyFromVirtualKey(0x5A) == Key::Z);          // 'Z'  VK_Z（逆时针 45°）
+    MINI_CHECK(KeyFromVirtualKey(0x43) == Key::C);          // 'C'  VK_C（顺时针 45°）
+
     // 有意不映射：字母 B 与修饰键。映进来只会多出要维护的状态
     MINI_CHECK(KeyFromVirtualKey(kVkB) == Key::Unknown);
     MINI_CHECK(KeyFromVirtualKey(0x10) == Key::Unknown);    // VK_SHIFT

@@ -53,6 +53,16 @@ enum class Key : std::uint8_t {
     //    `MakeKeyMap` 里单独补一条映射 —— 不能靠"F1~F4 连续"那行注释推出来。
     F7,
 
+    // S12（2026-10-16 拍板，分叉 B = **甲′**）：**原地转身键** —— `Z` 逆时针 45°、`C` 顺时针 45°。
+    //   · 为什么用**字母键**：`F1`/`F3` 在本机被别的软件抢占（`TECH_DEBT` C37），`F5` 在 VS Code 里
+    //     是"启动调试" ⇒ 字母键不在那些全局热键的靶场上。
+    //   · 为什么放在**枚举末尾**（而不是插进上面 `W..R` 那一行）：不挪动既有键的值 ——
+    //     `tests/test_input_state.cpp` 里那批断言是按"具体键 + 具体槽位"写的，挪了就得跟着改。
+    //   · 与 `T` 一样**不进 HUD 提示行**：提示行宽度有溢出用例钉着
+    //     （`Game.HudFitsInTwoLinesWithoutOverflow`）⇒ 键位写在 README / Release 的键位表里。
+    //   · ⚠️ 它**受玩法门控**（`policy.readMoveKeys`）—— 暂停时不许转身，见 `Game.cpp` ③c。
+    Z, C,
+
     Count                         // 哨兵：等于数组长度，本身不是合法按键
 };
 
@@ -88,6 +98,10 @@ constexpr std::array<Key, 256> MakeKeyMap() noexcept
     map[0x45] = Key::E;   // 'E'  VK_E
     map[0x52] = Key::R;   // 'R'  VK_R
     map[0x54] = Key::T;   // 'T'  VK_T（S11 的 Debug Overlay 开关，2026-10-15 加）
+
+    // S12：原地转身（**玩法键**，2D / 3D 都生效；受玩法门控）
+    map[0x5A] = Key::Z;   // 'Z'  VK_Z（逆时针 45°）
+    map[0x43] = Key::C;   // 'C'  VK_C（顺时针 45°）
 
     // 控制键
     map[0x20] = Key::Space;    // VK_SPACE

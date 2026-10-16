@@ -81,6 +81,32 @@ inline constexpr float kInvSqrt2 = 0.70710678f;
     return kVectors[i];
 }
 
+// 按 45° 一档**原地转身**（S12，分叉 B = 甲′）。
+//
+// ⚠️ **方向约定（2026-10-16 实测纠正）**：`Facing8` 的枚举顺序在**屏幕上**是**逆时针**
+//    （东 = 3 点钟 → 东北 = 1:30 ⇒ 往左转）⇒ `steps = +1` 是**逆时针**、`-1` 是**顺时针**。
+//    ⚠️ 这里原写"顺序本身就是顺时针"，是**错的** —— 它让 `Game` 里 `Z`/`C` 的符号也跟着写反了
+//       一次，被 `Game.TurnKeysRotateFacingInPlace` 抓出来（见 `S12_CHECKLIST` 落地偏差）。
+//    不需要查表：枚举顺序本身就定义了一圈；`steps` 可以是任意整数（负数、0、超过一圈都行）。
+// ⚠️ 返回值**一定是合法枚举**：轮转用"先加再对 8 取模 + 负数修正"，而不是
+//    `static_cast<Facing8>(raw + steps)` —— 后者对负数或大数会造出越界枚举值
+//    （那种值落到 `FacingToVec2`/`FacingGlyph` 只会走兜底，属于"能跑但语义错"）。
+// ⚠️ 越界入参（只有强制转换造得出来）→ 退回 `East`，与 `FacingToVec2` 的兜底方向一致。
+[[nodiscard]] inline Facing8 StepFacing(Facing8 f, int steps) noexcept
+{
+    const std::size_t i = static_cast<std::size_t>(f);
+    if (i >= kFacingCount) {
+        return Facing8::East;
+    }
+
+    constexpr int kN   = static_cast<int>(kFacingCount);   // 8
+    int           next = (static_cast<int>(i) + steps) % kN;
+    if (next < 0) {
+        next += kN;   // ⚠️ C++ 的 `%` 对负数给负数（-1 % 8 == -1），必须自己拨回来
+    }
+    return static_cast<Facing8>(next);
+}
+
 // 查字形（HUD 用）。越界枚举 → `kFacingGlyphFallback`（仍是 2 字符）。
 [[nodiscard]] inline const char* FacingGlyph(Facing8 f) noexcept
 {

@@ -1020,6 +1020,93 @@ MINI_TEST(Game, EnemyDiesAndDisappears)
 // ============================================================
 
 // ------------------------------------------------------------
+// G1b. 子弹的**飞行与收尾**：飞够远之后必须已经消失；**飞行期间不许出现在实心格上**
+//
+// ⚠️ **2026-10-16 修正（本用例的第一版写错了，错在预算）**：
+//   世界是 **200×200**（`Game::kWorldW/H`），玩家出生在 `(2.5, 2.5)` ⇒ 朝南那发的路程是
+//   **196 格 ≈ 262 帧**（`kDefaultBullet.speed ÷ 60` = 0.75 格/帧）⇒ 第一版只跑 **40 帧**就断言
+//   "场上没有子弹了"，那是**错的**（子弹还在飞 = 正确行为）。
+//   而人眼看到的"子弹贴着某一排 `#` 划过 + 那排 `#` 在闪"，真相是：
+//     · 那排 `#` 是**柱子阵**的一行（`kPillarStep = 10` ⇒ 每 10 行长得一模一样，
+//       这正是"# 的数量与位置和中间的完全一致"这条观察的来源）；
+//     · 子弹飞过那一行的几帧里，该行**每帧都要重画**（`RowDiff` 只发变化行）⇒ 观感是"闪"；
+//     · 子弹最后**飞出视口**（相机只跟玩家、不跟子弹）⇒ 看起来"移动几步之后消失"。
+//   ⇒ 结论：那不是 bug。真正该钉住的是"子弹的飞行与收尾"这条契约本身。
+//
+// 判据两条：
+//   1) **逐帧**：`*` 不许落在"开局是 `#`"的格子上
+//      （`DrawMap` 只给实心格画 `#`，墙静止；本用例里玩家不动 ⇒ 相机原点不变 ⇒ 参考帧成立）；
+//   2) **最终**：跑 `kFrames` 帧（**远大于**路程帧数）之后，子弹必须已经消失（撞边界/柱子当帧被删）。
+// ------------------------------------------------------------
+MINI_TEST(Game, BulletFliesThenDiesAtTheMapBorder)
+{
+    // 三发：**正南**（打到下边界 y=199）·**东南**（先撞上柱子阵的 (10,10)）·**正东**（打到右边界 x=199）
+    const int kTurnsToFacing[3] = {2, 1, 0};   // 相对东：2 步 = 南 · 1 步 = 东南 · 0 步 = 东
+    const int kFrames           = 400;         // > 196 格 ÷ 0.75 格/帧 ≈ 262 帧，留足余量
+
+    for (const int turns : kTurnsToFacing) {
+        constexpr float kDt = 1.0f / 60.0f;
+
+        FakeInput   input;
+        Game        game;
+        FrameBuffer fb(kScreenW, kScreenH);
+
+        game.OnStart();
+        StartPlaying(game, input, fb);
+
+        // 参考帧：此刻画面上的 `#` = 实心格（含地图外的越界格 —— `DrawMap` 把越界也画成 `#`）
+        const int   w = fb.Width();
+        const int   h = fb.Height();
+        std::string solid;
+        solid.reserve(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+        int wallCount = 0;
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                const char c = AsciiCell(fb, x, y);
+                solid.push_back(c);
+                if (c == '#') {
+                    ++wallCount;
+                }
+            }
+        }
+        MINI_CHECK(wallCount > 0);   // 参考帧里确实有墙（否则下面那条断言是空的 —— 空断言更坏）
+
+        // 转身到目标朝向（用 S12 的原地转身键：它**不动位置**，所以不干扰这一发子弹的几何）
+        for (int i = 0; i < turns; ++i) {
+            PressOnce(game, input, fb, Key::C);
+        }
+
+        // 开火（边沿触发 ⇒ 只出一发），然后**逐帧**检查不变量
+        input.Press(Key::Space);
+        StepFrame(game, input, fb, kDt);        // 开火帧：子弹已生成、且本帧已被积分
+        input.Release(Key::Space);
+
+        int violations = 0;
+        for (int f = 0; f < kFrames; ++f) {
+            for (int y = kTestHudRow; y < h; ++y) {   // 只看世界区（顶栏/HUD 不参与）
+                for (int x = 0; x < w; ++x) {
+                    const std::size_t idx =
+                        static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x);
+                    if (AsciiCell(fb, x, y) == '*' && solid[idx] == '#') {
+                        ++violations;   // ★ 子弹画在了"开局是 `#`"的格上 ⇒ 不许发生
+                    }
+                }
+            }
+            if (f + 1 < kFrames) {
+                StepFrame(game, input, fb, kDt);
+            }
+        }
+        MINI_CHECK_EQ(violations, 0);
+
+        // 顺带钉"不许有永久幽灵"：`kFrames` 帧后（**远大于**到边界的路程帧数）场上不该还有子弹
+        //   ⚠️ 不无条件断言：万一这些帧里玩家被打死，世界会冻结、子弹就停在那儿了 —— 那是**另一条**语义
+        if (game.State() == GameState::Playing) {
+            MINI_CHECK_EQ(game.BulletCount(), 0);
+        }
+    }
+}
+
+// ------------------------------------------------------------
 // G1. 开火方向 = **当前朝向**；而朝向 = "移动方向，停下沿用"（分叉 ③ 的两半都钉）
 // ------------------------------------------------------------
 MINI_TEST(Game, FiringSpawnsBulletAlongFacing)
@@ -1583,6 +1670,97 @@ MINI_TEST(Game, TitleDoesNotSimulate)
 
     MINI_CHECK(game.State() == GameState::Title);
     MINI_CHECK(ScreenText(fb) == frozen);      // ★ 整屏逐字节
+}
+
+// S12（分叉 B = 甲′）：`Z`/`C` **原地**转 45° —— 只改朝向，**不动位置**。
+//
+// ⚠️ "没动"的判据取 **HUD 行 1 里 `| sumdt` 之前**那一段（= `pos` + `tile`），理由是两条：
+//    · **不能**用 `FindChar(fb, U'@')`：敌人可能盖住玩家那一格（没有推挤，`TECH_DEBT` C12）
+//      ⇒ 会**假红**（这个坑在 `posBefore/posAfter` 那条用例的注释里已经记过一次）；
+//    · **不能**整行比：`sumdt` 每帧在累加，而 `PressOnce` 一次要过 2 帧。
+// ⚠️ 也不能断言"`sumdt` 不变" —— 施工图 §8.3 原稿这么写过，落地时发现它必然变
+//    （时间在走），已登记为落地偏差（`S12_CHECKLIST`）。
+MINI_TEST(Game, TurnKeysRotateFacingInPlace)
+{
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+
+    game.OnStart();
+    StartPlaying(game, input, fb);
+
+    const auto positionField = [&fb]() {
+        std::string row;
+        for (int x = 0; x < fb.Width(); ++x) {
+            row.push_back(AsciiCell(fb, x, kTestHudRow - 1));
+        }
+        const std::size_t cut = row.find(" | sumdt");
+        return (cut == std::string::npos) ? row : row.substr(0, cut);
+    };
+
+    const Facing8     start     = game.Facing();
+    const std::string posBefore = positionField();
+    MINI_CHECK(start == Facing8::East);                       // 开局恒为东（HUD 的 `dir ->` 同理）
+    MINI_CHECK(posBefore.find("pos") != std::string::npos);   // 确认读到的真是行 1 的位置栏
+
+    // ★ 先钉**方向约定本身**（`Z` = 逆时针 / `C` = 顺时针）—— 2026-10-16 红过的地方就在这里。
+    //   ⚠️ 为什么必须有这两条：只用"4 步 = 180°"验证会**漏掉 `Z`/`C` 互换**（180° 两个方向都对得上）。
+    PressOnce(game, input, fb, Key::C);
+    MINI_CHECK(game.Facing() == Facing8::SouthEast);   // 从东顺时针一档 = 东南
+    PressOnce(game, input, fb, Key::Z);
+    MINI_CHECK(game.Facing() == Facing8::East);        // 逆时针一档回来（互为逆操作）
+
+    // 4 步 = 180°（方向无关）：东 → 东北 → 北 → 西北 → 西
+    for (int i = 0; i < 4; ++i) {
+        PressOnce(game, input, fb, Key::C);
+    }
+    MINI_CHECK(game.Facing() == Facing8::West);
+
+    // 逆时针 1 步：西 → 西南（`-1` 也必须走对方向）
+    PressOnce(game, input, fb, Key::Z);
+    MINI_CHECK(game.Facing() == Facing8::SouthWest);
+
+    // 再顺时针 1 步回到西：`Z` 与 `C` 互为逆操作
+    PressOnce(game, input, fb, Key::C);
+    MINI_CHECK(game.Facing() == Facing8::West);
+
+    // 一整圈（8 步）回到原朝向：轮转的模运算没错
+    for (int i = 0; i < 8; ++i) {
+        PressOnce(game, input, fb, Key::C);
+    }
+    MINI_CHECK(game.Facing() == Facing8::West);
+
+    // ★ 上面 14 次转身的全过程里，玩家**一格都没挪**（这就是"原地"的定义）
+    MINI_CHECK_EQ(positionField(), posBefore);
+}
+
+// S12（分叉 B = 甲′）：转身键**受玩法门控** —— `ESC` 暂停之后按 `Z`/`C` 什么都不发生。
+//
+// 为什么值得单独钉：`ESC` 暂停的语义是"**世界完全冻住**"（S11 人眼项 12 验过：连波次的
+// 喘息倒计时都停）。若转身键挂在门控**外**，暂停时画面还能转 ⇒ 那条语义当场破功
+// （这也是反向验证 R4 的靶子）。
+MINI_TEST(Game, TurnIsGatedByPause)
+{
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+
+    game.OnStart();
+    StartPlaying(game, input, fb);
+
+    // 先证明"不暂停时它**确实有效**" —— 否则下面那条"没变"也可能只是"功能根本没接上"
+    const Facing8 start = game.Facing();
+    PressOnce(game, input, fb, Key::C);
+    MINI_CHECK(game.Facing() != start);
+    const Facing8 afterOneTurn = game.Facing();
+
+    PressOnce(game, input, fb, Key::Escape);
+    MINI_CHECK(game.State() == GameState::Paused);
+
+    // 冻结状态下两个转身键都不许生效
+    PressOnce(game, input, fb, Key::C);
+    PressOnce(game, input, fb, Key::Z);
+    MINI_CHECK(game.Facing() == afterOneTurn);
 }
 
 // G3（§10.1 用例 3）：`Esc` 暂停 → 冻结；再按 `Esc` 恢复 → 又能动。

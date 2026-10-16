@@ -33,6 +33,7 @@ using game::FacingToVec2;
 using game::FirstEnemyOnSegment;
 using game::kFacingCount;
 using game::kFacingGlyphs;
+using game::StepFacing;
 using mini::math::ApproxEquals;
 using mini::math::Vec2;
 using mini::world::Tile;
@@ -165,6 +166,45 @@ MINI_TEST(Bullet, FacingToVec2IsUnitLengthAndPointsRight)
     // 零向量会造出一颗"原地不动、永远赖在屏幕上"的子弹，比方向猜错更糟。
     const Vec2 fallback = FacingToVec2(static_cast<Facing8>(200));
     MINI_CHECK(Near(fallback, 1.0f, 0.0f));
+}
+
+// ------------------------------------------------------------
+// B3b. `StepFacing`：45° 一档**原地转身**（S12，分叉 B = 甲′）
+//      ⚠️ 它是纯函数，所以能钉住**端到端用例钉不到**的边界：负步数、超过一圈、越界入参。
+//         （`Game` 侧那两条用例一次只能按 ±1 一格。）
+// ------------------------------------------------------------
+MINI_TEST(Bullet, StepFacingRotatesBy45AndWraps)
+{
+    // 逆时针（枚举顺序在屏幕上是**逆时针**）：东 → 东北 → 北 → 西北 → 西
+    MINI_CHECK(StepFacing(Facing8::East, 1) == Facing8::NorthEast);
+    MINI_CHECK(StepFacing(Facing8::NorthEast, 1) == Facing8::North);
+    MINI_CHECK(StepFacing(Facing8::East, 4) == Facing8::West);        // 4 步 = 180°
+
+    // 顺时针
+    MINI_CHECK(StepFacing(Facing8::East, -1) == Facing8::SouthEast);
+    MINI_CHECK(StepFacing(Facing8::North, -2) == Facing8::East);
+
+    // 0 步 / 超过一圈 / 负的整圈
+    MINI_CHECK(StepFacing(Facing8::South, 0) == Facing8::South);
+    MINI_CHECK(StepFacing(Facing8::East, 8) == Facing8::East);
+    MINI_CHECK(StepFacing(Facing8::East, 17) == Facing8::NorthEast);  // 17 % 8 == 1
+    MINI_CHECK(StepFacing(Facing8::East, -8) == Facing8::East);
+    MINI_CHECK(StepFacing(Facing8::East, -9) == Facing8::SouthEast);  // ⚠️ 负模要自己拨回来
+
+    // 8 步 +1 与 8 步 -1 都回到原点（轮转闭合）
+    Facing8 walk = Facing8::SouthWest;
+    for (int i = 0; i < 8; ++i) {
+        walk = StepFacing(walk, +1);
+    }
+    MINI_CHECK(walk == Facing8::SouthWest);
+    for (int i = 0; i < 8; ++i) {
+        walk = StepFacing(walk, -1);
+    }
+    MINI_CHECK(walk == Facing8::SouthWest);
+
+    // ★ 越界入参（只有强制转换造得出来）→ 兜底 `East`（与 `FacingToVec2` 的兜底同向）
+    MINI_CHECK(StepFacing(static_cast<Facing8>(8), 1) == Facing8::East);
+    MINI_CHECK(StepFacing(static_cast<Facing8>(200), -1) == Facing8::East);
 }
 
 // ------------------------------------------------------------

@@ -36,6 +36,21 @@
 //     ⓪ 造「状态事件」→ ① 转移状态（**唯一入口** = `NextState`）→ ② 取策略 → ③ 按策略分派：
 //         读输入 → 归一化（顺手更新朝向）→ **写玩家速度** → 驱动 AI（**写敌人速度**）
 //         → **生成子弹** → **命中判定/标删** → Update(dt) → **相机 Follow** → FlushRemovals
+//
+//   ⚠️ **2026-10-16 的一次"差一帧"调查（结论：不必修；此处留档，别再走一遍）** ——
+//     人眼报告："子弹撞到底部会贴着最后一排 `#` 滑动，那一排 `#` 还会闪一下，斜向时滑一两格才消失。"
+//     查证结论是**没有 bug**，三条事实（都实测过）：
+//       · 那排 `#` 是**柱子阵**的一行（`kPillarStep = 10` ⇒ 每 10 行长得一模一样
+//         —— 这正是"`#` 的数量与位置和中间的完全一致"那条观察的来源）；
+//       · 子弹在飞过那一行的几帧里，**该行每帧都要重画**（`RowDiff` 只发变化行）⇒ 观感是"闪"
+//         （实拍顶栏 `Rows 4/39` = 顶栏 + 2 行 HUD + 子弹那行，四个数正好对上）；
+//       · 世界是 **200×200**（`Game::kWorldW/H`）、速 0.75 格/帧 ⇒ 从出生点朝南要飞
+//         **≈262 帧**才到下边界；中途"消失"只是**飞出了视口**（相机只跟玩家、不跟子弹）。
+//     ⇒ 期间曾按**错误诊断**加过一条兜底（"Update 之后再扫一遍子弹，实心就删"，编号 ⑥b），
+//       **已撤掉**：`MoveAndCollide` 的分轴夹紧 + ⑤d 的线段采样已经保证"子弹进不了实心格"
+//       （判定比位移**更保守**）⇒ 那条兜底防的失败**不可能发生**（B2 的"不写会怎样"纪律）。
+//       真契约改用例钉住：`Game.BulletFliesThenDiesAtTheMapBorder`（逐帧 + 最终两条判据）。
+//
 //   写速度必须在 Update 之前：反过来的现象是"按一下动一下、但慢一帧"，
 //   看着像手感问题，其实是顺序问题。
 //   驱动 AI 同理：敌人和玩家**在同一个循环里**被积分，所以两边的速度都得先写好。
@@ -139,6 +154,16 @@ constexpr mini::platform::Key kFireKey = mini::platform::Key::Space;
 constexpr mini::platform::Key kStartKey   = mini::platform::Key::Enter;
 constexpr mini::platform::Key kPauseKey   = mini::platform::Key::Escape;
 constexpr mini::platform::Key kRestartKey = mini::platform::Key::R;
+
+// ── S12（分叉 B = 甲′）：两个「原地转身键」────────────────────────────────────
+// ⚠️ 它们是**玩法键**（不是调试键）⇒ 与移动键**同一组门控**（`policy.readMoveKeys`）：
+//    `ESC` 暂停时**不许**转身 —— 否则"暂停 = 世界完全冻住"这条（S11 人眼项 12）就破了。
+// ⚠️ 用 `Pressed`（**边沿**）：按一下转 45°。用 `IsDown` 会变成"按住连续转" ——
+//    那是**后续迭代**（连续转身），不是本阶段的东西（`S12_CHECKLIST` §3 末尾）。
+// ⚠️ 字母键在代码里只有两处（同 `kDumpKey`/`kFireKey` 的纪律）：这两个常量 + `KeyCode.h` 的映射。
+//    ⚠️ 它们**不进** HUD 提示行（提示行有溢出用例钉着）⇒ 键位进 README / Release 表。
+constexpr mini::platform::Key kTurnCcwKey = mini::platform::Key::Z;   // 逆时针 45°
+constexpr mini::platform::Key kTurnCwKey  = mini::platform::Key::C;   // 顺时针 45°
 
 // ── `kQuitKey`：退出键（2026-10-13 补，`TECH_DEBT` **B6**）──────────────────────────
 // ⚠️ **它是最后一个被补上常量的键**（2026-10-13，`TECH_DEBT` B6）：在那之前读点写的是
@@ -789,6 +814,24 @@ void Game::OnUpdate(const mini::core::FrameContext& ctx)
         Facing8 nextFacing = m_facing;
         if (game::DirectionToFacing(dir, nextFacing)) {
             m_facing = nextFacing;
+        }
+
+        // ③c 原地转身（S12，分叉 B = 甲′）：**只改朝向，不动位置**。
+        //     ⚠️ **方向约定（2026-10-16 实测纠正）**：`Facing8` 的枚举顺序在**屏幕上**是
+        //        **逆时针**（东 = 3 点钟 → 东北 = 1:30 ⇒ 往左转）⇒ `StepFacing(+1)` = **逆时针**、
+        //        `-1` = **顺时针**。所以 `Z`（承诺逆时针）传 `+1`、`C`（承诺顺时针）传 `-1`。
+        //        ⚠️ 这两行**写反过一次**（第一版把 `Z` 传 `-1`）：`Game.TurnKeysRotateFacingInPlace`
+        //           把它抓了出来 —— 按一次 `Z` 之后朝向是**西北**（顺时针）而不是西南。
+        //     ⚠️ 与 ③b 的顺序有意义：先按移动方向定朝向、**再**应用转身 ⇒ 同一帧里
+        //        按 `D`+`C` 是"朝东、再顺时针转 45°"= 东南（可预期，见用例）。
+        //     ⚠️ 两键同一帧都按下 ⇒ 净效果 0（下面先逆后顺两条独立 `if`）。
+        //        这是**有意**的：不做"抵消检测"，两条 `if` 的语义各自独立、好解释。
+        //     ⚠️ 它**在门控里** ⇒ `Title`/`Paused`/`GameOver` 下按 `Z`/`C` 什么都不发生。
+        if (input.Get(kTurnCcwKey) == KeyState::Pressed) {
+            m_facing = game::StepFacing(m_facing, +1);   // 逆时针（+1 = 屏幕上逆时针）
+        }
+        if (input.Get(kTurnCwKey) == KeyState::Pressed) {
+            m_facing = game::StepFacing(m_facing, -1);   // 顺时针
         }
     }
 
