@@ -116,12 +116,13 @@ AI 替我跑了，我就丢掉了第一手的反馈。
 | `doc/S11_CHECKLIST.md` | S11 施工图（**✅ 2026-10-15 收口**）：`core/Logger.h` + `core/Profiler.h`（`PROFILE_SCOPE` RAII + 120 帧环形缓冲）+ `game/DebugOverlay.h`；§9.3 **人眼验收合并清单 19 条**、§16 插桩前基线、§17 收口记录、**§18 反向验证总账（5 场 5/5 命中）** |
 | `doc/S11_5_DEMO_CHECKLIST.md` | S11.5 施工图（**2026-10-16 落纸、A~E 已拍板、未开工**）：**交付可试玩 demo** —— 静态 CRT 构建变体 + 默认窗口 100×30（`kDefaultCanvas` + `ComputeSizeRequest` + `Console::TryResizeWindow`）+ `tools/pack_demo.ps1` + 玩家卡 + `git tag v0.4.0` 与 GitHub Release。前置事实 14 条、坑表 15 条、4 条新用例、2 场反向验证 |
 | `doc/RELEASE_NOTES_v0.4.md` | **对外正文**（S11.5 第 6 步创建）：Release 页面粘贴用，填写**实测数字**（exe 体积、zip 体积、SHA256） |
-| `doc/S12_CHECKLIST.md` | **S12 施工图（2026-10-16 落纸、五个分叉已拍板、未开工）**：Ray Casting 伪 3D —— DDA + 每列射线 + 鱼眼校正 + **`Cell` 扩宽到 `char32_t`**（分叉 A=甲）+ **`Z`/`C` 8 档原地转身**（B=甲′）+ `engine/render/RayCaster.h` 纯函数（C=甲）+ 视口沿用 `kHudRow`（D=甲）+ 地板/天花板行线（E=乙）+ `V`/`F5` 视角切换。前置事实 18 条、坑表 18 条、~17 条新用例、4 场反向验证、**§12 偏差预告 8 条** |
+| `doc/S12_CHECKLIST.md` | **S12 施工图（2026-10-16 落纸、五个分叉已拍板；进度：第 1 · 2 · 2.5 · 3 笔已提交，第 4 笔（3D 接线）已写完待验证）**：Ray Casting 伪 3D —— DDA + 每列射线 + 鱼眼校正 + **`Cell` 扩宽到 `char32_t`**（分叉 A=甲）+ **`Z`/`C` 8 档原地转身**（B=甲′）+ `engine/render/RayCaster.h` 纯函数（C=甲）+ 视口沿用 `kHudRow`（D=甲）+ 地板/天花板行线（E=乙）+ `V`/`F5` 视角切换。前置事实 18 条、坑表 18 条、~17 条新用例、4 场反向验证、**§12 偏差预告 8 条**、**§16 临时插单（地图"围起来"档 1）** |
 | `doc/TECH_DEBT.md` | **技术债清单与执行计划**：A/B/C/D 四组（A 只跑命令、B 要改代码、C 明确推迟附触发条件、D 已关闭留档）。**每阶段收口时更新它** |
 | `doc/SHOWCASE_PLAN.md` | **元文档**：展示层/对外可读性的 6 个动作（README · CI · 一页技术亮点 · S11 · S12 · 第二个项目）按 ROI 排序 + 执行顺序 + 不做清单 + **对外介绍的事实纪律**。⛔ 不改代码、不进构建 |
 | `doc/CI_CHECKLIST.md` | **CI 施工图与进度板**（`SHOWCASE_PLAN` 动作 2）：9 条接口决策、7 步流水线、11 条坑、验收 + 反向验证、**公开仓库前的审计清单**。⛔ 不改代码（只新增 `.github/workflows/ci.yml`） |
 | `doc/MINITEST_SPEC.md` | 要手写的测试框架 MiniTest 的规格（接口、注册机制、runner 行为、坑） |
 | `doc/CTEST_NOTES.md` | CTest 入门：与 GoogleTest 的分工、命令速查、PowerShell 差异 |
+| `doc/RAYCASTING_NOTES.md` | **技术笔记（2026-10-16 建，本人要求"记录下来，后续我会继续学习"）**：我们这套伪 3D 到底是什么（grid ray casting / Amanatides-Woo DDA）· 伪 3D 三档对比（Wolfenstein / DOOM / 真 3D）· 算法 8 步对照代码 · 边界（做不到什么、谁负责补）· **业界经典案例年代表**（1968 Appel → 1987 Amanatides-Woo → 1992 Wolf3D → 1993 DOOM → 今天体素/LOS）· 三个易混名词（ray casting / tracing / marching）· 真 3D 升级清单 · 权威阅读清单 + 6 道自测题。⛔ 不改代码、不进构建 |
 | `doc/WORK_MODE.md` | 上班碎片时间微任务开关的正文 |
 | `.agents/skills/work-mode/` | 上面那个开关的 skill 入口 |
 | `.agents/skills/step-report/` | **每步实现报告的 7 节格式规范**（§1.4 的细化；写报告前先读它） |
