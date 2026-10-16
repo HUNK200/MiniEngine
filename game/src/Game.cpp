@@ -8,11 +8,13 @@
 #include "mini/math/Vec2.h"
 #include "mini/platform/Input.h"
 #include "mini/render/Color.h"
+#include "mini/render/RayCaster.h"   // S12（第 4 笔）：3D 视角的纯函数（DDA 射线 / 墙高 / 明暗档）
 #include "mini/world/Collision.h"   // 调试快照用：IsSolidAt / ToIndex / 点模型的判据
 #include "mini/world/TileMap.h"
 
 #include <algorithm>    // std::max（S8：HP 夹到 0）；std::erase_if（S9：子弹表自愈压缩）
 #include <array>        // S9：定长暂存（`kWaveMax` 是编译期常量 ⇒ 判定时不分配）
+#include <cmath>        // S12（第 4 笔）：3D 墙高取整用 std::ceil
 #include <cstddef>      // std::size_t（S8：reserve 与巡逻表下标）
 #include <cstdio>
 #include <initializer_list>  // S10：DrawCenteredBlock 的行表
@@ -166,6 +168,34 @@ constexpr mini::platform::Key kRestartKey = mini::platform::Key::R;
 //    ⚠️ 它们**不进** HUD 提示行（提示行有溢出用例钉着）⇒ 键位进 README / Release 表。
 constexpr mini::platform::Key kTurnCcwKey = mini::platform::Key::Z;   // 逆时针 45°
 constexpr mini::platform::Key kTurnCwKey  = mini::platform::Key::C;   // 顺时针 45°
+
+// ── S12（第 4 笔）：**切 2D/3D 视角**（主键 `V` + 备份 `F5`）──────────────────────────
+// ⚠️ 它**不受玩法门控**：`ESC` 暂停时也能切（视图行为，同 `T`/`F2`/`F4`）—— 见 `OnUpdate` ④f。
+// ⚠️ 用 `Pressed`（**边沿**）：按一下切一次。
+// ⚠️ 键字母在代码里只有两处（同 `kDumpKey` 的纪律）：这两个常量 + `KeyCode.h` 的映射。
+//    ⚠️ 它们**不进** HUD 提示行（提示行有溢出用例钉着）⇒ 键位进 README / Release 表。
+constexpr mini::platform::Key kViewKey    = mini::platform::Key::V;    // 主键（字母键，不在热键靶场上）
+constexpr mini::platform::Key kViewKeyAlt = mini::platform::Key::F5;   // 备份（`PLAN` 原稿的键）
+
+// ── S12（第 4 笔）：3D 的观感参数 + 两张小表 ────────────────────────────────────────
+// ⚠️ 前两个**没有理论值**（`S12_CHECKLIST` §13 的 T2）：与字体/字号/窗口都有关，只能看着调。
+constexpr float kFovTan     = 0.66f;   // 相机平面半长 ⇒ 约 66° FOV（与 `RayCaster.h` 的默认值同源）
+constexpr float kCellAspect = 2.0f;    // 终端字符格 ≈ 1:2（宽:高）⇒ 墙高乘它（见 `WallHeightRows`）
+
+// 明暗：**字形 + 颜色同档**（档数由 `mini::render::kShadeCount` 定死 = 4）。
+// ⚠️ 字形本身自带"疏密"语义（`█` 最密 → `░` 最稀），比纯颜色更稳：
+//    颜色在有的终端/主题下会被改（亮度重映射），字形不会。
+// ⚠️ 最后一档**刻意与第 3 档同色**（`BrightBlack`）：`░` 已经比 `▒` 稀一档，再压颜色（`Black`）
+//    会在黑底上**彻底看不见** ⇒ 走廊尽头会变成一个"空洞"。别"顺手修"成 `Black`。
+// ⚠️ 若某台机器的 conhost 光栅字体不认 `█`（显示成 `?`）⇒ 换 Consolas / 新终端，
+//    或把这张表整体换成 ASCII（`#` `%` `*` `.`）—— 只改这一处（坑 10）。
+constexpr char32_t kShades[mini::render::kShadeCount] = {U'█', U'▓', U'▒', U'░'};
+constexpr mini::render::Color kShadeColors[mini::render::kShadeCount] = {
+    mini::render::Color::BrightWhite,   // 最近：最亮
+    mini::render::Color::White,
+    mini::render::Color::BrightBlack,
+    mini::render::Color::BrightBlack,   // 最远：字形已最稀，颜色不再压（见上）
+};
 
 // ── `kQuitKey`：退出键（2026-10-13 补，`TECH_DEBT` **B6**）──────────────────────────
 // ⚠️ **它是最后一个被补上常量的键**（2026-10-13，`TECH_DEBT` B6）：在那之前读点写的是
@@ -845,6 +875,17 @@ void Game::OnUpdate(const mini::core::FrameContext& ctx)
         }
     }
 
+    // ④f 切 2D/3D 视角（S12 第 4 笔）—— ⚠️ **不在门控里**：暂停时也能切。
+    //     理由：它只改"怎么看"（`m_viewMode`），不动世界、不动帧序、不参与任何游戏逻辑
+    //     ⇒ 与 `T`/`F2`/`F4` 同一类（视图/调试出口）。反向对照：上面 ③c 的转身是**玩法**键
+    //     ⇒ 受门控（暂停时不许转）。
+    //     ⚠️ 用 `Pressed`（边沿）：按一下切一次；用 `IsDown` 会每帧来回翻（画面疯狂闪）。
+    //     ⚠️ 两个键都查（主键 `V` + 备份 `F5`）：键可达性只能人眼验（`TECH_DEBT` C37），
+    //        有备份才敢在"某个键被抢"时一处换掉。
+    if (input.Get(kViewKey) == KeyState::Pressed || input.Get(kViewKeyAlt) == KeyState::Pressed) {
+        m_viewMode = (m_viewMode == ViewMode::Mode2D) ? ViewMode::Mode3D : ViewMode::Mode2D;
+    }
+
     // ④ `kQuitKey` 退出。Esc 刻意不退出 —— 它从 S10 起要用来关菜单（S2 的决策），
     //    进程级退出（Ctrl+C / 关窗口）由 Application 看 Input::QuitRequested()。
     //    ⚠️ **不在策略表里** ⇒ 冻结状态下也跑：它是"关掉程序"的唯一出口，暂停时更要能按。
@@ -1059,6 +1100,71 @@ void Game::DrawEntities(mini::render::FrameBuffer& fb) const
         }
 
         fb.Set(col, row, entity.symbol, color, bg);
+    }
+}
+
+// ------------------------------------------------------------
+// S12（第 4 笔）：3D 视角（伪 3D 射线投射）
+// ------------------------------------------------------------
+
+Game::ViewMode Game::CurrentView() const noexcept
+{
+    return m_viewMode;
+}
+
+mini::math::Vec2 Game::CameraDir() const noexcept
+{
+    // ⚠️ **唯一**把"朝向"变成单位向量的地方（分叉 C 的接缝）：将来做连续转身只改这一个函数体。
+    //    `FacingToVec2` 返回的**都是单位向量**（斜向用 1/√2 拼出来，长度恰好 1）——
+    //    这是 `RayCaster` 那条 "rayDir·dir == 1 ⇒ perp = t" 推导的**前提**：
+    //    在这里乘任何系数（比如"走得更快"）都会**悄悄**把 3D 的距离算歪。
+    return game::FacingToVec2(m_facing);
+}
+
+void Game::DrawRaycastWorld(mini::render::FrameBuffer& fb) const
+{
+    const mini::world::Entity* player = m_world.Find(m_player);
+    if (player == nullptr) {
+        return;   // `OnStart` 之前（同 `DrawHud` 的口径：宁可空着，也不画假的）
+    }
+
+    // 视口与地平线：**沿用 2D 那套口径** —— 世界从行 `kHudRow` 开始，HUD 之后画在上面。
+    // ⚠️ 于是 3D 的"可用视口"是 `fb.Height() - kHudRow` 行（100×30 时 = **28**），**不是 30**
+    //    ⇒ 验收口径要按这个说（坑 16），也别按整屏去算地平线。
+    const int viewH = fb.Height() - kHudRow;
+    if (viewH <= 0 || fb.Width() <= 0) {
+        return;
+    }
+    const int horizon = kHudRow + viewH / 2;
+
+    const mini::render::RayCamera cam{player->transform.pos, CameraDir(), kFovTan};
+
+    for (int col = 0; col < fb.Width(); ++col) {
+        const mini::render::RayHit hit =
+            mini::render::CastColumn(m_world.Map(), cam, col, fb.Width());
+
+        if (!hit.hit) {
+            continue;   // 病态输入（一路没撞到）：这一列留空，等第 5 笔的地板/天花板来填
+        }
+
+        // ⚠️ `float → int` 的取整**只在这里做一次**（坑 17）：半高用 floor、总高用 ceil
+        //    ⇒ 墙不会因为浮点抖动反复差一行；而"远墙至少 1 行"由 `WallHeightRows` 兜底。
+        const float lineH  = mini::render::WallHeightRows(hit.perp, viewH, kCellAspect);
+        const int   halfH  = static_cast<int>(lineH * 0.5f);      // 正数 ⇒ 截断即 floor
+        const int   totalH = static_cast<int>(std::ceil(lineH));
+        const int   top    = horizon - halfH;
+        const int   bottom = top + totalH;
+
+        const int shade = mini::render::ShadeIndex(hit.perp);
+
+        // 裁剪到"可用视口"（行 `kHudRow .. fb.Height()-1`）：贴脸时 `totalH` 会远超视口。
+        // ⚠️ `fb.Set` 本来就忽略越界，但**先夹一次**更省（省掉几万次白调用），
+        //    而且"这一列到底画了哪几行"在这段代码里变成显式的（好读、好断）。
+        const int y0 = (top > kHudRow) ? top : kHudRow;
+        const int y1 = (bottom < fb.Height()) ? bottom : fb.Height();
+        for (int row = y0; row < y1; ++row) {
+            fb.Set(col, row, kShades[shade], kShadeColors[shade]);
+        }
     }
 }
 
@@ -1294,8 +1400,17 @@ void Game::OnRender(mini::render::FrameBuffer& fb)
     // ⚠️ 不依赖 `DrawHud` 内部那句 `player == nullptr` 早退来"挡住 HUD"——
     //    那是"碰巧正确"（玩家的确还没出生），换成显式判断才不靠巧合。
     if (m_state != GameState::Title) {
-        DrawMap(fb);
-        DrawEntities(fb);
+        // ── S12（第 4 笔）：**2D / 3D 的分叉只在这一处** ─────────────────────────────
+        // ⚠️ `DrawHud` **不在分叉里**：3D 也要 HUD（`hp`/`ammo`/`dir` 一样得看得见）。
+        // ⚠️ 3D 下**不画** `DrawMap`/`DrawEntities`（§1.2 有意不做"在 3D 里看见自己"）
+        //    ⇒ 屏幕上不再出现 `@`/`E`/`*`，也不再有 `#` —— 这正是"3D 屏上的判据不能
+        //    沿用 2D 那套"的原因（坑 9：3D 的新用例**禁止**用 `ScreenText`）。
+        if (m_viewMode == ViewMode::Mode3D) {
+            DrawRaycastWorld(fb);
+        } else {
+            DrawMap(fb);
+            DrawEntities(fb);
+        }
         // HUD 压在**视口第 0 行**上（= 相机原点那一行；同"顶栏压在最上面"一个道理）。
         // ⚠️ 顺序不能换：HUD 要盖掉地图，而 `@` 必须画在地图之后、HUD 之前。
         DrawHud(fb);

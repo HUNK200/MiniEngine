@@ -88,6 +88,15 @@ public:
     // ⚠️ 它只在 `Playing` 变化（`FireBullet` 扣、`ResolveBullets` 返还、`BeginWave` 回满）。
     [[nodiscard]] int Ammo() const noexcept;
 
+    // ── S12（第 4 笔）：2D / 3D 视角开关（键 = `kViewKey`，见 `Game.cpp` 顶部）──────────
+    // ⚠️ 枚举定义在**类内**（public）⇒ 类型名是 `Game::ViewMode`，用例照这个写。
+    // ⚠️ 访问器叫 `CurrentView()` 而**不是** `ViewMode()`：C++ 里**成员函数不能与成员类型同名**
+    //    （施工图 §4 写的 `ViewMode()` 是笔误 ⇒ 落地时改名，登记为偏差）。
+    enum class ViewMode { Mode2D, Mode3D };
+
+    // **真接口**，不是"为测试而加"：`OnRender` 真的按它分支（这一条就是"2D/3D 二选一"的真相）。
+    [[nodiscard]] ViewMode CurrentView() const noexcept;
+
     // ── S11：Debug Overlay 的三个观察面（§10 分叉 C 取①、分叉 F 取甲）──────────────
     // ⚠️ 三条都**不是"为测试而加"**：overlay 的表里真的显示它们（`foes` / `shots` 与开关状态）。
     //    这也是 `TECH_DEBT` **C23**（"子弹数没有观察面"）的出路 —— 它的原话就是
@@ -349,6 +358,18 @@ private:
     void DrawGameOver(mini::render::FrameBuffer& fb) const;     // 结算（叠在世界之上）
     void DrawPausedBanner(mini::render::FrameBuffer& fb) const;  // 暂停横幅（叠在世界之上）
 
+    // ── S12（第 4 笔）：3D 视角的两块 ────────────────────────────────────────
+    // 相机方向 = **唯一**把"朝向"翻译成"单位向量"的地方（分叉 C 的接缝）：
+    //   现在 = `game::FacingToVec2(m_facing)`；将来做**连续转身**只改这一个函数体。
+    // ⚠️ 私有：它没有对外观察面（HUD 不显示向量；用例要断的是 `CurrentView()` / 屏幕）。
+    [[nodiscard]] mini::math::Vec2 CameraDir() const noexcept;
+
+    // 3D 一帧：**只画墙**（地板/天花板是第 5 笔）+ 每列一条射线。
+    // ⚠️ 它**不认识** HUD：视口从 `kHudRow` 起算（HUD 之后画、盖在上面），
+    //    地平线在 `kHudRow + viewH/2` —— 与 2D 的"世界从 `kHudRow` 起"是同一条约定。
+    // ⚠️ **const**：只读世界、只写 `fb`（比 `DrawMap`/`DrawEntities` 还纯 —— 它们也不改状态）。
+    void DrawRaycastWorld(mini::render::FrameBuffer& fb) const;
+
     // 调试快照（键 = `kDumpKey`，见 `Game.cpp` 顶部常量）：把当前帧的参数交给 `core::Logger`
     // （追加写 `miniengine_debug.log`；`TECH_DEBT` **C14 于 S11 到期** —— 以前它自己开 `ofstream`）。
     // ⚠️ **非 const**：要写日志、还要递增 `m_dumpCount`（它同时是"本进程第一次 dump"的判据）。
@@ -409,6 +430,14 @@ private:
     //     （`TECH_DEBT` C31）。**默认关**就是那条纪律的安全边界。
     // ⚠️ 与 `m_showAiPanel` 同作用域：**进程级**，不随 `StartNewRun()` 归零（它不参与游戏逻辑）。
     bool m_showOverlay = false;
+
+    // ── S12（第 4 笔）：当前视角（键 = `kViewKey`，见 `Game.cpp` 顶部）─────────────────
+    // ⚠️ **默认 `Mode2D`**：既有 14 条"读屏幕"用例（`ScreenText` / `FindChar` / `CountChar`）
+    //    全建立在 2D 屏上 ⇒ 默认 3D 会让它们**全部**失效。这条默认值不是随口定的
+    //    （`S12_CHECKLIST` 坑 9 的第 ① 条对策）。
+    // ⚠️ 与 `m_showOverlay` 同作用域：**进程级**，不随 `StartNewRun()` 归零
+    //    （它是"怎么看"，不是"一局的数值状态"）。
+    ViewMode m_viewMode = ViewMode::Mode2D;
 
     // ── S11：几何层开关（键 = `kGeometryKey`）＝ `TECH_DEBT` **C13** 的到期处置 ────────────
     // ⚠️ 它**不是** `PLAN:549` 字面上的"碰撞盒"：S7 判过"C13 不做"，理由是"1 格 1 字符下

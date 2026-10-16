@@ -1020,6 +1020,91 @@ MINI_TEST(Game, EnemyDiesAndDisappears)
 // ============================================================
 
 // ------------------------------------------------------------
+// V1（S12 第 4 笔）：**默认必须是 2D** —— 这是既有那批"读屏幕"用例的生命线
+// ------------------------------------------------------------
+MINI_TEST(Game, Mode2DIsDefault)
+{
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+
+    game.OnStart();
+    MINI_CHECK(game.CurrentView() == Game::ViewMode::Mode2D);   // 还没按任何键
+
+    StartPlaying(game, input, fb);
+    MINI_CHECK(game.CurrentView() == Game::ViewMode::Mode2D);   // 进了 `Playing` 也还是 2D
+
+    // 而且屏幕上**真的**是 2D 那张画：有地图（`#`）、没有 3D 的墙体字形
+    MINI_CHECK(CountChar(fb, U'#') > 0);
+    MINI_CHECK_EQ(CountChar(fb, U'█'), 0);
+}
+
+// ------------------------------------------------------------
+// V2（S12 第 4 笔）：`V`（+ 备份 `F5`）切 2D/3D；**3D 真的画了**；切回 2D 后世界状态没被碰过。
+//
+// ⚠️ 3D 的断言**一律按格数**（`CountChar` / `fb.At`），**不用 `ScreenText`**（坑 9）：
+//    3D 屏上没有 `@`/`E`/`*`，用"拼串/数一数"的判据会得出没意义的结果。
+// ⚠️ 反向验证 R5 的靶子：把 `OnRender` 里那个 `if (m_viewMode == Mode3D)` 分支注掉 ⇒ 本条红。
+// ⚠️ 不比 `sumdt`：`PressOnce` 每按一次要过 2 帧 ⇒ 时间必然在走（施工图 §8.3 写"sumdt 不变"，
+//    落地发现不可能 —— 与 `TurnKeysRotateFacingInPlace` 是同一条偏差）。
+// ------------------------------------------------------------
+MINI_TEST(Game, ViewKeyTogglesRenderMode)
+{
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+
+    game.OnStart();
+    StartPlaying(game, input, fb);
+
+    // 位置栏（`pos` + `tile`）的取样：见 `TurnKeysRotateFacingInPlace` 里同一段说明
+    const auto posField = [&fb]() {
+        std::string row;
+        for (int x = 0; x < fb.Width(); ++x) {
+            row.push_back(AsciiCell(fb, x, kTestHudRow - 1));
+        }
+        const std::size_t cut = row.find(" | sumdt");
+        return (cut == std::string::npos) ? row : row.substr(0, cut);
+    };
+
+    // ── 0) 2D 基线 ──
+    MINI_CHECK(game.CurrentView() == Game::ViewMode::Mode2D);
+    MINI_CHECK(CountChar(fb, U'#') > 0);                 // 2D 的地图在
+    MINI_CHECK_EQ(CountChar(fb, U'█'), 0);               // 3D 的字形不在
+    const Facing8     facingBefore = game.Facing();
+    const std::string posBefore    = posField();
+
+    // ── 1) 按 `V` ⇒ 3D：**真的画了**（不是只翻了个标志位）──
+    PressOnce(game, input, fb, Key::V);
+    MINI_CHECK(game.CurrentView() == Game::ViewMode::Mode3D);
+
+    const int wallGlyphs = CountChar(fb, U'█') + CountChar(fb, U'▓') +
+                           CountChar(fb, U'▒') + CountChar(fb, U'░');
+    MINI_CHECK(wallGlyphs > 0);                          // ★ 3D 的墙画出来了
+    MINI_CHECK_EQ(CountChar(fb, U'#'), 0);               // 2D 的地图不画了（分支完全接管）
+    MINI_CHECK_EQ(CountChar(fb, U'@'), 0);               // §1.2：3D 里看不见自己
+    MINI_CHECK(posField() == posBefore);                 // HUD 照画（3D 也有 HUD）
+
+    // ── 2) 再按 `V` ⇒ 回 2D，且世界状态没被 3D 碰过 ──
+    PressOnce(game, input, fb, Key::V);
+    MINI_CHECK(game.CurrentView() == Game::ViewMode::Mode2D);
+    MINI_CHECK(CountChar(fb, U'#') > 0);
+    MINI_CHECK_EQ(CountChar(fb, U'█'), 0);
+    MINI_CHECK(game.Facing() == facingBefore);
+    MINI_CHECK(posField() == posBefore);
+
+    // ── 3) 设计决定：切视角**不受玩法门控**（暂停时也能切）──
+    PressOnce(game, input, fb, Key::Escape);
+    MINI_CHECK(game.State() == GameState::Paused);
+    PressOnce(game, input, fb, Key::V);
+    MINI_CHECK(game.CurrentView() == Game::ViewMode::Mode3D);   // 暂停里照样切过去了
+
+    // ── 4) 备份键 `F5` 也通了（"双保险"的另一半）──
+    PressOnce(game, input, fb, Key::F5);
+    MINI_CHECK(game.CurrentView() == Game::ViewMode::Mode2D);
+}
+
+// ------------------------------------------------------------
 // M1. 2026-10-16（临时需求 · 档 1）：**地图不许再"空旷"** —— 视口内每一行都要看得到墙
 //
 // 判据（从屏幕反推，不需要新 API）：`DrawMap` 把实心格画成 `#`（含越界）；

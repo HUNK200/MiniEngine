@@ -189,6 +189,11 @@ MINI_TEST(KeyCode, KeyFromVirtualKeyMapsUsedKeys)
     MINI_CHECK(KeyFromVirtualKey(0x5A) == Key::Z);          // 'Z'  VK_Z（逆时针 45°）
     MINI_CHECK(KeyFromVirtualKey(0x43) == Key::C);          // 'C'  VK_C（顺时针 45°）
 
+    // S12（2026-10-16，第 4 笔）：**切 2D/3D 视角键** —— `V`（主键）+ `F5`（备份）。
+    // ⚠️ 备份键的存在理由：`PLAN` 原稿用 `F5`，但它在 VS Code 里是"启动调试"⇒ 得能一处换掉。
+    MINI_CHECK(KeyFromVirtualKey(0x56) == Key::V);          // 'V'  VK_V
+    MINI_CHECK(KeyFromVirtualKey(0x74) == Key::F5);         // VK_F5（与 F1~F4 的 VK 恰好连续）
+
     // 有意不映射：字母 B 与修饰键。映进来只会多出要维护的状态
     MINI_CHECK(KeyFromVirtualKey(kVkB) == Key::Unknown);
     MINI_CHECK(KeyFromVirtualKey(0x10) == Key::Unknown);    // VK_SHIFT
