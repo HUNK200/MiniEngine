@@ -457,6 +457,7 @@ cmake --build build --config Debug ; .\build\bin\Debug\mini_tests.exe ; ctest --
 - [ ] §11 的文档同步全部落地（含 **S13 行改写**）
 - [ ] `v0.5` 判定（`PLAN` G 节）回填 ✅
 - [ ] 每个 commit 单独 checkout 都能构建 + 能跑（`AGENTS.md` §7 第二条）
+- [ ] **打 annotated tag `v0.5.0` 并 push**（`AGENTS.md` §5：阶段收口 = 打 tag；录 demo / 回退都靠它）—— ⚠️ **必须等上面的人眼与反向验证都过了再打**
 
 ---
 

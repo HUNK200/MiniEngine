@@ -284,7 +284,7 @@ col0 = centerCol - colsWide/2 ; col1 = col0 + colsWide
 | 2 | `Game`：`m_colDepth` 填值（**无行为变化**）+ 一条"depth == perp"的守卫用例 | ✅ 只记不读 | 全绿（0 行为变化） |
 | 3 | 精灵绘制（含遮挡）+ `EnemyVisibleIn3D` / `WallOccludesEnemy` | ✅ | 两条新用例绿 |
 | 4 | `z` 高度 + 排序 + `BulletVisibleIn3D` / `NearSpriteWinsOverFarOne` / `SpritesNeverTouchHudRows` / `SpritesFreezeWhenPaused` | ✅ | 全绿 |
-| 5 | 文档收口（`PLAN` S13 行、`TECH_DEBT`、`README`、`AGENTS §2`、版本号） | ✅ | — |
+| 5 | 文档收口（`PLAN` S13 行、`TECH_DEBT`、`README`、`AGENTS §2`、版本号）**+ 打 annotated tag `v0.6.0` 并 push**（`AGENTS.md` §5：机器门 + 人眼都过了才打；录 demo / 回退靠它） | ✅ | — |
 
 > 第 2 笔刻意做成"只记不读" ⇒ 一旦有问题，问题一定在第 3 笔，**不会两笔混在一起**（S7 的教训）。
 

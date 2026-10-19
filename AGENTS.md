@@ -175,6 +175,18 @@ ctest --test-dir build -C Debug --output-on-failure
 - **绝不提交** `build/`、`CMakeUserPresets.json`、任何含绝对路径的文件
 - 改了行为就同步更新 `doc/MiniEngine_PLAN.md` 的对应小节——文档和代码不能只有一个是对的
 - 两台机器（家 / 公司）交替开发，clone 后按 **PLAN 附录 A.2** 重设仓库级 git 配置
+- **阶段收口 = 打 tag**（2026-10-16 本人定：*"之后录制 demo 可以找回正确的版本"*）：**机器门（构建 + 用例全绿）和人眼验收都过了之后**，打 **annotated** tag 并推到远端 —— 它是"**录 demo / 回退 / 对外指认版本**"的锚点。
+
+  | tag | 对应阶段 | 打的时机 |
+  | --- | --- | --- |
+  | `v0.4.0` | S11 + S11.5（demo 包） | ✅ 2026-10-16 已发（Release 资产哈希已核对） |
+  | `v0.5.0` | **S12**（伪 3D） | 240 用例全绿 + 人眼 15 条 + 反向验证 4 场 **都过** ⇒ 打 |
+  | `v0.6.0` | **S13**（精灵 + 遮挡） | ≥250 用例全绿 + 人眼 10 条 + 反向验证 4 场 **都过** ⇒ 打 |
+  | `v1.0` | S14（打磨 + README/GIF/CI） | 见 `PLAN` G 节 |
+
+  ⚠️ **`git push` 不会推 tag** ⇒ 必须单独 `git push origin v0.5.0`；打完用 `git tag -n1` 核一眼。
+  ⚠️ **录 demo 时按 tag 取版本**：`git checkout v0.5.0` ⇒ `tools/pack_demo.ps1`（静态 CRT）⇒ 产物可复现。**别在 `main` 的 HEAD 上录**（HEAD 随时在动）。
+  ⚠️ tag 一旦推送就**别移动**（`v0.4.0` 那次是"发布几分钟内、下载量 0"的例外，见 `S11_5_DEMO_CHECKLIST` §11.1）。
 
 ---
 
