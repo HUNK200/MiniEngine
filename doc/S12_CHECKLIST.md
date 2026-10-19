@@ -449,9 +449,9 @@ cmake --build build --config Debug ; .\build\bin\Debug\mini_tests.exe ; ctest --
 
 ## 14. 完成的定义（本阶段收口时逐条打勾）
 
-- [ ] `cmake --build build --config Debug` **0 warning**
-- [ ] `mini_tests.exe` ≈ **237 passed, 0 failed**（suite 24）
-- [ ] `ctest --test-dir build -C Debug` **1/1**
+- [x] `cmake --build build --config Debug` **0 warning** —— ✅ **2026-10-16 本人回报"测试全绿"**（第 4 笔机器门已过）
+- [x] `mini_tests.exe` **240 passed, 0 failed**（suite 25；`Game` **45**）—— ✅ 同上
+- [x] `ctest --test-dir build -C Debug` **1/1** —— ✅ 同上
 - [ ] §9.3 人眼 **15 条**通过
 - [ ] §9.4 反向验证 **4 场**跑完并逐条比对（含 R3 的"预计绿场"如实记录）
 - [ ] §11 的文档同步全部落地（含 **S13 行改写**）
