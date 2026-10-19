@@ -176,11 +176,44 @@ constexpr mini::platform::Key kTurnCwKey  = mini::platform::Key::C;   // 顺时�
 //    ⚠️ 它们**不进** HUD 提示行（提示行有溢出用例钉着）⇒ 键位进 README / Release 表。
 constexpr mini::platform::Key kViewKey    = mini::platform::Key::V;    // 主键（字母键，不在热键靶场上）
 constexpr mini::platform::Key kViewKeyAlt = mini::platform::Key::F5;   // 备份（`PLAN` 原稿的键）
+// ⚠️ **2026-10-17 人眼实测（第 4 笔验收）**：`V` 通、**`F5` 本机收不到**（`VK_F5` 的 key-down
+//    根本没进进程）。这**不是**映射错：枚举 / `map[0x74]` / 用例断言三段都完整。
+//    ⇒ `F5` 只是"换台机器可能复活"的备份，**别指望它**；真要换备份键只改这一行 + `KeyCode.h`。
+//    （`TECH_DEBT` C37 记着这类键的可达性"永远只能人眼验"；这已是第四个被抢的功能键。）
 
 // ── S12（第 4 笔）：3D 的观感参数 + 两张小表 ────────────────────────────────────────
-// ⚠️ 前两个**没有理论值**（`S12_CHECKLIST` §13 的 T2）：与字体/字号/窗口都有关，只能看着调。
-constexpr float kFovTan     = 0.66f;   // 相机平面半长 ⇒ 约 66° FOV（与 `RayCaster.h` 的默认值同源）
-constexpr float kCellAspect = 2.0f;    // 终端字符格 ≈ 1:2（宽:高）⇒ 墙高乘它（见 `WallHeightRows`）
+// ⚠️ `kFovTan` **没有理论值**（`S12_CHECKLIST` §13 的 T2）：与字体/字号/窗口都有关。
+constexpr float kFovTan = 0.66f;   // 相机平面半长 ⇒ 约 66° FOV（与 `RayCaster.h` 的默认值同源）
+
+// ── S12（第 5 笔）：纵横比从**常量**改成**按视口算** ─────────────────────────────────
+// 第 4 笔用的是常量 `kCellAspect = 2.0f`（"看着差不多"）。第 5 笔推了一遍：
+//
+//   一格宽 × 一格高的墙面，在垂距 `perp` 处：
+//     · 占**宽** = cols / (2·fovTan·perp) 列        （相机平面在深度 perp 上的总宽 = 2·fovTan·perp 格）
+//     · 占**高** = viewH·aspect / perp 行           （`WallHeightRows`）
+//   终端字符格**不是正方形**：1 行在物理上比 1 列高 `r` 倍（≈2）⇒ 物理高 = 行数 × r。
+//   令物理宽 == 物理高 ⇒ cols/(2·fovTan·perp) = viewH·aspect/perp × r
+//                   ⇒ **aspect = cols / (2·fovTan·viewH·r)**
+//
+//   ⚠️ **这个数随窗口变**（`cols` 与 `viewH` 都在里面）：100×30 ⇒ 100/(2×0.66×28×2) ≈ **1.353**；
+//      80×25 ⇒ ≈ **1.318**；120×40 ⇒ ≈ **1.196**。第 4 笔写死的 2.0 会让墙比"方"高约 48%。
+//   ⇒ 所以它**不该是常量**：一拉大窗口墙就变形（第 4 笔的代价，本笔修掉）。
+//   ⚠️ `r = 2` 也只是**估的**（Consolas 之类在常见字号下约 1:2，换字体/字号要改）⇒ 它和下面的
+//      `kAspectTaste` 都是**观感参数**，不是物理量：看着不对就调这两个数，别去改公式。
+constexpr float kCellHeightPerWidth = 2.0f;   // 终端字符格 高:宽（估；观感参数）
+constexpr float kAspectTaste        = 1.0f;   // 纯观感旋钮：>1 墙更高、<1 更矮（1.0 = 理论上"方"）
+
+// 视口 → 纵横比（S12 第 5 笔）。**唯一**的换算点：别在列循环里就地再算一遍。
+// ⚠️ 调用方已保证 `viewW > 0 && viewH > 0`；下面那句 `denom <= 0` 只是防御 ——
+//    真除出 inf/NaN 会让整屏墙高变成 NaN，那种画面很难反推到"是除零"。
+[[nodiscard]] float AspectForViewport(int viewW, int viewH) noexcept
+{
+    const float denom = 2.0f * kFovTan * static_cast<float>(viewH) * kCellHeightPerWidth;
+    if (denom <= 0.0f) {
+        return 1.0f;
+    }
+    return static_cast<float>(viewW) / denom * kAspectTaste;
+}
 
 // 明暗：**字形 + 颜色同档**（档数由 `mini::render::kShadeCount` 定死 = 4）。
 // ⚠️ 字形本身自带"疏密"语义（`█` 最密 → `░` 最稀），比纯颜色更稳：
@@ -196,6 +229,16 @@ constexpr mini::render::Color kShadeColors[mini::render::kShadeCount] = {
     mini::render::Color::BrightBlack,
     mini::render::Color::BrightBlack,   // 最远：字形已最稀，颜色不再压（见上）
 };
+
+// ── S12（第 5 笔）：地板 / 天花板的行线（E 选**乙** = 静态、不随距离变）──────────────
+// ⚠️ 用 **ASCII**（`-` / `.`）而不是 `═` / `·` 这一类：这一层只是"背景"，不值得再赌一次字体（坑 10）。
+// ⚠️ 两者**同色**（`BrightBlack`），区分靠字形。想让它们更好分就只改这两个颜色常量
+//    （候选 `White`）—— **逻辑里没有任何地方假设它们颜色不同**，别去动那两段循环。
+// ⚠️ 不做"按行渐变"（那是 §3 末尾的后续迭代）：本笔只给**参照物**，用来判断鱼眼与胖瘦。
+constexpr char32_t kCeilingGlyph = U'-';
+constexpr char32_t kFloorGlyph   = U'.';
+constexpr mini::render::Color kCeilingColor = mini::render::Color::BrightBlack;
+constexpr mini::render::Color kFloorColor   = mini::render::Color::BrightBlack;
 
 // ── `kQuitKey`：退出键（2026-10-13 补，`TECH_DEBT` **B6**）──────────────────────────
 // ⚠️ **它是最后一个被补上常量的键**（2026-10-13，`TECH_DEBT` B6）：在那之前读点写的是
@@ -1137,6 +1180,28 @@ void Game::DrawRaycastWorld(mini::render::FrameBuffer& fb) const
     }
     const int horizon = kHudRow + viewH / 2;
 
+    // ── ① 铺底（S12 第 5 笔）：地平线以上整行 `-`、以下整行 `.` ──────────────────
+    // ⚠️ **必须在列循环之前**：墙是**后画**的，"墙挡住地板/天花板"靠的就是后画覆盖。
+    //    反过来（先墙后铺底）会把墙整行抹成**条纹** —— 反向验证 R6 打的正是这一场。
+    // ⚠️ 行 `horizon` 归**地板**（半开区间 `[horizon, h)`）；`viewH` 是奇数时上面比下面
+    //    **少一行**（`viewH / 2` 是 floor 除法）—— 这是取整的自然结果，别当 bug。
+    // ⚠️ 行 0/1 绝不碰（顶栏 / HUD）；行 `kHudRow` 会被铺底、随后被 `DrawHud` 盖掉（同 2D 口径）。
+    // ⚠️ 每帧 `cols × viewH` 次 `Set`（100×30 时 = 2800 次）—— 别为它引第二条绘制路径
+    //    （比如先拼一个整行字符串再 `Draw`）：那会多一个"行线怎么生成"的真相。
+    for (int row = kHudRow; row < horizon; ++row) {
+        for (int col = 0; col < fb.Width(); ++col) {
+            fb.Set(col, row, kCeilingGlyph, kCeilingColor);
+        }
+    }
+    for (int row = horizon; row < fb.Height(); ++row) {
+        for (int col = 0; col < fb.Width(); ++col) {
+            fb.Set(col, row, kFloorGlyph, kFloorColor);
+        }
+    }
+
+    // 纵横比：**按视口算**（S12 第 5 笔）—— 常量会让窗口一变就把墙拉变形（见 `AspectForViewport`）。
+    const float aspect = AspectForViewport(fb.Width(), viewH);
+
     const mini::render::RayCamera cam{player->transform.pos, CameraDir(), kFovTan};
 
     for (int col = 0; col < fb.Width(); ++col) {
@@ -1144,12 +1209,12 @@ void Game::DrawRaycastWorld(mini::render::FrameBuffer& fb) const
             mini::render::CastColumn(m_world.Map(), cam, col, fb.Width());
 
         if (!hit.hit) {
-            continue;   // 病态输入（一路没撞到）：这一列留空，等第 5 笔的地板/天花板来填
+            continue;   // 病态输入（一路没撞到）：这一列只剩铺底的地板/天花板（第 5 笔起不再留白）
         }
 
         // ⚠️ `float → int` 的取整**只在这里做一次**（坑 17）：半高用 floor、总高用 ceil
         //    ⇒ 墙不会因为浮点抖动反复差一行；而"远墙至少 1 行"由 `WallHeightRows` 兜底。
-        const float lineH  = mini::render::WallHeightRows(hit.perp, viewH, kCellAspect);
+        const float lineH  = mini::render::WallHeightRows(hit.perp, viewH, aspect);
         const int   halfH  = static_cast<int>(lineH * 0.5f);      // 正数 ⇒ 截断即 floor
         const int   totalH = static_cast<int>(std::ceil(lineH));
         const int   top    = horizon - halfH;

@@ -746,11 +746,17 @@ MINI_TEST(Game, PlayerIsDrawnAtItsCell)
 // S7（用例 18）：碰撞接上之后 —— **走不出地图**，而且撞得停
 //
 // 按 W 从出生点 (2.5, 2.5) 往上：外沿墙在第 0 行（`Game::BuildDemoMap`），
-// 盒 `pos ± 0.5` 贴到 y = 1.5 就停住 → 只走 **1 格**（不是 kMoveSpeed 格）。
+// 点模型（S7 起是**点**、不是盒）撞到墙格边界就停 ⇒ 只走 **1 格**（不是 kMoveSpeed 格）。
 //
+// ⚠️ **2026-10-17 更正**：这里原来写"盒 `pos ± 0.5` 贴到 y = 1.5 就停住"——**两处都过期**：
+//    ① 现在是**点模型**（`Collision.h` 只拿一个点去问 `IsSolidAt`），没有 `± 0.5`；
+//    ② 落点是 `boundary + 1.0 + kContactEpsilon` = **1.0001**（HUD 显示 `1.00`），不是 1.5。
+//    人眼验收（3D 撞墙）时按旧的 1.5 判，才发现这句话在骗人。
 // ⚠️ 期望值 -1 **可以写死**：它由"外沿墙在第 0 行"这条**地图几何**决定，与速度无关
 //    （与"不许写死速度算出来的格数"不冲突 —— 那个数依赖 kMoveSpeed，这个数不依赖）。
 // ⚠️ 反向验证：把 `World::Update` 里那行改回 `pos += v * dt` → 1 秒会走 kMoveSpeed 格 → 这条变红。
+// ⚠️ 注意本用例**只断 tile 级**（`dy == -1`）⇒ 它**看不见**落点是 1.0001 还是 1.5。
+//    钉住 ε 的是 `tests/test_collision.cpp` 那批（`ApproxEquals(pos.x, 10.0f - kContactEpsilon)`）。
 // ------------------------------------------------------------
 MINI_TEST(Game, PlayerStopsAtTopWall)
 {
@@ -758,7 +764,7 @@ MINI_TEST(Game, PlayerStopsAtTopWall)
     const Delta up = RunHolding(1.0f, {Key::W});
 
     MINI_CHECK(up.ok);
-    MINI_CHECK_EQ(up.dy, -1);   // (2.5, 2.5) → (2.5, 1.5)：tile 行 2 → 1
+    MINI_CHECK_EQ(up.dy, -1);   // (2.5, 2.5) → (2.5, 1.0001)：tile 行 2 → 1（1.0001 = 1.0 + kContactEpsilon）
     MINI_CHECK_EQ(up.dx, 0);    // 只动了 y
 }
 
@@ -1102,6 +1108,90 @@ MINI_TEST(Game, ViewKeyTogglesRenderMode)
     // ── 4) 备份键 `F5` 也通了（"双保险"的另一半）──
     PressOnce(game, input, fb, Key::F5);
     MINI_CHECK(game.CurrentView() == Game::ViewMode::Mode2D);
+}
+
+// ------------------------------------------------------------
+// V3（S12 第 5 笔）：地板 / 天花板行线**真的画了**，而且**位置对**
+//
+// 判据（**按格取样**）：
+//   · 天花板行（`kHudRow + 1`）⇒ `-`；最后一行 ⇒ `.`
+//   · 地平线那一行、中心列 ⇒ 是**墙字形**（证明墙**后画**、盖住了铺底）
+//   · 地平线**下一行**、中心列 ⇒ `.`（证明地板的起点就是地平线，不是差一行）
+//
+// ⚠️ 为什么**不用** `CountChar(U'-')` / `ScreenText`（坑 9）：
+//    HUD 行 2 里有 `dir ->`、行 1 里有 `pos 2.50` ⇒ `-` 和 `.` 在 HUD 上本来就有
+//    ⇒ "数全屏有多少个 `-`"会**假绿**（就算 3D 一行都没画也能数出来）。
+// ⚠️ 反向验证 R5：把 `DrawRaycastWorld` 里那两段铺底注掉 ⇒ 前两/三条红。
+// ⚠️ 反向验证 R6：把铺底挪到列循环**之后** ⇒ 第三条红（墙被行线抹成条纹）。
+// ------------------------------------------------------------
+MINI_TEST(Game, ThreeDDrawsCeilingAndFloorRows)
+{
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+
+    game.OnStart();
+    StartPlaying(game, input, fb);
+    PressOnce(game, input, fb, Key::V);
+    MINI_CHECK(game.CurrentView() == Game::ViewMode::Mode3D);
+
+    // 视口 / 地平线**从画布算**，不写死 80/25 后的具体行号（换画布尺寸这条也得成立）
+    const int viewH   = fb.Height() - kTestHudRow;
+    const int horizon = kTestHudRow + viewH / 2;
+    const int midCol  = fb.Width() / 2;
+
+    MINI_CHECK(fb.At(midCol, kTestHudRow + 1).ch == U'-');   // 天花板
+    MINI_CHECK(fb.At(midCol, fb.Height() - 1).ch == U'.');    // 地板（最后一行）
+
+    // 出生点朝东 = 76 格长走廊 ⇒ 中心列**只有地平线那一行**是墙
+    const char32_t atHorizon = fb.At(midCol, horizon).ch;
+    const bool wallOverwritesCeiling =
+        (atHorizon == U'█' || atHorizon == U'▓' || atHorizon == U'▒' || atHorizon == U'░');
+    MINI_CHECK(wallOverwritesCeiling);
+
+    // 地板从地平线**下一行**开始（`horizon` 那行归地板铺、但中心列被墙盖住）
+    MINI_CHECK(fb.At(midCol, horizon + 1).ch == U'.');
+}
+
+// ------------------------------------------------------------
+// V4（S12 第 5 笔）：贴墙时**地板/天花板全被墙盖住**（不是"墙里夹着行线"）
+//
+// 做法：按住 `W` 走 1 秒 ⇒ 撞北墙停住（`pos.y ≈ 1.0`、`perp` 被夹到 `kMinPerp`）
+//       ⇒ 墙高远超视口 ⇒ 视口**每一行每一列**都该是墙字形。
+//
+// ⚠️ 起扫行是 `kTestFirstWorldRow`（= 3）：行 1/2 是 HUD（`DrawHud` **后画**，会盖掉 3D 的
+//    最上面一行）⇒ 拿行 2 判"有没有墙"会**假红**（同 `EveryVisibleRowSeesAWall` 那条注释）。
+// ⚠️ 断言用"**不是墙字形的格子数 == 0**"而不是逐格 `MINI_CHECK`：
+//    红了能一眼看出漏了几格（`notWall=1` 与 `notWall=1760` 是完全不同的故障）。
+// ⚠️ 反向验证 R6（铺底挪到列循环之后）会让这条红：墙被整行 `.`/`-` 抹成条纹。
+// ------------------------------------------------------------
+MINI_TEST(Game, ThreeDWallCoversCeilingAndFloor)
+{
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+
+    game.OnStart();
+    StartPlaying(game, input, fb);
+    PressOnce(game, input, fb, Key::V);
+    MINI_CHECK(game.CurrentView() == Game::ViewMode::Mode3D);
+
+    // 按住 W（`FakeInput` 不松就一直按住）：1 秒足够从 y=2.5 走到贴住北墙
+    input.Press(Key::W);
+    StepFrames(game, input, fb, 1.0f / 60.0f, 60);
+    input.Release(Key::W);
+
+    int notWall = 0;
+    for (int row = kTestFirstWorldRow; row < fb.Height(); ++row) {
+        for (int col = 0; col < fb.Width(); ++col) {
+            const char32_t c = fb.At(col, row).ch;
+            const bool isWallGlyph = (c == U'█' || c == U'▓' || c == U'▒' || c == U'░');
+            if (!isWallGlyph) {
+                ++notWall;
+            }
+        }
+    }
+    MINI_CHECK_EQ(notWall, 0);
 }
 
 // ------------------------------------------------------------
