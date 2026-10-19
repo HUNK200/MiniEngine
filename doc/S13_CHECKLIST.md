@@ -150,16 +150,23 @@ for s in sprites:
 **投影公式（`ProjectSprite` 内部，`cells` 单位）**
 
 > ⚠️ **2026-10-16 复核后更正（初版横向公式写错了，见坑 4b）**：**尺寸**一律从 `lineH`（该距离下"一整面墙"的行数）推；**只有定位**（`centerCol`）才用几何公式。
-> 为什么：`kCellAspect` 是**观感常数**，而"几何一致"的纵横比是 `k* = cols / (2·fovTan·viewH·kCellAspect)` —— **它依赖窗口宽度**（100×28 时 ≈1.35，60×28 时 ≈0.81）⇒ **不存在一个对所有窗口都"物理正确"的常数**。所以墙与精灵必须**共用一个（会偏的）尺度**，这样两者**至少彼此一致**。
+>
+> ⚠️ **2026-10-19 再更正（S12 第 5 笔落地后）**：上一版写的是"`kCellAspect` 是观感常数 ⇒ **不存在**对所有窗口都物理正确的常数 ⇒ 墙与精灵必须**共用一个（会偏的）尺度**"。
+> 这条**结论已经作废**：S12 第 5 笔把墙的纵横比改成了**按视口算** ——
+> `AspectForViewport(cols, viewH) = cols / (2·fovTan·viewH·r)`（`r` = 字符格高/宽 ≈ 2，`Game.cpp` 的 `kCellHeightPerWidth`），
+> 100×28 ⇒ **1.353**、60×28 ⇒ 0.81（那个 `k*` 就是它，`kAspectTaste = 1.0` 时）。
+>
+> ⇒ **精灵直接用同一个 `aspect` 即可**：每个窗口都物理正确，且与墙天然一致，**不需要"共用一个会偏的尺度"这种妥协**。
+> ⚠️ **纪律**：`AspectForViewport` 住在 `Game.cpp` 的匿名命名空间 ⇒ **`engine/render/Sprite.h` 必须把它当参数收**（与 `RayCaster::CastColumn/WallHeightRows` 收 `cellAspect` 同一条：**引擎不认识观感策略**）。
 ```text
 toCam  = place.pos - cam.pos
 forward = dot(toCam, cam.dir)                     # 沿 dir 的垂距（与 RayHit::perp 同口径）
 if forward <= kMinPerp: visible = false            # 相机背后 / 贴脸
 
-lineH    = viewH / forward * kCellAspect           # ★ 与画墙**同一个式子**（必须）
+lineH    = viewH / forward * aspect                # ★ 与画墙**同一个式子/同一个值**（必须）
 rowsPerU = lineH / wallHeightCells                 # 1 个世界格 = 多少行
 rowsTall = place.cellsTall * rowsPerU
-colsWide = place.cellsWide * rowsPerU * kCellAspect  # ★ 物理上"方" ⇒ 列数 = 行数 × 字符格的宽高比
+colsWide = place.cellsWide * rowsPerU * kCellHeightPerWidth  # ★ 物理上"方" ⇒ 列数 = 行数 × 字符格的宽高比（r≈2）
 floorRow = horizon + lineH / 2                     # 地面线（= 墙脚）
 row1     = floorRow - place.z * rowsPerU           # 高度 z 把精灵整体抬高
 row0     = row1 - rowsTall
@@ -169,15 +176,18 @@ centerCol = cols/2 + (dot(toCam, plane) / forward) * (cols / (2 * cam.fovTan))
 col0 = centerCol - colsWide/2 ; col1 = col0 + colsWide
 ```
 
-**算例（100×28、`kCellAspect=2`、`wallHeightCells=2`、`perp=3.5`；`horizon=16`）**
+**算例（100×28、`aspect = AspectForViewport(100,28) = 1.353`、`wallHeightCells=2`、`perp=3.5`；`horizon=16`）**
+
+> ⚠️ **2026-10-19 重算**（上一版按 `kCellAspect=2` 算的：`lineH=16` / `rowsPerU=8` / 1 格宽 `16 列`）。
+> 现在墙用 `1.353` ⇒ 精灵**等比缩小到 68%**：`lineH` 16→**10.8**、`rowsPerU` 8→**5.41**、1 格宽 16→**10.8 列**。
 
 | 量 | 值 | 说明 |
 | --- | --- | --- |
-| `lineH` | **16 行** | 那面墙在 3.5 格处占 16 行 ⇒ 上下各 8 行（`8..24`） |
-| `rowsPerU` | **8 行/格** | 16 ÷ 2 |
-| 1 格高精灵 | **8 行** | 站在地上 ⇒ 占 `16..24`（顶正好在地平线 = 相机高度 ✓ 自洽） |
-| 1 格宽精灵 | **16 列** | `1 × 8 × 2` ⇒ 物理 16w × 16w = **方** ✓ |
-| 若误用几何横向公式 | 21.6 列 | `100/(2·0.66·3.5)` ⇒ 物理 21.6w × 16w ⇒ **胖 1.35×** ✗（坑 4b） |
+| `lineH` | **10.8 行** | 那面墙在 3.5 格处占 10.8 行 ⇒ 上下各 5.41 行（约 `10.6..21.4`） |
+| `rowsPerU` | **5.41 行/格** | 10.82 ÷ 2 |
+| 1 格高精灵 | **5.41 行** | 站在地上 ⇒ 占 `16.0..21.4`（**底边 21.4 = 地面线**，**顶边 16.0 正好在地平线 = 相机高度** ✓ 自洽没坏） |
+| 1 格宽精灵 | **10.8 列** | `1 × 5.41 × 2`（`r` = 字符格高/宽）⇒ 物理 10.8w × 10.8w = **方** ✓ |
+| 若误用几何横向公式 | 21.6 列 | `100/(2·0.66·3.5)` = 21.6 ⇒ 物理 21.6w × 10.8w ⇒ **胖 2.0×** ✗（坑 4b）。⚠️ **2.0 就是 `r`** —— 别与"aspect 1.353"混为一谈（那是两个不同的比） |
 
 ---
 
@@ -188,15 +198,15 @@ col0 = centerCol - colsWide/2 ; col1 = col0 + colsWide
 | 1 | **忘了写 `m_colDepth`** | 精灵**永远**画在墙前面（穿墙可见） | 用例 `SpriteBehindWallIsOccluded`（3D 里数 `E` == 0） |
 | 2 | **深度用 `dist`（斜距）而不是 `perp`** | 屏幕两侧的精灵**误判遮挡**（明明在墙后被判成墙前，或反之） | 只用 `perp`；用例 `OcclusionUsesPerpNotSlant`（侧向摆位） |
 | 3 | **从近往远画** | 远处的敌人盖住近处的（"人越远越大"） | 分叉 E 甲：降序排序；用例 `NearSpriteWinsOverFarOne` |
-| 4 | **精灵的垂直尺度与墙不一致** | 敌人**飘在空中**或**埋进地板**；改 `kCellAspect` 后更明显 | 分叉 C 甲：`kWallHeightCells` 显式化；用例断"贴地精灵的底边 == 地面行" |
-| **4b** | **横向尺寸用几何公式（`cols/(2·fovTan·perp)`），不是墙的尺度** | 精灵**横向胖**（像块饼）；100×28 下实测差 **1.35×** | ⚠️ 2026-10-16 复核发现：**施工图初版写错的就是这条**。尺寸必须**从 `lineH` 推**（见 §4 更正），几何公式**只用来定位**（`centerCol`） |
+| 4 | **精灵的垂直尺度与墙不一致** | 敌人**飘在空中**或**埋进地板**；改 `kCellHeightPerWidth` / `kAspectTaste` 后更明显 | 分叉 C 甲：`kWallHeightCells` 显式化；用例断"贴地精灵的底边 == 地面行"。⚠️ **精灵必须调与墙同一个 `aspect`**（`AspectForViewport`），别自己再写第二份 |
+| **4b** | **横向尺寸用几何公式（`cols/(2·fovTan·perp)`），不是墙的尺度** | 精灵**横向胖**（像块饼）；100×28 下差 **2.0×**（= 字符格高宽比 `r`） | ⚠️ 2026-10-16 复核发现：**施工图初版写错的就是这条**。尺寸必须**从 `lineH` 推**（见 §4 更正），几何公式**只用来定位**（`centerCol`） |
 | 5 | **画到 HUD 行上** | HUD 第二行出现 `E`/`*`（玩家读不到 `hp`） | 行区间裁到 `[kHudRow, h)`；用例 `SpritesNeverTouchHudRows` |
 | 6 | **列/行下标越界** | 贴脸时 `col0` 为负、`row1 > h` | 裁到视口（`fb.Set` 虽忽略越界，但**下标算术**必须先夹，否则 `int` 溢出） |
 | 7 | **每帧 `std::vector` 分配** | 帧时间抖动（`T` overlay 的 `Game.Render` 峰值） | 分叉 B 甲：成员复用，宽度变了才 `resize` |
 | 8 | **精灵比 `kMinPerp` 还近** | 行数爆成几万行 | `forward <= kMinPerp ⇒ visible = false`（贴脸直接不画，同"墙高夹紧"） |
 | 9 | **同一精灵跨多列 ⇒ 数 `E` 会数多** | 用例"屏幕上 `E` 的个数 == 敌人数"**不成立** | 3D 用例只断"**至少出现一次**"，或按"每列最多一个"计数（**别**沿用 2D 那条判据） |
 | 10 | **同距离精灵画序不定** | 像素级断言不稳定 | 用例只钉"距离差 > 1 格"的场景 |
-| 11 | **`kBulletZ` 与 2D 的"点是中心"口径冲突** | 3D 里子弹看着"贴地"或"飘太高" | 分叉 D 甲 + 人眼调；常量写在 `Game.cpp` 顶部（和 `kCellAspect` 放在一起） |
+| 11 | **`kBulletZ` 与 2D 的"点是中心"口径冲突** | 3D 里子弹看着"贴地"或"飘太高" | 分叉 D 甲 + 人眼调；常量写在 `Game.cpp` 顶部（和 `kCellHeightPerWidth` / `kAspectTaste` 这些观感旋钮放在一起） |
 | 12 | **`E`/`*` 在 3D 与 2D 的含义漂移** | 有人把 3D 的字形改成别的，判据就两边都要维护 | 分叉 F 甲（沿用）+ 注释写清"同一字形两种视角" |
 | 13 | **暂停时精灵还在动** | 破坏"暂停 = 世界冻住" | 精灵**只读**实体位置 ⇒ 世界不动它自然不动（无需额外门控）—— 但要有用例钉 |
 | 14 | **3D 下整屏变化让 `Rows` 顶满** | 顶栏 `Rows n/n`（S12 已登记，坑 14） | 不是 bug；顺带成为"3D 真在动"的判据 |
@@ -307,7 +317,7 @@ col0 = centerCol - colsWide/2 ; col1 = col0 + colsWide
 
 | # | 项 | 状态 |
 | --- | --- | --- |
-| **T1** | `kWallHeightCells` 取 2.0 是否合适（决定"一面墙看起来多高"） | 待**看着调**；没有理论值，和 `kCellAspect` 是一对 |
+| **T1** | `kWallHeightCells` 取 2.0 是否合适（决定"一面墙看起来多高"） | 待**看着调**；没有理论值。⚠️ 它和 `kCellHeightPerWidth` / `kAspectTaste`（`Game.cpp` 顶部的观感旋钮）是一组 —— **别再引用已删除的 `kCellAspect`** |
 | **T2** | `kBulletZ` 取多少（≈1.2 格？） | 待看着调 |
 | **T3** | 精灵宽度是否该按 `cellsWide = 0.8`（比一格窄一点，两个敌人并排才分得开） | 待看着调 |
 | **T4** | 性能：8 个敌人 + ~20 发子弹 的逐列逐行写入 | 预期 <0.1 ms；用 `T` overlay 的 `Game.Render` 实测 |
