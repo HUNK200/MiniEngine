@@ -241,10 +241,12 @@ stepX = sign(rayDir.x) ; sideDistX = (stepX>0 ? (mapX+1-pos.x) : (pos.x-mapX)) *
     若 sideDistX < sideDistY ⇒ 前进 X 格（sideX = true, dist = sideDistX, sideDistX += deltaDistX）
     否则                    ⇒ 前进 Y 格（sideX = false, ...）
     若 IsSolid(map.At(mapX, mapY)) ⇒ 停（越界也由 IsSolid 判实心 ⇒ "越界 = 墙"天然成立）
-perp = dist * cos(rayAngle - camAngle)       // ★ 分叉的核心：漏了 ⇒ 鱼眼（坑 2）
+perp = t                      // ★ 落地版（2026-10-16）：t **就是**垂距，不必再乘 cos
+dist = t * |rayDir|           //   欧氏斜距另存（留给将来的距离衰减：雾/火把）
 ```
 
-> **`cos` 的等价写法**：`perp = dist * |dot(rayDirNormalized, cam.dir)|`，或直接用"相机空间下的距离"（把 `dist` 拆成沿 `dir` 的分量）。三种写法等价，**选一种并在注释里写清为什么**（否则后人会以为漏了）。
+> **⚠️ 这一行落地时改写过（见 §12.1 偏差 9）**：`plane ⊥ dir` 且 `|dir| = 1` ⇒ `rayDir · dir == 1` **恒等** ⇒ "沿 `dir` 的垂距"恰好等于 DDA 参数 `t`（它同时 = 欧氏斜距 × cos 夹角）。所以 **`perp = t` 就是那个 cos 校正**；**再乘一次 cos 是过校正**（画面凹进去）。
+> 等价写法三种：① `perp = t`（我们用的）② `perp = dist × |dot(rayDirNormalized, cam.dir)|` ③ 经典教程的 `perpWallDist = (mapX − pos.x + (1 − stepX)/2) / rayDir.x`。**选一种，并在注释里写清为什么** —— 否则后人会以为漏了。
 
 ### 6.3 墙高与纵横比（坑 7）
 
@@ -401,6 +403,7 @@ cmake --build build --config Debug ; .\build\bin\Debug\mini_tests.exe ; ctest --
 | `doc/AGENTS.md §2` | 加本图一行（`doc/S12_CHECKLIST.md`） |
 | `study/RAYCASTING_NOTES.md` | ✅ **2026-10-16 已建**（本人问"这是一般游戏的实现方式么"⇒ 落成技术笔记；同日按本人要求移到 `study/`）：本文的**背景与延伸阅读**（三档对比 · 算法 8 步 · 业界案例年代表 · 真 3D 升级清单） |
 | Release 正文 | 下一版（`v0.5.0`）时加"伪 3D"一节（本阶段不发布） |
+| ✅ **本轮（2026-10-16，第 6 笔的文档部分）** | 已做：`PLAN` 的**键位**（枚举尾部补齐 `F7/T/Z·C/V·F5`）· `PLAN` v0.5 判定行 `F5` → **`V`（主键）/`F5`（备份）** · `PLAN` B 节"兼容策略"改成实际落地（**模式在 `game` 侧**）· `README` 操作表加 `Z`/`C`/`V` 与已知限制（C37 扩到新键）· `TECH_DEBT` **C37** 扩到 S12 的 4 个键 · 本图 §6.2 更正 + **§12.1 偏差实录**。**仍未做**（等验证）：README 状态行 / 版本号 / `PLAN` 的 S12 行 ✅ / v0.5 判定 ✅ |
 
 ---
 
@@ -416,6 +419,18 @@ cmake --build build --config Debug ; .\build\bin\Debug\mini_tests.exe ; ctest --
 | 6 | 提到 `Renderer2D`/`Renderer3D` | **不建这两个类型** | 实际项目从来没有这一层；只加一个分支 |
 | 7 | （没写）转身 | **加 `Z`/`C` 8 档原地转身** | 没有它就不能原地转头（3D 演示价值打折） |
 | 8 | 规模 ~350 行 | 本图估 **~500~600 行**（含扩宽 + 用例） | 多了 A 的结构改动与 ~17 条用例 |
+
+### 12.1 落地偏差实录（2026-10-16，第 1 · 2 · 2.5 · 3 · 4 笔）
+
+> 上面 8 条是**动工前**的预告；下面 5 条是**落地后**真正发生的（含两条"施工图写错、代码才是对的"）。
+
+| # | 施工图写的 | 实际落的 | 为什么 / 谁对 |
+| --- | --- | --- | --- |
+| 9 | §6.2 `perp = dist * cos(rayAngle − camAngle)` | **`perp = t`**（DDA 参数本身） | ⚠️ **代码对、施工图错**：`plane ⊥ dir` 且 `|dir| = 1` ⇒ `rayDir·dir == 1` **恒等** ⇒ `t` 已经是垂距；**再乘一次 cos 是过校正**（画面凹进去）。§6.2 已就地更正 |
+| 10 | §4 访问器叫 `ViewMode()` | **`CurrentView()`** | ⚠️ **代码必须这样**：C++ 里**成员函数不能与成员类型同名**（`ViewMode` 是类内枚举） |
+| 11 | §8.3 "切回 2D 后 `sumdt` 不变" | **只断"位置栏 + 朝向"不变** | ⚠️ **施工图做不到**：`PressOnce` 每按一次要过 2 帧 ⇒ 时间必然在走（与第 2 笔同一条偏差） |
+| 12 | §5.2 的 `ViewMode` 未标归属 | **类内 public（`Game::ViewMode`）** | 不污染 `game` 命名空间；用例写 `Game::ViewMode::Mode2D` |
+| 13 | §8.1 的列数（隐含"中间列 `cameraX == 0`"） | 用例侧 `kCols` **必须偶数** + `static_assert` | ⚠️ **用例侧踩坑**：`2·col/cols − 1` 的零点只在 `col = cols/2` ⇒ **奇数取不到**。第一版写 21 ⇒ 3 条用例红（**而鱼眼判据当时是绿的** ⇒ 证明红的是用例，不是实现） |
 
 ---
 
