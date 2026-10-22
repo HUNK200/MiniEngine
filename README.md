@@ -4,7 +4,7 @@
 >
 > *A dependency-free 2D game engine in C++20 that renders a playable game entirely inside a terminal. Windows only.*
 
-**状态**：**v0.4「看得清」已达成**（可玩的一局 + 三个调试出口：`T` 面板 / `F2` 几何层 / `F7` 列表）· `VersionString()` = `0.4.0-dev` · 用例 **220 条**（23 个 suite）· 反向验证 **17 场**（S10 的 12 + S11 的 5）· 人眼验收 **47 条**（S10 的 28 + S11 的 19）· 可试玩 demo（S11.5）。
+**状态**：**v0.5「像 3D」已达成**（同一个世界两种视角：`V` 切 2D/3D、`Z`/`C` 原地转身）+ 三个调试出口（`T` 面板 / `F2` 几何层 / `F7` 列表）· `VersionString()` = `0.5.0-dev` · 用例 **242 条**（25 个 suite）· 反向验证 **24 场**（S10 的 12 + S11 的 5 + S12 的 7，逐场有预测与实测比对）· 人眼验收 **62 条**（S10 的 28 + S11 的 19 + S12 的 15）· 可试玩 demo（S11.5，`v0.4.0`）。
 
 [![CI](https://github.com/HUNK200/MiniEngine/actions/workflows/ci.yml/badge.svg)](https://github.com/HUNK200/MiniEngine/actions/workflows/ci.yml)
 
@@ -115,7 +115,8 @@ HUD 两行（**58 / 64 列**）：`pos / tile / sumdt / v` + `hp / ammo / kills 
 - **实体之间没有推挤**：两只敌人可以叠在同一格，屏幕上只画得出一个 `E`（有意不做，台账 **C12**）。
 - HUD 里**不出现** `ESC` / `ENTER` 这类含 `E` 的键名 —— 屏幕是唯一的观察面，用例靠数屏幕上 `E` 的个数来数敌人。
 - `T` / `F2` / `Z` / `C` / `V` 这几个新键**能不能收到只有人眼知道**：用例全走假输入（绕过真实键盘），而 `F1` / `F3` 在本机都被别的软件抢占过（台账 **C37**）。按下去屏幕没反应就先怀疑这个 —— 换键都只改一处常量（`Game.cpp` 顶部）。
-- 版本字符串是 `0.4.0-dev`：**已达成 v0.4，但这棵树还在往 v0.5 走**（`-dev` 后缀的含义）。
+- 版本字符串是 `0.5.0-dev`：**已达成 v0.5，但这棵树还在往 v1.0 走**（`-dev` 后缀的含义）。
+- **3D 的"墙高比例"没有自动守卫**：`kAspectTaste` / `kCellHeightPerWidth` 是观感参数，任何用例都不读它们（台账 **C43**）⇒ 换字体/字号后若觉得墙"被压扁/拉长"，只改这两个常量（`Game.cpp` 顶部），别去改公式。
 
 ## 这个仓库是怎么做出来的（照实说）
 
