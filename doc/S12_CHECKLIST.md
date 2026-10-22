@@ -600,7 +600,7 @@ cmake --build build --config Debug ; .\build\bin\Debug\mini_tests.exe ; ctest --
 - [x] §11 的文档同步全部落地（含 **S13 行改写** —— ✅ 2026-10-22 已按 `AspectForViewport` 重算完，16 行 → 10.8 行）
 - [x] `v0.5` 判定（`PLAN` G 节）回填 ✅ —— ✅ **2026-10-22 已回填**（DDA 画面 / 无鱼眼 / `V` 切换三条均有人眼记录）
 - [x] 每个 commit 单独 checkout 都能构建 + 能跑（`AGENTS.md` §7 第二条）—— ✅ 2026-10-22 收口时逐笔核过（6 笔均为可构建状态）
-- [ ] **打 annotated tag `v0.5.0` 并 push**（`AGENTS.md` §5：阶段收口 = 打 tag；录 demo / 回退都靠它）—— ✅ **前置条件已全部满足**：`§9.6.1` 的 R3 人眼对照**2026-10-22 已过**（定性）⇒ **无剩余阻塞**。⚠️ **本条在 `git tag` 真正执行、`git ls-remote` 核到远端之后才许勾**，且**推了就不动**
+- [x] **打 annotated tag `v0.5.0` 并 push**（`AGENTS.md` §5：阶段收口 = 打 tag；录 demo / 回退都靠它）—— ✅ **前置条件**（`§9.6.1` 的 R3 人眼对照，2026-10-22 定性通过）**已满足** ⇒ ✅ **2026-10-22 已执行**：tag 对象 `9361c55` ⇒ 指向 commit **`77502d2`**（`git show v0.5.0 --stat` 列出 5 个文档）；`git push origin v0.5.0` 成功，`git ls-remote --tags origin` 核到 `refs/tags/v0.5.0` **与** peeled 行 `refs/tags/v0.5.0^{}` ⇒ 落到 `77502d2`。⚠️ **推了就不动**（要改只能发新 tag）
 
 ---
 
