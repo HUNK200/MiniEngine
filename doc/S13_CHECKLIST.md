@@ -1,7 +1,11 @@
 # S13 施工图 —— Sprite + Z-buffer（伪 3D 里"看得见东西"）· v1.0 的第 ① 条
 
-> **状态（2026-10-16 落纸）**：**未开工**。六个分叉**待拍板**（§2）。
-> **前置**：S12 的伪 3D 已落地（第 1 ~ 4 笔；第 4 笔的机器门/人眼待本人验证）。
+> **状态（2026-10-22 审核后更新）**：**六个分叉全部拍板**（§2）· **仍未开工**（0 行代码）。
+> 本轮审核改了 7 处：① 用例 **11 → 16**（纯函数 6→8、Game 5→8）；② 计数更正（`Game` 45→**47**、基数 240→**242**、期望 **258**）；
+> ③ **R1 的预测反了**（不写 depth ⇒ 精灵**全不画**，不是穿墙可见）；④ **R4 改为"裁剪下沉进纯函数"**（`SpritesNeverTouchHudRows` 降级为冒烟）；
+> ⑤ 坑表 +**15/16**；⑥ `ProjectSprite` 签名补 **`aspect` + `cellHeightPerWidth`**、`horizon` 改由 `viewTop` 派生；
+> ⑦ 第 1 笔新增 **`render/RayCamera.h` 搬家**（纯搬运）。
+> **前置**：S12 伪 3D ✅ **已收口**（2026-10-22；242 用例 / 反向验证 7 场 / 版本 `0.5.0-dev`；`v0.5.0` tag 待 `S12_CHECKLIST` §9.6 的人眼对照）。
 > ⚠️ 本文是**方案层**：只写接口、伪代码、坑表、验收；不含可编译的实现。
 
 ---
@@ -41,7 +45,7 @@ fb.Set(col, row, glyph, color)                # ③ 更近才写（这句本来�
 
 ---
 
-## 1. 前置事实（动手前先核这 8 条）
+## 1. 前置事实（动手前先核这 10 条）
 
 | # | 事实 | 出处 | 对 S13 的含义 |
 | --- | --- | --- | --- |
@@ -49,23 +53,25 @@ fb.Set(col, row, glyph, color)                # ③ 更近才写（这句本来�
 | 2 | 每列**只画最近那面墙** ⇒ 现在不需要深度 | 同上（`S12_CHECKLIST` §2 第 6 步） | 一旦加精灵，这个"免费遮挡"就**必须**换成显式深度比较 |
 | 3 | `WallHeightRows(perp, viewH, aspect) = viewH/perp*aspect`，且 `≥ 1 行` | `engine/render/RayCaster.h` | 精灵的**垂直尺寸必须复用同一个缩放**（否则敌人"飘在空中"/"埋在墙里"） |
 | 4 | 视口 = 行 `kHudRow .. fb.Height()-1`，地平线 = `kHudRow + viewH/2` | `Game.cpp` | 精灵**不许画到 HUD 行上** |
-| 5 | 实体是**点模型**（`Entity{id, transform.pos, symbol}`），没有尺寸/朝向 | `world/Entity.h`（S5 起） | 精灵的宽高只能是**约定值**（1 格宽 × `kSpriteCellsTall` 格高） |
+| 5 | 实体是**点模型**（`Entity{id, transform.pos, symbol}`），没有尺寸/朝向，且 `sizeof(Entity) == 24` 有 `static_assert` 钉住 | `world/Entity.h`（S5 起，`Entity.h:83`） | 精灵的宽高只能是**约定值**（随 `SpritePlace` 传入）⇒ **z 与尺寸都放 `game` 侧，绝不加进 `Entity`**（加一个 `float` 断言当场红，分叉 D 甲） |
 | 6 | 敌人死 = **真删实体**（`S9`） | `Game.cpp` `FlushRemovals` | 3D 里死敌人**自动消失**（与 2D 一致，不用额外判断） |
 | 7 | 2D 的 `E`/`*`/`@` 是**被计数的字形**（C31 纪律） | `TECH_DEBT` C31 | 3D 下画 `E`/`*` **不冲突**（两个模式不同帧共存）⇒ **沿用同一套字形**，见分叉 F |
 | 8 | `PLAN:1203` 已经预告过这件事 | "墙的渲染天然产生了按列深度数组……z-buffer 有 320 项，比 GPU 的 2D 缓冲区小 5 个数量级，但**算法一模一样**" | 本阶段就是把它做出来 ✓ |
+| **9** | ★ **`DrawRaycastWorld` 是 `const` 成员**（`void DrawRaycastWorld(FrameBuffer&) const;`） | `Game.h:371`（2026-10-22 核） | 分叉 B 甲要写 `m_colDepth` ⇒ **必须去掉 const**（`OnRender` 本身非 const，`Game.cpp:1462` ⇒ 无涟漪） |
+| **10** | ★ **`AspectForViewport` 已经让墙带 = 物理 1 格**（`aspect = cols/(2·fovTan·viewH·r)` 是"1 格宽 = 1 格高"的唯一解） | `Game.cpp:203-215`（S12 第 5 笔） | ⇒ 分叉 C 的 `kWallHeightCells = 2.0` **不是"把墙调高"**，而是把"1 格"定义成**半条墙带**（敌人 = 半墙高、头顶齐眼平线） |
 
 ---
 
-## 2. 六个分叉（**待拍板**）
+## 2. 六个分叉（**✅ 2026-10-22 全部拍板**）
 
-| # | 分叉 | 选项 | 建议 | 理由 |
-| --- | --- | --- | --- | --- |
-| **A** | 精灵的**投影数学**放哪 | 甲 `engine/render/Sprite.h`（header-only 纯函数，同 S12 的 C=甲）· 乙 全塞 `Game.cpp` | **甲** | 可离线单测；`engine/render` 已有 `RayCaster.h` 先例 |
-| **B** | **列深度数组**的所有权 | 甲 `Game` 成员复用（宽度变了才 `resize`）· 乙 每帧局部 `std::vector` · 丙 固定上限栈数组 | **甲** | 乙每帧分配；丙要定死上限（窗口可拉到几百列） |
-| **C** | 精灵的**世界尺寸**基准 | 甲 先声明 `kWallHeightCells = 2.0`（"一面墙算两格高"），精灵尺寸从它推 · 乙 直接给精灵一个魔数行数 | **甲** | 墙高公式里那个"单位"现在是**隐式**的；不显式化就没法把精灵和墙对齐 |
-| **D** | 精灵的**高度（z）** | 甲 加 `z`（子弹在空中 ≈1.2 格，敌人 0）· 乙 全部贴地 | **甲** | 否则子弹看起来贴地飞（观感差且和 2D 的"点是中心"口径不一致） |
-| **E** | 精灵之间的**画序** | 甲 每帧 `std::sort` 按 `perp` **降序**（远→近）· 乙 按实体表顺序（不定） | **甲** | ≤ 10 个元素，排序成本可忽略；不排会出现"近的敌人被远的盖住" |
-| **F** | 3D 下精灵用**什么字形** | 甲 沿用 `E`/`*`（跨模式语义一致）· 乙 3D 专用字形（如 `¤`/`·`） | **甲** | 同一串字符在两种视角下含义相同；3D 用例可以"数 `E`" |
+| # | 分叉 | **决定** | 理由 / 连带 |
+| --- | --- | --- | --- |
+| **A** | 精灵的**投影数学**放哪 | **甲 + A-2** | `engine/render/Sprite.h`（header-only 纯函数，同 S12 的 C=甲）⇒ **可离线单测**。**A-2**：把 `RayCamera` + `kMinPerp` 搬进**新头 `render/RayCamera.h`**（`RayHit` 留原地）⇒ `Sprite.h` 的 include 图里**没有** `TileMap`/`Collision`。⚠️ 若只搬 `RayCamera` 而不搬 `kMinPerp`，`Sprite.h` 照样要 include `RayCaster.h` ⇒ A-2 白做 |
+| **B** | **列深度数组**的所有权 | **甲 + 去 `const`** | `m_colDepth` 是 `Game` 成员（宽度变了才 `resize`）⇒ 不每帧分配、不设上限。**代价必须认**：`DrawRaycastWorld` 现在是 `const`（`Game.h:371`）⇒ **去掉 const**（`mutable` 是"在 const 里偷改状态"，不选）。顺带 `m_spriteBuf` 精灵列表**也复用**（坑 7 是同一个毛病） |
+| **C** | 精灵的**世界尺寸**基准 | **甲** = `kWallHeightCells = 2.0f` | ⚠️ **语义已更正**：`AspectForViewport` 的推导本身把墙带锁定成**物理 1 格** ⇒ 声明 2.0 **不改变墙**，只把"1 格"定义成**半条墙带** ⇒ **敌人 = 半墙高、头顶齐地平线**（100×28、`perp=3.5`：5.41 行 vs 10.8 行）。**不是"让墙变高"** —— 别去改 `WallHeightRows` |
+| **D** | 精灵的**高度（z）** | **甲 / 甲 / 照抄 / 坑 15** | ① `z` 只在 `game` 侧（`SpriteItem.z`），**`Entity` 一个字节都不动**（`Entity.h:83` 的 `static_assert(sizeof(Entity) == 24)` 会当场红）；② `z` 语义 = **脚底**离地高度，子弹在调用处写 `z = kBulletHeight − cellsTall/2`；③ `CollectSprites` **照抄 `DrawEntities` 的身份判定**（跳 `!active`、跳玩家、`IsEnemyId` 分色），**字形取 `entity.symbol`**（不建 kind→字形映射）；④ 新坑 **15**：精灵行数**至少 1** |
+| **E** | 精灵之间的**画序** | **甲 + E-2** | 甲：按 `perp` **降序**（远→近）画家算法，**不做**精灵之间逐列深度。**E-2：先投影、后排序** —— 排序键用 `box.perp`（唯一真相），收集阶段**不算** `perp`（否则两处 `perp` 迟早分叉）。**次级键 `EntityId`**：同深度画序确定 ⇒ 屏幕可复现 |
+| **F** | 3D 下精灵用**什么字形** | **甲**（由 D ③ 自动成立） | 沿用 `E`/`*`，且**直接取 `entity.symbol`** ⇒ 不建映射表、加新实体类型时 3D 自动跟上。代价：一个敌人跨 ≈10.8 列 ⇒ 屏幕上有十几个 `E`，被墙挡住一半时列数还会变 ⇒ **判据纪律见坑 16**（只断"至少一次"，禁止搬 2D 的计数辅助） |
 
 ---
 
@@ -79,47 +85,65 @@ namespace mini::render {
 // 输入：一个"贴在世界上某处、有高度 z"的精灵（**只读**，不认识 Entity/game）
 struct SpritePlace {
     math::Vec2 pos{};              // 世界坐标（格，含亚格精度）
-    float      z = 0.0f;           // 离地高度（格）；0 = 站在地上
-    float      cellsTall = 1.0f;   // 世界高度（格）；1 = 一格高
+    float      z = 0.0f;           // ★ **脚底**离地高度（格）；0 = 站在地上（D-2 甲）
+    float      cellsTall = 1.0f;   // 世界高度（格）；1 = 一格高（C 甲：= 半条墙带）
     float      cellsWide = 1.0f;   // 世界宽度（格）
 };
 
 // 输出：落到屏幕上的矩形（**半开区间**：列 [col0, col1)、行 [row0, row1)）+ 深度
+// ★ 出来时**已经在视口内**（R4 甲：裁剪在纯函数里做完）、且**至少 1 行**（坑 15）
 struct SpriteBox {
     int   col0 = 0, col1 = 0;
     int   row0 = 0, row1 = 0;
     float perp = 0.0f;             // ★ 与墙**同一个**深度口径（垂距），用于比较
-    bool  visible = false;         // false = 在相机背后 / 贴脸 / 完全不可见
+    bool  visible = false;         // false = 相机背后 / 贴脸 / 裁完为空
 };
 
 // 唯一入口：世界 → 屏幕（**不认识** FrameBuffer，也不画）
+// ⚠️ 观感参数必须**从外面喂**（`aspect` / `cellHeightPerWidth`），引擎不认识 Game.cpp 的策略
 [[nodiscard]] SpriteBox ProjectSprite(const SpritePlace& place, const RayCamera& cam,
-                                      int cols, int viewH, int horizon,
+                                      int cols, int viewTop, int viewH,
+                                      float aspect, float cellHeightPerWidth,
                                       float wallHeightCells) noexcept;
 
 } // namespace mini::render
 ```
 
 **约定（和 `RayCaster.h` 对齐）**
+
 - `perp` **必须**用与墙同一个定义（`RayHit::perp`，即沿 `dir` 的垂距）⇒ 否则"墙 vs 精灵"的比较没有意义；
 - 相机背后（`dot(toSprite, dir) <= 0`）⇒ `visible = false`（**不做**"绕过背后"的裁剪）；
-- 输入不 clamp，**输出必须有限**（贴脸 ⇒ 走 `kMinPerp`，行数可能远超视口 ⇒ 由调用方裁）。
+- 输入不 clamp，**输出必须有限且在视口内**（贴脸 ⇒ 走 `kMinPerp`；行/列**在函数内夹**；行数**至少 1**）；
+- `horizon` **不再作为参数**：由 `viewTop + viewH/2` 在函数内派生（少一个可能自相矛盾的输入）。
 
 ### 3.2 `game` 侧接线（只碰 `Game.h` / `Game.cpp`）
 
 ```cpp
 // Game.h（私有）
-std::vector<float> m_colDepth;          // 分叉 B 甲：复用，宽度变了才 resize
-struct SpriteItem { mini::math::Vec2 pos; float z; float cellsTall; float cellsWide;
-                    char32_t glyph; mini::render::Color color; };
-void CollectSprites(std::vector<SpriteItem>& out) const;   // 敌人 + 子弹（按当前状态）
-void DrawSprites(mini::render::FrameBuffer& fb, const mini::render::RayCamera& cam,
-                 int viewH, int horizon);                  // 分叉 E 甲：内部排序
+std::vector<float>      m_colDepth;     // 分叉 B 甲：复用，宽度变了才 resize
+std::vector<DrawnSprite> m_spriteBuf;   // 同上：**精灵列表也复用**（坑 7 是同一个毛病）
+
+struct SpriteItem {                      // "要画什么"（收集结果，还没投影）
+    mini::math::Vec2 pos; float z; float cellsTall; float cellsWide;
+    char32_t glyph; mini::render::Color color;
+};
+struct DrawnSprite {                     // "画到哪"（投影结果 + 排序键）
+    mini::render::SpriteBox box;
+    char32_t glyph; mini::render::Color color;
+    mini::world::EntityId id;            // ★ 只用于排序的**次级键**（同深度画序确定）
+};
+
+void CollectSprites(std::vector<SpriteItem>& out) const;   // 只读世界 ⇒ 仍可以是 const
+// ⚠️ 下面两个**都不加 const**（分叉 B 甲：它们要写成员缓存）
+void DrawSprites(mini::render::FrameBuffer& fb);
+void DrawRaycastWorld(mini::render::FrameBuffer& fb);
 ```
 
 `DrawRaycastWorld` 变成**两趟**：
-1. 画墙，并把 `hit.perp` 写进 `m_colDepth[col]`；
-2. `CollectSprites` → 排序 → `DrawSprites`（每列与 `m_colDepth[col]` 比）。
+1. **墙**：逐列 `CastColumn` → 画墙条 → **顺手把 `hit.perp` 写进 `m_colDepth[col]`**（没命中写 `kRayFar`）；
+2. **精灵**：`CollectSprites`（身份照抄 `DrawEntities`）→ **逐项投影**（丢掉 `!visible`）→ 按 `box.perp` 降序、`EntityId` 升序排 → 逐列比 `m_colDepth[col]` 后写格。
+
+> ⚠️ **顺序是"投影在前、排序在后"**（分叉 E-2）：`box.perp` 是**唯一**的深度真相，收集阶段**不**算 `perp` ⇒ 不会出现"两处 `perp` 公式各说各话"（`dist` vs `perp` 的教训）。
 
 ---
 
@@ -132,19 +156,22 @@ for col in [0, cols):
     m_colDepth[col] = hit.hit ? hit.perp : kRayFar      # ← 新增
     画墙条（原有逻辑不动）
 
-# ② 收集 + 排序（远 → 近）
-sprites = CollectSprites()                              # 敌人：z=0、1×1 格；子弹：z=kBulletZ、小一圈
-sort(sprites, by perp DESC)                             # 分叉 E 甲
-
-# ③ 逐个精灵：先用纯函数算出屏幕矩形，再**逐列**比深度
+# ② 收集 → **投影** → 排序（远 → 近）· ★ E-2：**投影在前**，排序键用 `box.perp`（唯一真相）
+sprites = CollectSprites()          # 身份判定**照抄 `DrawEntities`**：跳 `!active`、跳玩家、`IsEnemyId` 分色；
+                                    # 字形取 `entity.symbol`；敌人 z=0，子弹 z = kBulletHeight − cellsTall/2
+drawn = []
 for s in sprites:
-    box = ProjectSprite(s, cam, cols, viewH, horizon, kWallHeightCells)
-    if not box.visible: continue
-    裁到视口：col ∈ [0,cols)、row ∈ [kHudRow, h)     # 坑 5：不许盖 HUD
-    for col in [box.col0, box.col1):
-        if box.perp >= m_colDepth[col]: continue      # ★ 墙更近 ⇒ 这一列跳过（遮挡）
-        for row in [box.row0, box.row1):
-            fb.Set(col, row, s.glyph, s.color)
+    box = ProjectSprite(s, cam, cols, viewTop, viewH, aspect, r, kWallHeightCells)
+    if not box.visible: continue                 # 相机背后 / 贴脸 / 裁完为空
+    drawn.push({box, s.glyph, s.color})
+sort(drawn, by box.perp DESC, then EntityId ASC) # ★ 次级键 ⇒ 同深度画序确定（用例可复现）
+
+# ③ 逐个精灵：逐列比深度后写格（**裁剪已在 ProjectSprite 里做完** —— R4 甲）
+for d in drawn:
+    for col in [d.box.col0, d.box.col1):
+        if d.box.perp >= m_colDepth[col]: continue   # ★ 墙更近 ⇒ 这一列跳过（遮挡）
+        for row in [d.box.row0, d.box.row1):
+            fb.Set(col, row, d.glyph, d.color)
 ```
 
 **投影公式（`ProjectSprite` 内部，`cells` 单位）**
@@ -159,21 +186,28 @@ for s in sprites:
 > ⇒ **精灵直接用同一个 `aspect` 即可**：每个窗口都物理正确，且与墙天然一致，**不需要"共用一个会偏的尺度"这种妥协**。
 > ⚠️ **纪律**：`AspectForViewport` 住在 `Game.cpp` 的匿名命名空间 ⇒ **`engine/render/Sprite.h` 必须把它当参数收**（与 `RayCaster::CastColumn/WallHeightRows` 收 `cellAspect` 同一条：**引擎不认识观感策略**）。
 ```text
-toCam  = place.pos - cam.pos
-forward = dot(toCam, cam.dir)                     # 沿 dir 的垂距（与 RayHit::perp 同口径）
-if forward <= kMinPerp: visible = false            # 相机背后 / 贴脸
+toCam   = place.pos - cam.pos
+forward = dot(toCam, cam.dir)                      # 沿 dir 的垂距（与 RayHit::perp 同口径）
+if forward <= kMinPerp: visible = false             # 相机背后 / 贴脸
 
-lineH    = viewH / forward * aspect                # ★ 与画墙**同一个式子/同一个值**（必须）
-rowsPerU = lineH / wallHeightCells                 # 1 个世界格 = 多少行
+horizon  = viewTop + viewH / 2                      # ★ 由 viewTop 派生（**不再从外面传** ⇒ 少一个可能自相矛盾的参数）
+lineH    = viewH / forward * aspect                 # ★ 与画墙**同一个式子/同一个值**（必须）
+rowsPerU = lineH / wallHeightCells                  # 1 个世界格 = 多少行（C 甲：wallHeightCells = 2.0）
 rowsTall = place.cellsTall * rowsPerU
-colsWide = place.cellsWide * rowsPerU * kCellHeightPerWidth  # ★ 物理上"方" ⇒ 列数 = 行数 × 字符格的宽高比（r≈2）
-floorRow = horizon + lineH / 2                     # 地面线（= 墙脚）
-row1     = floorRow - place.z * rowsPerU           # 高度 z 把精灵整体抬高
+colsWide = place.cellsWide * rowsPerU * cellHeightPerWidth   # ★ 物理上"方" ⇒ 列数 = 行数 × r
+floorRow = horizon + lineH / 2                      # 地面线（= 墙脚）
+row1     = floorRow - place.z * rowsPerU            # ★ `z` = **脚底**离地高度（D-2 甲）
 row0     = row1 - rowsTall
 
 # 只有**横向位置**用几何（fovTan）—— 否则精灵和墙在屏幕上对不齐
 centerCol = cols/2 + (dot(toCam, plane) / forward) * (cols / (2 * cam.fovTan))
 col0 = centerCol - colsWide/2 ; col1 = col0 + colsWide
+
+# ★ R4 甲：**裁剪在纯函数里做**（Game 级用例守不住 —— 见坑 5）
+row0 = max(row0, viewTop) ; row1 = min(row1, viewTop + viewH)
+col0 = max(col0, 0)       ; col1 = min(col1, cols)
+if row1 - row0 < 1: row1 = min(row0 + 1, viewTop + viewH)    # 坑 15：至少 1 行（远子弹不许消失）
+if row1 <= row0 or col1 <= col0: visible = false
 ```
 
 **算例（100×28、`aspect = AspectForViewport(100,28) = 1.353`、`wallHeightCells=2`、`perp=3.5`；`horizon=16`）**
@@ -195,51 +229,58 @@ col0 = centerCol - colsWide/2 ; col1 = col0 + colsWide
 
 | # | 坑 | 症状 / 判据 | 对策 |
 | --- | --- | --- | --- |
-| 1 | **忘了写 `m_colDepth`** | 精灵**永远**画在墙前面（穿墙可见） | 用例 `SpriteBehindWallIsOccluded`（3D 里数 `E` == 0） |
+| 1 | **忘了写 `m_colDepth`** | ⚠️ **两种形态要分清**：① 数组保持**初值 0** ⇒ `box.perp >= 0` 恒真 ⇒ **精灵一个都不画**（症状是"3D 里什么都没有"，**不是**穿墙可见）；② 写了数组但**忘了做比较** ⇒ 精灵穿墙可见 | 用例：① 由 `EnemyVisibleIn3D` 抓（★ R1 的靶子）；② 由 `WallOccludesEnemy` 抓。⚠️ **这两条要分别存在**，只有一条时会漏掉另一种形态 |
 | 2 | **深度用 `dist`（斜距）而不是 `perp`** | 屏幕两侧的精灵**误判遮挡**（明明在墙后被判成墙前，或反之） | 只用 `perp`；用例 `OcclusionUsesPerpNotSlant`（侧向摆位） |
 | 3 | **从近往远画** | 远处的敌人盖住近处的（"人越远越大"） | 分叉 E 甲：降序排序；用例 `NearSpriteWinsOverFarOne` |
 | 4 | **精灵的垂直尺度与墙不一致** | 敌人**飘在空中**或**埋进地板**；改 `kCellHeightPerWidth` / `kAspectTaste` 后更明显 | 分叉 C 甲：`kWallHeightCells` 显式化；用例断"贴地精灵的底边 == 地面行"。⚠️ **精灵必须调与墙同一个 `aspect`**（`AspectForViewport`），别自己再写第二份 |
 | **4b** | **横向尺寸用几何公式（`cols/(2·fovTan·perp)`），不是墙的尺度** | 精灵**横向胖**（像块饼）；100×28 下差 **2.0×**（= 字符格高宽比 `r`） | ⚠️ 2026-10-16 复核发现：**施工图初版写错的就是这条**。尺寸必须**从 `lineH` 推**（见 §4 更正），几何公式**只用来定位**（`centerCol`） |
-| 5 | **画到 HUD 行上** | HUD 第二行出现 `E`/`*`（玩家读不到 `hp`） | 行区间裁到 `[kHudRow, h)`；用例 `SpritesNeverTouchHudRows` |
+| 5 | **画到 HUD 行上** | HUD 第二行出现 `E`/`*`（玩家读不到 `hp`） | ✅ **R4 甲：裁剪下沉进 `ProjectSprite`** —— 纯函数收 `viewTop`，行夹到 `[viewTop, viewTop+viewH)`、列夹到 `[0, cols)` ⇒ 守卫是**纯函数**用例 `SpriteStaysInsideViewport`。⚠️ **Game 级那条 `SpritesNeverTouchHudRows` 只能算冒烟**：HUD 后画会把行 1/2 整行抹掉（`Game.cpp:1481`）⇒ 它**永远绿**，别拿它当"裁剪存在"的证据 |
 | 6 | **列/行下标越界** | 贴脸时 `col0` 为负、`row1 > h` | 裁到视口（`fb.Set` 虽忽略越界，但**下标算术**必须先夹，否则 `int` 溢出） |
 | 7 | **每帧 `std::vector` 分配** | 帧时间抖动（`T` overlay 的 `Game.Render` 峰值） | 分叉 B 甲：成员复用，宽度变了才 `resize` |
 | 8 | **精灵比 `kMinPerp` 还近** | 行数爆成几万行 | `forward <= kMinPerp ⇒ visible = false`（贴脸直接不画，同"墙高夹紧"） |
 | 9 | **同一精灵跨多列 ⇒ 数 `E` 会数多** | 用例"屏幕上 `E` 的个数 == 敌人数"**不成立** | 3D 用例只断"**至少出现一次**"，或按"每列最多一个"计数（**别**沿用 2D 那条判据） |
 | 10 | **同距离精灵画序不定** | 像素级断言不稳定 | 用例只钉"距离差 > 1 格"的场景 |
-| 11 | **`kBulletZ` 与 2D 的"点是中心"口径冲突** | 3D 里子弹看着"贴地"或"飘太高" | 分叉 D 甲 + 人眼调；常量写在 `Game.cpp` 顶部（和 `kCellHeightPerWidth` / `kAspectTaste` 这些观感旋钮放在一起） |
+| 11 | **`kBulletHeight` 与 2D 的"点是中心"口径冲突** | 3D 里子弹看着"贴地"或"飘太高" | 分叉 D 甲 + 人眼调；常量写在 `Game.cpp` 顶部（和 `kCellHeightPerWidth` / `kAspectTaste` 这些观感旋钮放在一起）。⚠️ `kBulletHeight` 是**中心**高度，`SpritePlace.z` 是**脚底** ⇒ 调用处写 `z = kBulletHeight − cellsTall/2`（D-2 甲） |
 | 12 | **`E`/`*` 在 3D 与 2D 的含义漂移** | 有人把 3D 的字形改成别的，判据就两边都要维护 | 分叉 F 甲（沿用）+ 注释写清"同一字形两种视角" |
 | 13 | **暂停时精灵还在动** | 破坏"暂停 = 世界冻住" | 精灵**只读**实体位置 ⇒ 世界不动它自然不动（无需额外门控）—— 但要有用例钉 |
 | 14 | **3D 下整屏变化让 `Rows` 顶满** | 顶栏 `Rows n/n`（S12 已登记，坑 14） | 不是 bug；顺带成为"3D 真在动"的判据 |
+| **15** | **小精灵被取整成 0 行**（2026-10-22 新增，D-4） | 远处的子弹**整颗消失**：`cellsTall ≈ 0.2`、10 格外 `rowsPerU ≈ 1.9 行/格` ⇒ 0.38 行 ⇒ 取整后 0 行 | 与 S12 坑 17 同病：`row1 - row0` **至少 1**；用例 `SpriteAtLeastOneRowVisible` |
+| **16** | **3D 里"数 `E`"的三种错误变体**（2026-10-22 新增，F 甲的代价） | 一个敌人跨 ≈10.8 列 ⇒ 屏幕上有十几个 `E`；被墙挡住一半时只剩 5~6 列 ⇒ **个数随墙变化** | ① 只断"**至少出现一次**"；② **禁止**搬 `CollectEnemies` / `MinEnemyDistanceSq` 那类"一个实体 = 一个字符"的 2D 辅助；③ **也别写**"`E` 个数 ≤ 敌人数"（把"必红"换成"偶发红"，且没有信息量） |
 
 ---
 
 ## 6. 测试计划
 
-### 6.1 新 suite `Sprite`（纯函数，离线，6 条）
+### 6.1 新 suite `Sprite`（纯函数，离线，**8 条**）
 
 | # | 用例 | 钉什么 |
 | --- | --- | --- |
 | 1 | `CenteredSpriteIsCentered` | 正前方（`cameraX = 0`）⇒ `col0/col1` 围绕 `cols/2` 对称、行区间在视口内 |
 | 2 | `SpriteShrinksWithDistance` | `perp` 翻倍 ⇒ 行数与列数**都**约减半（单调） |
-| 3 | `SpriteStandsOnFloor` | `z = 0` ⇒ `row1` == 该距离下的地面行（与 `WallHeightRows` 同尺度） |
+| 3 | `SpriteStandsOnFloor` | `z = 0` ⇒ `row1` == 该距离下的地面行（**用 `WallHeightRows` 同尺度算**，不许写死行数） |
 | 4 | `HeightLiftsSprite` | `z` 增大 ⇒ 行区间**整体上移**、高度不变 |
 | 5 | `BehindCameraIsInvisible` | `dot(toCam, dir) <= 0` ⇒ `visible == false` |
 | 6 | `WideSpriteSpansMoreColumns` | `cellsWide` 翻倍 ⇒ 列数翻倍（`row` 不变） |
+| **7** | `SpriteAtLeastOneRowVisible` | ★ **坑 15**：远处的小精灵（子弹，`cellsTall ≈ 0.2`）**仍至少占 1 行**，不许被取整成 0 行 |
+| **8** | `SpriteStaysInsideViewport` | ★ **R4 甲的靶子**：`col ∈ [0, cols)`、`row ∈ [viewTop, viewTop + viewH)` —— **裁剪在纯函数里做**（R4 甲），所以这条能红 |
 
-### 6.2 `Game` 侧新用例（3D，**禁用 `ScreenText`**，5 条）
+### 6.2 `Game` 侧新用例（3D，**禁用 `ScreenText`**，**8 条**）
 
 | # | 用例 | 钉什么 |
 | --- | --- | --- |
 | 1 | `EnemyVisibleIn3D` | 切到 3D 后屏幕上**出现 `E`**（至少一次）—— 这是 S13 的"开箱"判据 |
-| 2 | `WallOccludesEnemy` | 敌人放在墙后 ⇒ 3D 里 **`E` == 0**（★ 反向验证 R1 的靶子） |
-| 3 | `BulletVisibleIn3D` | 开一枪后 3D 里出现 `*`（且在**地面行之上**） |
-| 4 | `SpritesNeverTouchHudRows` | 行 `< kHudRow+1`（HUD 两行）里**不出现** `E`/`*` |
-| 5 | `SpritesFreezeWhenPaused` | `ESC` 暂停前后 3D 屏**逐格相同**（含精灵） |
+| 2 | `WallOccludesEnemy` | 敌人放在墙后 ⇒ 3D 里 **`E` == 0**（★ R1 的对照项：R1 时它**假绿**） |
+| 3 | `OcclusionUsesPerpNotSlant` | ★ **R2 的靶子**：侧向摆位的精灵**必须露出来**（用斜距会误判成墙后） |
+| 4 | `BulletVisibleIn3D` | 开一枪后 3D 里出现 `*`（且在**地面行之上** —— 验证 `z` 的脚底→中心换算） |
+| 5 | `NearSpriteWinsOverFarOne` | ★ **R3 的靶子**：距离差 > 1 格时，**近的盖住远的** |
+| 6 | `SpritesNeverTouchHudRows` | 行 `< kHudRow+1` 里不出现 `E`/`*`。⚠️ **降级为集成冒烟**：HUD 后画会整行抹掉 ⇒ 它守不住裁剪，真正的守卫是纯函数 `SpriteStaysInsideViewport`（见 R4 行） |
+| 7 | `SpritesFreezeWhenPaused` | ⚠️ **改成"暂停后连续两帧逐格相同"**（原写"暂停前后逐格相同"**必红** —— ESC 会叠 `PAUSED` 横幅，`Game.h:359`） |
+| 8 | `DepthBufferMatchesRaycaster` | ★ **第 2 笔的"只记不读"守卫**：逐列 `m_colDepth[col] == CastColumn(...).perp` |
 
 ### 6.3 不许破的
 
-- `Game` suite 既有 **45 条**（尤其 14 条读屏用例 —— 它们在 2D 下跑，S13 不碰 2D 路径）
-- `Raycaster` **10 条**、`Sprite` 新 6 条、其余 suite
+- `Game` suite 既有 **47 条**（尤其 14 条读屏用例 —— 它们在 2D 下跑，S13 不碰 2D 路径）
+- `Raycaster` **10 条**、`Sprite` 新 **8 条**、其余 suite ⇒ 总量 **242 + 16 = 258**
 - **每个 commit 都能构建 + 用例全绿**（`AGENTS.md` §7）
 
 ---
@@ -251,21 +292,22 @@ col0 = centerCol - colsWide/2 ; col1 = col0 + colsWide
 | 项 | 判据 |
 | --- | --- |
 | 构建 | **0 warning**（`/W4`） |
-| 用例 | 全量 **≥ 250 passed, 0 failed**（S12 收口时 240 + S13 的 11） |
+| 用例 | **258 passed, 0 failed**（S12 收口 **242** + S13 的 **16**：纯函数 8 + Game 8） |
 | 3D 开箱 | 按 `V` 进 3D，**走廊里看得见 `E`**（敌人挡在墙前） |
 | 遮挡 | 绕到墙后 ⇒ 敌人**消失**；走到墙前 ⇒ 敌人**重新出现** |
 | 子弹 | 开火后能看到 `*` 从`你`飞向对方；飞到墙后**被墙挡住** |
 | 不出界 | 贴墙站着时精灵**不糊到 HUD 上**、不越出左右边界 |
 | 观感 | 敌人**站在地上**（脚踩地面行），不飘不埋 |
 
-### 7.2 反向验证（4 场，每场先写"预测"再实测）
+### 7.2 反向验证（**5 场**，每场先写"预测"再实测）
 
-| # | 改坏什么 | 预测 |
+| # | 改坏什么 | 预测（**2026-10-22 按代码重推过，与初稿不同**） |
 | --- | --- | --- |
-| **R1** | 不写 `m_colDepth`（保持初值 0） | `WallOccludesEnemy` **红**（敌人穿墙可见） |
-| **R2** | 深度比较换成 `dist`（斜距） | `OcclusionUsesPerpNotSlant` **红**（侧向场景误判） |
-| **R3** | 排序改成升序（近→远） | `NearSpriteWinsOverFarOne` **红** |
-| **R4** | 行区间不裁到 `kHudRow` | `SpritesNeverTouchHudRows` **红** |
+| **R1** | 不写 `m_colDepth`（保持初值 0） | ⚠️ **不是"穿墙可见"，是"精灵全不画"**：`box.perp >= 0` 恒真 ⇒ 每列都 `continue` ⇒ **`EnemyVisibleIn3D` 红**，而 `WallOccludesEnemy`（判据 `E == 0`）**假绿** —— 这是"绿出来的假守卫"，必须**先写进预测**再实测 |
+| **R2** | 深度比较把 `perp` 换成 `dist`（斜距） | `OcclusionUsesPerpNotSlant` **红**（侧向摆位：斜距偏大 ⇒ 本该露出的精灵被判成墙后） |
+| **R3** | 排序改成升序（近→远） | `NearSpriteWinsOverFarOne` **红**（近的被远的盖住） |
+| **R4** | **删掉 `ProjectSprite` 里的行裁剪**（R4 甲：裁剪已下沉进纯函数） | `SpriteStaysInsideViewport` **红**。⚠️ **`SpritesNeverTouchHudRows` 会绿** —— 因为 HUD 后画、把行 1/2 整行抹掉（`Game.cpp:1481`）⇒ 那条 Game 级用例**只能算集成冒烟，不能算守卫** |
+| **R5**（新增） | 深度比较方向反过来（`>=` → `<=`） | **整屏精灵消失** ⇒ `EnemyVisibleIn3D` **红**。价值：把"深度比较写了但方向反了"与 R1 的"没写"区分开 —— S12 的教训是"只注掉、不反号"很容易漏掉反向错误 |
 
 > ⚠️ 每场都要**先写下预测**（含"预计绿场"的可能），实测后逐条比对 —— 这是 S9 ~ S11 的规矩。
 
@@ -290,11 +332,11 @@ col0 = centerCol - colsWide/2 ; col1 = col0 + colsWide
 
 | # | 内容 | 能否独立构建 | 验收 |
 | --- | --- | --- | --- |
-| 1 | `engine/render/Sprite.h` + `tests/test_sprite.cpp`（6 条）+ `tests/CMakeLists.txt` | ✅ 纯增量、无人调用 | 6 条新用例绿 |
-| 2 | `Game`：`m_colDepth` 填值（**无行为变化**）+ 一条"depth == perp"的守卫用例 | ✅ 只记不读 | 全绿（0 行为变化） |
-| 3 | 精灵绘制（含遮挡）+ `EnemyVisibleIn3D` / `WallOccludesEnemy` | ✅ | 两条新用例绿 |
-| 4 | `z` 高度 + 排序 + `BulletVisibleIn3D` / `NearSpriteWinsOverFarOne` / `SpritesNeverTouchHudRows` / `SpritesFreezeWhenPaused` | ✅ | 全绿 |
-| 5 | 文档收口（`PLAN` S13 行、`TECH_DEBT`、`README`、`AGENTS §2`、版本号）**+ 打 annotated tag `v0.6.0` 并 push**（`AGENTS.md` §5：机器门 + 人眼都过了才打；录 demo / 回退靠它） | ✅ | — |
+| 1 | **`render/RayCamera.h`（新头）**：把 `RayCamera` + `kMinPerp` 搬过去；`RayCaster.h` 反向 include 它（`RayHit` 留在原地）→ 再落 `engine/render/Sprite.h` + `tests/test_sprite.cpp`（**8 条**）+ `tests/CMakeLists.txt` **一行** | ✅ **纯搬运 + 纯增量**，无人调用 | 既有 **242 条全绿、一条不红**（= 搬运零行为变化）+ 8 条新用例绿 |
+| 2 | `Game`：`m_colDepth` 填值（**无行为变化**）+ 守卫用例 `DepthBufferMatchesRaycaster`（逐列 `m_colDepth[col] == CastColumn(...).perp`） | ✅ 只记不读 | 全绿（0 行为变化）+ 新用例绿 |
+| 3 | 精灵绘制 + 遮挡：`CollectSprites`（**身份判定照抄 `DrawEntities`**）+ `DrawSprites`（**先投影、后排序**）+ `EnemyVisibleIn3D` / `WallOccludesEnemy` / `OcclusionUsesPerpNotSlant` | ✅ | 3 条新用例绿 |
+| 4 | `z`（**脚底**语义 / `kBulletHeight`）+ 排序**次级键 `EntityId`** + `BulletVisibleIn3D` / `NearSpriteWinsOverFarOne` / `SpritesNeverTouchHudRows` / `SpritesFreezeWhenPaused` | ✅ | 4 条新用例绿 |
+| 5 | 文档收口（`PLAN` S13 行、`TECH_DEBT`、`README`、`AGENTS §2`、版本号 `0.6.0-dev`）**+ 打 annotated tag `v0.6.0` 并 push**（`AGENTS.md` §5：机器门 + 人眼都过了才打） | ✅ | — |
 
 > 第 2 笔刻意做成"只记不读" ⇒ 一旦有问题，问题一定在第 3 笔，**不会两笔混在一起**（S7 的教训）。
 
@@ -317,9 +359,9 @@ col0 = centerCol - colsWide/2 ; col1 = col0 + colsWide
 
 | # | 项 | 状态 |
 | --- | --- | --- |
-| **T1** | `kWallHeightCells` 取 2.0 是否合适（决定"一面墙看起来多高"） | 待**看着调**；没有理论值。⚠️ 它和 `kCellHeightPerWidth` / `kAspectTaste`（`Game.cpp` 顶部的观感旋钮）是一组 —— **别再引用已删除的 `kCellAspect`** |
-| **T2** | `kBulletZ` 取多少（≈1.2 格？） | 待看着调 |
-| **T3** | 精灵宽度是否该按 `cellsWide = 0.8`（比一格窄一点，两个敌人并排才分得开） | 待看着调 |
+| **T1** | `kWallHeightCells` 取多少 | ✅ **2026-10-22 已拍板 = `2.0f`**（分叉 C = 甲）。⚠️ **语义必须写清**：它**不改变墙的画法**，只定义"**1 格 = 半条墙带**" ⇒ 1 格高的敌人 = **半条墙带高**、头顶**齐地平线**（100×28、`perp=3.5` 时 5.41 行 vs 墙带 10.8 行）。它和 `kCellHeightPerWidth` / `kAspectTaste`（`Game.cpp` 顶部的观感旋钮）是一组 —— **别再引用已删除的 `kCellAspect`** |
+| **T2** | 子弹的高度常量取多少 | ✅ **已拍板：叫 `kBulletHeight`，语义 = "子弹中心离地高度"，初值 ≈ `1.2f`**（和一排观感旋钮放一起）。⚠️ `SpritePlace.z` 的语义是**脚底**高度 ⇒ 调用处写 `z = kBulletHeight − cellsTall/2`（D-2 甲）。调太高会出现"子弹飞到墙顶以上、墙挡不住它"——那是观感 bug，不是几何 bug |
+| **T3** | 精灵宽度是否该按 `cellsWide = 0.8`（比一格窄一点，两个敌人并排才分得开） | 待看着调（`cellsWide` 每帧不变，改它只影响横向列数） |
 | **T4** | 性能：8 个敌人 + ~20 发子弹 的逐列逐行写入 | 预期 <0.1 ms；用 `T` overlay 的 `Game.Render` 实测 |
 | **T5** | 精灵遮挡的**边缘**（半格露头）是否会出现"1 列闪现" | 人眼项 2 的强化观察点；必要时给 `perp` 加一点偏差（**先别做**，等真出现再说） |
 | **T6** | 3D 下 `E` 的计数判据（坑 9） | 已定：只断"至少一次"/"每列至多一个" |
