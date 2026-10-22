@@ -20,8 +20,15 @@ const char* VersionString()
     //      ⚠️ 与 `PLAN` 字面的偏差：`PLAN` G 节写的是"`F1~F4` Debug Overlay"，实际是
     //        **`T`=overlay / `F2`=几何层 / `F4`=写快照**（`F1`/`F3` 在本机被别的软件抢占，
     //        见 `S11_CHECKLIST` 分叉 A）。
-    //    保留 `-dev` 后缀（沿用最初 `0.1.0-dev` 的那个约定）：**已达成 v0.4，但树还在往 v0.5 走**
-    //    （v0.5「像 3D」= S12 Ray Casting）。
+    //    · **2026-10-22：`0.4.0-dev` → `0.5.0-dev`**
+    //      —— 依据 **v0.5「像 3D」**（① DDA 每列射线 → 第一人称走廊 · ② 无鱼眼（`perp` 用垂距，
+    //      反向验证 R1 钉住）· ③ `V` 主键 / `F5` 备份切 2D/3D）于 **S12 收口（2026-10-22）** 达成：
+    //      242 用例全绿 · 反向验证 **7 场**（`S12_CHECKLIST` §9.4.1）· 人眼 15 条（§9.3）。
+    //      ⚠️ **两处与 `PLAN` 字面的偏差**：主键从 `F5` 改成 **`V`**（`F5` 在 VS Code 里是"启动调试"，
+    //        且本机收不到）；`aspect` 从"`kCellAspect` 常量调参"改成 **`AspectForViewport()` 按视口算**。
+    //      ⚠️ **`v0.5.0` tag 尚未打** —— 阻塞在 `S12_CHECKLIST` §9.6 的 R3 人眼对照。
+    //    保留 `-dev` 后缀（沿用最初 `0.1.0-dev` 的那个约定）：**已达成 v0.5，但树还在往 v1.0 走**
+    //    （v1.0 = S13 精灵 + z-buffer / README + GIF + CI / 干净克隆三条命令能跑）。
     //
     // ⚠️ 它的调用者只有 `tests/test_smoke.cpp` 一处（**exe 早就不打印版本了** ——
     //    `PLAN:320` / `S0_CHECKLIST` 里那句"exe 打印 `MiniEngine 0.1.0-dev`"是 **S0 的历史行为**，
@@ -33,11 +40,11 @@ const char* VersionString()
     //    + `test_smoke.cpp` 的两行断言 —— 那条用例就是这四个落点的机器守卫）。
     //    ⚠️ 另有**一处举例注释**也要顺手改：`Version.h` 里那句 `形如 "…"`。
     //    它**没有机器守卫**（编译器和用例都不管它）⇒ 最容易漏，改完看一眼。
-    return "0.4.0-dev";
+    return "0.5.0-dev";
 }
 
 int VersionMajor() { return 0; }
 
-int VersionMinor() { return 4; }
+int VersionMinor() { return 5; }
 
 } // namespace mini::core
