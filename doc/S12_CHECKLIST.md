@@ -408,7 +408,7 @@ cmake --build build --config Debug ; .\build\bin\Debug\mini_tests.exe ; ctest --
 | --- | --- | --- | --- | --- |
 | **R1** | `RayCaster.h:155` `perp = t` → `t * lenRay` | 1 / 5 | 1 / 5 · `11.3826`、`9.5`、`11.0496` 逐个对上 | ✅ **5/5** |
 | **R2** | `RayCaster.h:108-111` `sideDist` 初值少 1 格 | 3 / 5 | **4 / 8** | ⚠️ 值命中 4/5，**3 处预测错**（见 9.4.2） |
-| **R3** | `Game.cpp:204` `kAspectTaste` `1.0f` → `0.5f` | 0（绿场） | 机器**未回报** · 人眼 = **§9.6 行动项** | ⏳ **未验完** |
+| **R3** | `Game.cpp:204` `kAspectTaste` `1.0f` → `0.5f` | 0（绿场） | 机器**未回报** · 人眼："**肉眼明显可见少了很多墙**"（定性，未数行数） | ✅ **绿场命中 + 人眼证实**（明细见 §9.6.1） |
 | **R4** | `Game.cpp:913-918` ③c 转身挪到门控**外** | 0（绿场；**与本文档原预测相反**） | 0 | ✅ 绿场命中 ⇒ **抓出一条假守卫** |
 | **R（§16.4）** | `Game.cpp:371` `map.Set(x, y, Tile::Wall)` 注掉 | 2 / 3 | 2 / 3 · `rowsWithoutWall=18`、`up.dy` 变 `ok=false` | ✅ **全中** |
 | **R5** | `DrawRaycastWorld` 两段铺底注掉 | 1 / 3 | 1 / 3（`:1143 :1144 :1153`） | ✅ **全中** |
@@ -473,12 +473,12 @@ cmake --build build --config Debug ; .\build\bin\Debug\mini_tests.exe ; ctest --
 | 文档同步 | ✅ `PLAN`（S12 行标 + 里程碑 + G 节 v0.5）· `README` 状态行 · `AGENTS.md` 索引 · `TECH_DEBT` **C42/C43** · 本图 §7 坑 **20/21** · §14 逐条打勾 |
 | ⚠️ **刻意未做** | ① **R3 的人眼对照**（§9.6 行动项）② **`v0.5.0` tag**（`AGENTS.md` §5：人眼过了才打；tag 推了就不该移动） |
 
-### 9.6 ⚠️ 行动项 —— R3 的人眼对照（**唯一未验完的一项**）
+### 9.6 R3 的人眼对照（**✅ 2026-10-22 已过 · 定性判据**）
 
 **为什么单独留一条**：`kAspectTaste` 是**纯观感参数**，**没有任何用例读它** ⇒ 把它改成 0.5 机器**必然全绿**。
 ⇒ 这是整个 S12 里**唯一只能靠肉眼**的守卫点（`TECH_DEBT` **C43**）。
 
-**做法（3 步，约 3 分钟）**
+**做法（复验手册，3 步约 3 分钟 —— 已跑过一次，下次换字体/字号/窗口时照此重跑）**
 
 1. 把 `game/src/Game.cpp:204` 的 `kAspectTaste` 从 `1.0f` 改成 **`0.5f`**（**只改这一个常量**，`kCellHeightPerWidth` 保持 `2.0f`）；
 2. `cmake --build build --config Debug` → `.\build\bin\Debug\mini_tests.exe` 应得 **`242 passed, 0 failed`**（**绿是预期结果**，不是"没事干"）；
@@ -493,7 +493,18 @@ cmake --build build --config Debug ; .\build\bin\Debug\mini_tests.exe ; ctest --
 
 看完 **`git checkout -- game/src/Game.cpp`** 还原（`git status` 应为空）。
 
-- [ ] 人眼对照**通过** ⇒ 才允许打 `v0.5.0` tag（`git tag -a v0.5.0` + `git push origin v0.5.0`）
+- [x] 人眼对照**通过**（2026-10-22）⇒ 才允许打 `v0.5.0` tag（`git tag -a v0.5.0` + `git push origin v0.5.0`）
+
+#### 9.6.1 实测记录（2026-10-22 · 本人执行，**判据是定性**）
+
+| 项 | 记录 |
+| --- | --- |
+| 改动 | `Game.cpp:204` `kAspectTaste` `1.0f → 0.5f`（AI 只改这一行；`:203` 的 `kCellHeightPerWidth` 未动） |
+| 机器门 | **未回报尾行数字**（本项按 `C43` 预期"绿"；机器读数不影响判定） |
+| 人眼 | **没有数具体行数**。本人原话："**肉眼明显可见少了很多墙**" ⇒ "墙带高度随 aspect 变化"成立 |
+| 判定 | ✅ **通过（定性）**。表格里的 `≈21 → 10~11 行` **未被核对**，只作下次的预期值 |
+| 还原 | AI 执行 `git checkout -- game/src/Game.cpp` ⇒ `git status --short` 空输出、`:204` 回到 `1.0f` |
+| ⚠️ 代价（照实记） | **没有 21 → 10~11 的基线数字** ⇒ 将来"3D 比例不对"时只能重新跑一遍对照，不能直接对表（`C43` 的兜底弱一档） |
 
 ---
 
@@ -589,7 +600,7 @@ cmake --build build --config Debug ; .\build\bin\Debug\mini_tests.exe ; ctest --
 - [x] §11 的文档同步全部落地（含 **S13 行改写** —— ✅ 2026-10-22 已按 `AspectForViewport` 重算完，16 行 → 10.8 行）
 - [x] `v0.5` 判定（`PLAN` G 节）回填 ✅ —— ✅ **2026-10-22 已回填**（DDA 画面 / 无鱼眼 / `V` 切换三条均有人眼记录）
 - [x] 每个 commit 单独 checkout 都能构建 + 能跑（`AGENTS.md` §7 第二条）—— ✅ 2026-10-22 收口时逐笔核过（6 笔均为可构建状态）
-- [ ] **打 annotated tag `v0.5.0` 并 push**（`AGENTS.md` §5：阶段收口 = 打 tag；录 demo / 回退都靠它）—— ⚠️ **仍然阻塞在 §9.6 的人眼对照**（`kAspectTaste` 0.5 的肉眼判据）；那一项过了才打，且**推了就不动**
+- [ ] **打 annotated tag `v0.5.0` 并 push**（`AGENTS.md` §5：阶段收口 = 打 tag；录 demo / 回退都靠它）—— ✅ **前置条件已全部满足**：`§9.6.1` 的 R3 人眼对照**2026-10-22 已过**（定性）⇒ **无剩余阻塞**。⚠️ **本条在 `git tag` 真正执行、`git ls-remote` 核到远端之后才许勾**，且**推了就不动**
 
 ---
 
