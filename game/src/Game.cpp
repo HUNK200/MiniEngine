@@ -203,6 +203,16 @@ constexpr float kFovTan = 0.66f;   // 相机平面半长 ⇒ 约 66° FOV（与 
 constexpr float kCellHeightPerWidth = 2.0f;   // 终端字符格 高:宽（估；观感参数）
 constexpr float kAspectTaste        = 1.0f;   // 纯观感旋钮：>1 墙更高、<1 更矮（1.0 = 理论上"方"）
 
+// ── S13（第 3 笔，分叉 C = 甲）：**1 个世界格 = 多少"墙带"** ─────────────────────
+// 墙带（`WallHeightRows` 画出来的那一竖条）**物理上就是 1 格高** —— 这一点由
+// `AspectForViewport` 的推导锁死（它令"1 格宽 × 1 格高"的墙面在屏幕上物理方正）。
+// ⇒ 声明 `kWallHeightCells = 2` **不会改变墙**，它只是把"1 格"重新定义为**半条墙带**：
+//    敌人（1 格）⇒ 半墙高、头顶齐地平线；挡住它的墙看起来有它两倍高。
+// ⚠️ **别去改 `WallHeightRows`**：想让墙变高是改 `kAspectTaste`，不是改这个数。
+// ⚠️ 它同时决定了精灵的**垂直与横向**尺度（`rowsPerCell = lineH / kWallHeightCells`）⇒
+//    改它会同时改"敌人多高"和"敌人多宽"（物理上保持方）。
+constexpr float kWallHeightCells = 2.0f;
+
 // 视口 → 纵横比（S12 第 5 笔）。**唯一**的换算点：别在列循环里就地再算一遍。
 // ⚠️ 调用方已保证 `viewW > 0 && viewH > 0`；下面那句 `denom <= 0` 只是防御 ——
 //    真除出 inf/NaN 会让整屏墙高变成 NaN，那种画面很难反推到"是除零"。
@@ -403,6 +413,28 @@ void Game::BuildDemoMap()
         }
     }
 
+    // ── S13（第 3 笔，方案乙）：**一段隔墙** —— 让"敌人在墙后"成为**真实可达的场景** ──────
+    // 为什么需要它：家厅 `[1,79)×[1,10)` 是**凸的** ⇒ 里面任意两人之间都没有墙 ⇒
+    //   3D 的遮挡在旧地图里**永远不发生**（人眼项 2"敌人走到墙后消失"根本没法验）。
+    // 位置 `[34,36) × [3,6)`（2 列 × 3 行）—— 四条硬约束（与家厅那四条同一张表，改之前先核）：
+    //   ① **不许横穿 y = 2.5 的子弹走廊**：S9/S10 那批用例都从出生点朝**东**开枪打 42 格外的敌人
+    //      ⇒ 墙一旦盖住 y = 2.5 那一行，子弹会撞墙消失，**一整批用例会红**。所以它从 y = 3 起；
+    //   ② **不许进 x ≤ 10 / y ≤ 9 的斜向行走区**（`DiagonalMoveIsNotFaster` 走 0.45 s ≈ 6.4 格）；
+    //   ③ **不许挡 1 秒东行**（`MoveSpeedMatchesOneSecondOfWalking`：2.5 → 22.5）⇒ x ≥ 23 ✓；
+    //   ④ **巡逻点必须仍是空格**（最西 x = 44.5）✓。
+    // ⇒ 效果：从出生点/北走廊朝东看，patrol 第 3 行（y = 4.5）的敌人**正好躲在它后面**；
+    //    往南绕两步就重新出现 —— 人眼项 2 与 3 都靠它。
+    // ⚠️ 它是**地形**，不是装饰：`BuildDemoMap` 每次重开都重铺（`TECH_DEBT` C27）。
+    constexpr int kDividerX = 34;
+    constexpr int kDividerY = 3;
+    constexpr int kDividerW = 2;
+    constexpr int kDividerH = 3;
+    for (int y = kDividerY; y < kDividerY + kDividerH; ++y) {
+        for (int x = kDividerX; x < kDividerX + kDividerW; ++x) {
+            map.Set(x, y, Tile::Wall);
+        }
+    }
+
     // ⚠️ 旧的 **"规则柱阵"（每 10 格一根，`kPillarStep`）已删除**：它的 y 全部 ≥ 10 ⇒ 全在家厅之外
     //    ⇒ 那些格子现在本来就是墙（在"岩石"里），留着只是三段**看不见的循环**（B2 纪律的近亲：
     //    看不见的代码不该留）。它当年有两个用途：① 让空旷的地图看着有规律；② 给 S6 相机当参照物。
@@ -547,27 +579,45 @@ void Game::SpawnWaveEnemies(int count)
 
     for (int i = 0; i < count; ++i) {
         // 出生点 = 这条路线的第一个端点。它必须是**空格**（人工核对过，见 `kPatrolPaths`）。
-        mini::world::Entity prototype{};
-        prototype.transform.pos      = kPatrolPaths[i][0];
-        prototype.velocity.perSecond = mini::math::Vec2{};   // 速度每帧由 AI 写，这里只是初值
-        prototype.symbol             = 'E';
-
-        const mini::world::EntityId id = m_world.Spawn(prototype);
-
         // ⚠️ 逐敌一条路：`patrolPath` = 它负责哪一行；`waypointIdx` = 在这行里走到第几个点。
         //    这是"全敌共用一张平表"的实现方式 —— 表是编译期常量，逐敌只多 1 个字节。
-        EnemyData enemy{};
-        enemy.id          = id;
-        enemy.state       = mini::ai::EnemyState::Idle;
-        enemy.patrolPath  = static_cast<std::uint8_t>(i);
-        enemy.waypointIdx = 0;
-        // `idleSeconds` 是"Idle 该持续多久"的**唯一**来源，由这里写进定时器（见 EnemyBrain.h 的说明）
-        enemy.idleTimer   = mini::ai::kDefaultTuning.idleSeconds;
-        enemy.attackTimer = 0.0f;
-        enemy.hp          = kEnemyMaxHp;
-
-        m_enemies.push_back(enemy);
+        (void)SpawnEnemyEntity(kPatrolPaths[i][0], i);
     }
+}
+
+// 一只敌人的**完整初始化清单**（S13 第 3 笔从 `SpawnWaveEnemies` 抽出来）：
+//   `Spawn` 实体（位置 / 速度初值 / 字形）+ 一条 `EnemyData`（状态 / 巡逻 / 计时器 / HP）。
+// ⚠️ 抽出来的理由是**只有一个真相**：`SpawnEnemyAt`（调试接口）也必须拿到同一份字段集，
+//    否则"调试刷出来的敌人"会和"波次刷出来的敌人"在某几个字段上悄悄不同（S8 的教训）。
+mini::world::EntityId Game::SpawnEnemyEntity(mini::math::Vec2 pos, int patrolPath)
+{
+    mini::world::Entity prototype{};
+    prototype.transform.pos      = pos;
+    prototype.velocity.perSecond = mini::math::Vec2{};   // 速度每帧由 AI 写，这里只是初值
+    prototype.symbol             = 'E';
+
+    const mini::world::EntityId id = m_world.Spawn(prototype);
+
+    EnemyData enemy{};
+    enemy.id          = id;
+    enemy.state       = mini::ai::EnemyState::Idle;
+    enemy.patrolPath  = static_cast<std::uint8_t>(patrolPath);
+    enemy.waypointIdx = 0;
+    // `idleSeconds` 是"Idle 该持续多久"的**唯一**来源，由这里写进定时器（见 EnemyBrain.h 的说明）
+    enemy.idleTimer   = mini::ai::kDefaultTuning.idleSeconds;
+    enemy.attackTimer = 0.0f;
+    enemy.hp          = kEnemyMaxHp;
+
+    m_enemies.push_back(enemy);
+    return id;
+}
+
+// S13 第 3 笔：**临时调试接口**（声明处的注释写了"为什么需要它"与两条调用约束）。
+// ⚠️ 固定挂在**第 0 条**巡逻路线上：它只是个"能摆到任意位置的敌人"，不是"木桩"。
+//    用例要稳定观察就"摆完当帧渲染"（不开 `OnUpdate`）；真人按调试键玩时会看到它走开。
+void Game::SpawnEnemyAt(mini::math::Vec2 pos)
+{
+    (void)SpawnEnemyEntity(pos, 0);
 }
 
 void Game::DriveEnemyAi(const mini::core::FrameContext& ctx)
@@ -1155,6 +1205,24 @@ Game::ViewMode Game::CurrentView() const noexcept
     return m_viewMode;
 }
 
+// S13 第 2 笔：列深度的观察面（**只记不读** —— 生产代码 0 个读者）。
+// ⚠️ 越界（含"还没渲染过 ⇒ 空表"）返回 `kRayFar`，**不返回 0**：0 会让
+//    `box.perp >= m_colDepth[col]` 恒真 ⇒ 精灵全被判定"墙在前"⇒ 3D 里一个都不画。
+// ⚠️ 用 `col < 0` 先挡负下标：`static_cast<std::size_t>(-1)` 会绕成极大值，
+//    虽然比较结果也是"越界"，但先挡一次能让意图明确（同 `TileMap::At` 的写法）。
+float Game::ColumnDepth(int col) const noexcept
+{
+    if (col < 0 || col >= static_cast<int>(m_colDepth.size())) {
+        return mini::render::kRayFar;
+    }
+    return m_colDepth[static_cast<std::size_t>(col)];
+}
+
+const mini::world::TileMap& Game::Map() const noexcept
+{
+    return m_world.Map();
+}
+
 mini::math::Vec2 Game::CameraDir() const noexcept
 {
     // ⚠️ **唯一**把"朝向"变成单位向量的地方（分叉 C 的接缝）：将来做连续转身只改这一个函数体。
@@ -1164,7 +1232,7 @@ mini::math::Vec2 Game::CameraDir() const noexcept
     return game::FacingToVec2(m_facing);
 }
 
-void Game::DrawRaycastWorld(mini::render::FrameBuffer& fb) const
+void Game::DrawRaycastWorld(mini::render::FrameBuffer& fb)
 {
     const mini::world::Entity* player = m_world.Find(m_player);
     if (player == nullptr) {
@@ -1204,9 +1272,24 @@ void Game::DrawRaycastWorld(mini::render::FrameBuffer& fb) const
 
     const mini::render::RayCamera cam{player->transform.pos, CameraDir(), kFovTan};
 
+    // ── 列深度数组（S13 第 2 笔）：**复用**，宽度变了才 resize（分叉 B 甲 / 坑 7）──
+    // ⚠️ 初值必须是 `kRayFar`（不是 0）：0 会被 `box.perp >= 0` 判成"墙贴脸"⇒ 精灵全不画。
+    //    实际上下面每列都会重写一遍（没有墙的列写 `kRayFar`），但初值仍然是**安全方向**的兜底。
+    // ⚠️ **只记不读**：本笔没有任何代码读它 —— 第 3 笔的精灵遮挡才读。
+    const std::size_t colCount = static_cast<std::size_t>(fb.Width());
+    if (m_colDepth.size() != colCount) {
+        m_colDepth.assign(colCount, mini::render::kRayFar);
+    }
+
     for (int col = 0; col < fb.Width(); ++col) {
         const mini::render::RayHit hit =
             mini::render::CastColumn(m_world.Map(), cam, col, fb.Width());
+
+        // ★ S13 第 2 笔：墙 pass **顺手**记下这一列的垂距（与墙高用的是同一个 `hit.perp`）。
+        // ⚠️ 必须在 `if (!hit.hit) continue;` **之前**写：没命中的列也要写哨兵，
+        //    否则上一帧的值会留在那里（窗口/相机一变就是"幽灵墙"）。
+        m_colDepth[static_cast<std::size_t>(col)] =
+            hit.hit ? hit.perp : mini::render::kRayFar;
 
         if (!hit.hit) {
             continue;   // 病态输入（一路没撞到）：这一列只剩铺底的地板/天花板（第 5 笔起不再留白）
@@ -1229,6 +1312,113 @@ void Game::DrawRaycastWorld(mini::render::FrameBuffer& fb) const
         const int y1 = (bottom < fb.Height()) ? bottom : fb.Height();
         for (int row = y0; row < y1; ++row) {
             fb.Set(col, row, kShades[shade], kShadeColors[shade]);
+        }
+    }
+
+    // ── ③ 精灵（S13 第 3 笔）：**墙全部画完之后**才画 ────────────────────────────
+    // ⚠️ 顺序是硬约束：`m_colDepth` 必须在这一刻已经填满，否则精灵会按上一帧的深度
+    //    判断遮挡（相机一动就是"幽灵墙"）。所以它必须在列循环**之后**。
+    DrawSprites(fb);
+}
+
+// ------------------------------------------------------------
+// S13 第 3 笔：3D 精灵（收集 → 投影 → 排序 → 逐列比深度）
+// ------------------------------------------------------------
+
+void Game::CollectSprites(std::vector<SpriteItem>& out) const
+{
+    out.clear();
+
+    // ⚠️ 身份判定**照抄 `DrawEntities`**（分叉 D ③）：
+    //    · `!active` 不画（这是"死敌人从 3D 消失"的唯一原因，同 2D）；
+    //    · 玩家**不画**（第一人称，§1.2 有意不做）；
+    //    · `IsEnemyId` 决定颜色（红），其余（子弹）白。
+    //    字形直接取 `entity.symbol`（分叉 F 甲）⇒ 加新实体类型时 3D 自动跟上，不用改表。
+    for (const mini::world::Entity& entity : m_world.Entities()) {
+        if (!entity.active) {
+            continue;
+        }
+        if (entity.id == m_player) {
+            continue;   // 3D 里看不见自己（`S12_CHECKLIST` §1.2）
+        }
+
+        SpriteItem item{};
+        item.pos   = entity.transform.pos;
+        item.glyph = entity.symbol;
+        item.id    = entity.id;
+        // 颜色与 2D 同一套（红 = 敌人、白 = 子弹）。⚠️ 几何层的底色在 3D 不画（没有"格"）。
+        item.color = IsEnemyId(entity.id) ? mini::render::Color::BrightRed
+                                          : mini::render::Color::BrightWhite;
+        // ⚠️ z / 尺寸的默认值来自 `SpriteItem` 的成员初值（z = 0 = 脚踩地面；1×1 格）。
+        //    第 4 笔再给子弹抬高度（`kBulletHeight`）。
+        out.push_back(item);
+    }
+}
+
+void Game::DrawSprites(mini::render::FrameBuffer& fb)
+{
+    const mini::world::Entity* player = m_world.Find(m_player);
+    if (player == nullptr) {
+        return;   // 与世界绘制同一条口径：没玩家就不画
+    }
+
+    const int viewH = fb.Height() - kHudRow;
+    if (viewH <= 0 || fb.Width() <= 0) {
+        return;
+    }
+
+    // ⚠️ 必须与 `DrawRaycastWorld` 用**完全同一套**参数（aspect / fovTan / 视口）：
+    //    两处各算一次，迟早分叉 ⇒ 精灵与墙对不齐（S12 的 aspect 教训）。
+    const float            aspect = AspectForViewport(fb.Width(), viewH);
+    const mini::render::RayCamera cam{player->transform.pos, CameraDir(), kFovTan};
+
+    // ① 收集（只读世界）—— 复用成员缓冲，不每帧分配（坑 7）
+    CollectSprites(m_spriteItems);
+
+    // ② 投影（**唯一的深度真相**：排序键就是 `box.perp`；收集阶段不算深度）
+    m_spriteBuf.clear();
+    for (const SpriteItem& item : m_spriteItems) {
+        const mini::render::SpritePlace place{item.pos, item.z, item.cellsTall, item.cellsWide};
+        const mini::render::SpriteBox   box = mini::render::ProjectSprite(
+            place, cam, fb.Width(), kHudRow, viewH, aspect, kCellHeightPerWidth, kWallHeightCells);
+
+        if (!box.visible) {
+            continue;   // 相机背后 / 贴脸 / 裁完为空
+        }
+
+        DrawnSprite drawn{};
+        drawn.box   = box;
+        drawn.glyph = item.glyph;
+        drawn.color = item.color;
+        drawn.id    = item.id;
+        m_spriteBuf.push_back(drawn);
+    }
+
+    // ③ 排序：**远 → 近**（画家算法，分叉 E 甲）。
+    // ⚠️ 次级键用 `EntityId`（本质是 `uint32`，**比较用 `.value`**）：同深度时画序**确定**，
+    //    否则 `std::sort` 的相等元素顺序不定 ⇒ 像素级断言会偶发红（坑 10）。
+    // ⚠️ `EntityId` **刻意没有 `operator<`**（`world/Entity.h`：它是句柄，只定义 `==`）
+    //    ⇒ 这里比 `.value`；别为了这一行给引擎加一个"句柄能比大小"的语义。
+    std::sort(m_spriteBuf.begin(), m_spriteBuf.end(), [](const DrawnSprite& a, const DrawnSprite& b) {
+        if (a.box.perp != b.box.perp) {
+            return a.box.perp > b.box.perp;   // 远的先画，近的后画（近的盖住远的）
+        }
+        return a.id.value < b.id.value;
+    });
+
+    // ④ 逐列比深度后写格（**裁剪已在 `ProjectSprite` 里做完** —— R4 甲）
+    for (const DrawnSprite& drawn : m_spriteBuf) {
+        for (int col = drawn.box.col0; col < drawn.box.col1; ++col) {
+            // ⚠️ 用 `ColumnDepth(col)`（越界 = `kRayFar`）而不是直接下标：
+            //    窗口刚变宽的那一帧，深度表可能还没被墙 pass 填满。
+            // ⚠️ 比较用**严格小于**：`perp == 墙深` 视为"墙在前"（贴在一起时墙赢 ——
+            //    墙是不透明的实体，精灵是"贴在它前面"的东西）。
+            if (!(drawn.box.perp < ColumnDepth(col))) {
+                continue;   // 墙更近 ⇒ 这一列被挡住
+            }
+            for (int row = drawn.box.row0; row < drawn.box.row1; ++row) {
+                fb.Set(col, row, drawn.glyph, drawn.color);
+            }
         }
     }
 }

@@ -8,6 +8,7 @@
 #include "mini/math/Vec2.h"
 #include "mini/render/Camera.h"
 #include "mini/render/FrameBuffer.h"
+#include "mini/render/Sprite.h"   // S13 第 3 笔：`SpriteBox`（投影结果，`DrawnSprite` 的成员）
 #include "mini/world/World.h"
 
 #include <vector>
@@ -96,6 +97,31 @@ public:
 
     // **真接口**，不是"为测试而加"：`OnRender` 真的按它分支（这一条就是"2D/3D 二选一"的真相）。
     [[nodiscard]] ViewMode CurrentView() const noexcept;
+
+    // ── S13 第 2 笔：3D 列深度（**只记不读**的观察面）────────────────────────────
+    // 3D 一帧里"这一列最近的墙有多远"：`perp`，与 `RayHit::perp` **同口径**
+    //（所以第 3 笔能和精灵的 `box.perp` 直接比大小）；这一列没打中墙 = `kRayFar`。
+    // ⚠️ **现在没有任何消费者**（第 3 笔的精灵遮挡才读它）⇒ 它存在的唯一理由是：
+    //    让"墙 pass 记下来的值 == `CastColumn(...).perp`"**可以被用例钉住**（第 2 笔的守卫）。
+    // ⚠️ 越界列返回 `kRayFar`，**绝不返回 0**：`box.perp >= 0` 恒真 ⇒ 精灵会被全判成"墙在前"
+    //    ⇒ 3D 里一个精灵都不画（坑 1 的形态①，症状是"3D 里什么都没有"，最难联想到深度）。
+    [[nodiscard]] float ColumnDepth(int col) const noexcept;
+
+    // 只读地图（S13 的用例要**自己** `CastColumn` 算期望值，否则只能写死数字）。
+    // ⚠️ **只有 const 版**：地图的写入点只有 `BuildDemoMap()`（重开时重铺，`TECH_DEBT` C27）。
+    // ⚠️ 别拿它做玩法判断 —— 渲染/碰撞已经有 `World` 这一条路径（`IsSolidAt` 是唯一判据）。
+    [[nodiscard]] const mini::world::TileMap& Map() const noexcept;
+
+    // ── S13 第 3 笔：**临时调试接口** —— 把一只敌人放到指定世界坐标 ──────────────
+    // 存在理由：3D 遮挡用例需要"可控摆位"（墙后 / 侧向 / 近远对比），而正式玩法里敌人
+    //   只从 `kPatrolPaths` 刷出、且会巡逻（6 格/秒）—— 用例根本抓不住"同一个敌人"。
+    // ⚠️ **它的 AI 照常工作**：新敌人挂在第 0 条巡逻路线上（`patrolPath = 0`），
+    //    所以"摆完推一帧"它就开始走。要**稳定观察**就"摆完当帧渲染"（不开 `OnUpdate`）。
+    // ⚠️ **只在帧与帧之间调用**（`OnUpdate` / `OnRender` 之外）：它 `Spawn` 实体，
+    //    会让 `Entities()` 的 span 与 `Find()` 的指针失效（同 `FireBullet` 的约束）。
+    // ⚠️ 登记在 `TECH_DEBT`（C44）：它是**为用例而开的生产 API**，将来有正式的关卡/刷怪
+    //    工具时应当被它取代，而不是长期留着。
+    void SpawnEnemyAt(mini::math::Vec2 pos);
 
     // ── S11：Debug Overlay 的三个观察面（§10 分叉 C 取①、分叉 F 取甲）──────────────
     // ⚠️ 三条都**不是"为测试而加"**：overlay 的表里真的显示它们（`foes` / `shots` 与开关状态）。
@@ -297,6 +323,11 @@ private:
     // ⚠️ `count` 必须 ≤ `kPatrolPathRows`（调用方 `BeginWave` 由 `WaveEnemyCount` 保证 ≤ `kWaveMax`）。
     void SpawnWaveEnemies(int count);
 
+    // 铺**一只**敌人：`Spawn` 实体 + 一条 `EnemyData`（HP / 计时器 / 巡逻路线的**唯一**初始化清单）。
+    // ⚠️ `SpawnWaveEnemies` 与 `SpawnEnemyAt`（调试接口）**共用它** ⇒ "一只敌人由哪些字段组成"
+    //    只有一处真相；两处各写一份迟早漏字段（S8 的"两套真相"教训）。
+    mini::world::EntityId SpawnEnemyEntity(mini::math::Vec2 pos, int patrolPath);
+
     // 敌人每帧的"决策"：对每个 `EnemyData` 跑一次 `ai::Decide`，**只写速度**。
     // ⚠️ 必须在 `World::Update` **之前**调（写速度必须在积分之前 —— 与玩家同一条帧序硬约束，
     //    见 Game.cpp 的帧序注释）；反过来的现象是"敌人慢一帧"。
@@ -364,11 +395,55 @@ private:
     // ⚠️ 私有：它没有对外观察面（HUD 不显示向量；用例要断的是 `CurrentView()` / 屏幕）。
     [[nodiscard]] mini::math::Vec2 CameraDir() const noexcept;
 
-    // 3D 一帧：**只画墙**（地板/天花板是第 5 笔）+ 每列一条射线。
+    // 3D 一帧：**只画墙**（地板/天花板是第 5 笔）+ 每列一条射线（S13 第 3 笔起再加精灵）。
     // ⚠️ 它**不认识** HUD：视口从 `kHudRow` 起算（HUD 之后画、盖在上面），
     //    地平线在 `kHudRow + viewH/2` —— 与 2D 的"世界从 `kHudRow` 起"是同一条约定。
-    // ⚠️ **const**：只读世界、只写 `fb`（比 `DrawMap`/`DrawEntities` 还纯 —— 它们也不改状态）。
-    void DrawRaycastWorld(mini::render::FrameBuffer& fb) const;
+    // ⚠️ **S13 第 2 笔起去掉 `const`**（分叉 B 甲）：它要写 `m_colDepth`。
+    //    代价必须认：`mutable` 是"在 const 里偷改状态"，比去 const 更难查（施工图 §2 分叉 B）。
+    void DrawRaycastWorld(mini::render::FrameBuffer& fb);
+
+    // ── S13 第 2 笔：按列的墙深度（"这一列最近的墙有多远"，单位 = 格）───────
+    // 每帧由 `DrawRaycastWorld` 的墙 pass **顺手写下**（`RayHit::perp`；没命中 = `kRayFar`）。
+    // ⚠️ **本笔"只记不读"**（0 个消费者）：第 3 笔的精灵遮挡才拿它做比较。
+    //    ⇒ 唯一的价值是"让第 3 笔的遮挡有个已被验证过的地基"，而不是本笔的任何可见变化。
+    // ⚠️ **复用**（分叉 B 甲）：宽度变了才 `resize`，绝不每帧分配（坑 7：帧时间抖动）。
+    //    初值/未渲染时是**空表** ⇒ 存取器按"越界 = `kRayFar`"处理（空表 = 全世界都能画）。
+    std::vector<float> m_colDepth;
+
+    // ── S13 第 3 笔：精灵（敌人 / 子弹）──────────────────────────────────────
+    // 两段式（分叉 E-2）：**先收集**（只读世界）→ **再投影**（唯一的深度真相）→ 排序（远→近）。
+    // ⚠️ 为什么不在收集时就算 `perp`：那会出现**两处深度公式**（收集处 vs 投影处），
+    //    迟早各说各话 —— `dist` vs `perp` 的教训（坑 2）。
+    struct SpriteItem {   // "要画什么"（还没投影）
+        mini::math::Vec2      pos{};
+        float                 z         = 0.0f;   // ★ **脚底**高度（第 4 笔起子弹用它）
+        float                 cellsTall = 1.0f;
+        float                 cellsWide = 1.0f;
+        char32_t              glyph     = U'?';
+        mini::render::Color   color     = mini::render::Color::Default;
+        mini::world::EntityId id{};               // ★ 排序的**次级键**（同深度画序确定）
+    };
+
+    struct DrawnSprite {  // "画到哪"（投影结果 + 排序键）
+        mini::render::SpriteBox box{};
+        char32_t                glyph = U'?';
+        mini::render::Color     color = mini::render::Color::Default;
+        mini::world::EntityId   id{};             // ★ 次级键：`box.perp` 相同时按 id 升序
+    };
+
+    // 收集：**身份判定照抄 `DrawEntities`**（跳 `!active`、跳玩家、`IsEnemyId` 分色），
+    // 字形直接取 `entity.symbol`（分叉 F 甲：不为 3D 另建一张 kind→字形表）。
+    // ⚠️ `const`：只读世界、只写调用方给的 out。
+    void CollectSprites(std::vector<SpriteItem>& out) const;
+
+    // 画：收集 → 逐项投影 → 按 `box.perp` 降序（远→近）→ 逐列与 `m_colDepth` 比较后写格。
+    // ⚠️ **非 const**：它复用成员缓冲（`m_spriteItems` / `m_spriteBuf`），且要读 `m_colDepth`。
+    // ⚠️ 裁剪**不在这里**：`ProjectSprite` 已经保证输出在视口内（分叉 R4 甲）。
+    void DrawSprites(mini::render::FrameBuffer& fb);
+
+    // 两个**复用**缓冲（坑 7：绝不在每帧里新建 vector）
+    std::vector<SpriteItem>  m_spriteItems;
+    std::vector<DrawnSprite> m_spriteBuf;
 
     // 调试快照（键 = `kDumpKey`，见 `Game.cpp` 顶部常量）：把当前帧的参数交给 `core::Logger`
     // （追加写 `miniengine_debug.log`；`TECH_DEBT` **C14 于 S11 到期** —— 以前它自己开 `ofstream`）。

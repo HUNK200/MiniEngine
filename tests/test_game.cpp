@@ -10,6 +10,7 @@
 #include <mini/platform/Input.h>
 #include <mini/platform/InputState.h>
 #include <mini/render/FrameBuffer.h>
+#include <mini/render/RayCaster.h>   // S13 第 2 笔：`CastColumn` / `RayCamera` / `kRayFar`（用例自己算期望值）
 #include <mini/world/TileMap.h>
 
 #include <cmath>
@@ -186,6 +187,23 @@ int CountChar(const FrameBuffer& fb, char32_t wanted)
     for (int y = 0; y < fb.Height(); ++y) {
         for (int x = 0; x < fb.Width(); ++x) {
             if (fb.At(x, y).ch == wanted) {
+                ++count;
+            }
+        }
+    }
+    return count;
+}
+
+// S13：只在**指定列带** [col0, col1) 里数字符。
+// 用途：3D 里一个精灵跨好几列，"全屏数 E"会被**别的敌人**污染 ⇒ 遮挡用例必须限定列带。
+// ⚠️ 列带是**从几何算出来的**（精灵在该距离下的投影列），不是抄实现：
+//    见各用例里那几行"为什么是这几列"的注释。
+int CountCharInCols(const FrameBuffer& fb, char32_t wanted, int col0, int col1)
+{
+    int count = 0;
+    for (int y = 0; y < fb.Height(); ++y) {
+        for (int x = col0; x < col1; ++x) {
+            if (x >= 0 && x < fb.Width() && fb.At(x, y).ch == wanted) {
                 ++count;
             }
         }
@@ -1192,6 +1210,207 @@ MINI_TEST(Game, ThreeDWallCoversCeilingAndFloor)
         }
     }
     MINI_CHECK_EQ(notWall, 0);
+}
+
+// ------------------------------------------------------------
+// V5（S13 第 2 笔）：`m_colDepth` 逐列 == `CastColumn(...).perp`
+//
+// 这是本笔**唯一**的机器守卫 —— 本笔"只记不读"（生产代码 0 个读者），
+// 所以如果这条不写，`m_colDepth` 写成什么都不会有人发现；而第 3 笔的精灵遮挡
+// 全靠它 ⇒ 必须先把地基钉死。
+//
+// 期望值怎么来（**不写死数字、不抄实现**）：
+//   · 相机 = 出生点（`kSpawnX/kSpawnY`，公有）+ 当前朝向（`Facing()`，公有）；
+//   · 地图 = `game.Map()`（只读观察面）；
+//   · 于是用例自己调一次 `CastColumn` 就是期望值 —— 与渲染器**同一套数学**、**不同的调用者**。
+//
+// ⚠️ `kFovTanMirror` 是 `Game.cpp` 里 `kFovTan` 的**镜像**（它是文件内常量、刻意不公开，
+//    同 `kTestHudRow` 那条纪律）。不同步 ⇒ **红**（每个量都差一点），不是静默错。
+// ⚠️ `MINI_CHECK_EQ(mismatch, 0)` 只报个数；真红了先看下面那条 `worst` 的量级：
+//    差 1e-3 量级 = 相机参数不同步；差 ~19% = 有人把 `perp` 换成了 `dist`（斜距）；
+//    整列都是 `1e6` = 数组没 resize / 没写这一列。
+// ------------------------------------------------------------
+MINI_TEST(Game, DepthBufferMatchesRaycaster)
+{
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+
+    game.OnStart();
+    StartPlaying(game, input, fb);        // 两帧、只按 Enter ⇒ 玩家仍**恰好**在出生点
+
+    PressOnce(game, input, fb, Key::V);   // 进 3D（`PressOnce` 自己会渲染两次）
+    MINI_CHECK(game.CurrentView() == Game::ViewMode::Mode3D);
+
+    constexpr float kFovTanMirror = 0.66f;   // 镜像 `Game.cpp` 的 kFovTan
+
+    const mini::render::RayCamera cam{mini::math::Vec2{Game::kSpawnX, Game::kSpawnY},
+                                      game::FacingToVec2(game.Facing()),
+                                      kFovTanMirror};
+
+    int   mismatched = 0;
+    float worstDiff  = 0.0f;
+    for (int col = 0; col < fb.Width(); ++col) {
+        const mini::render::RayHit hit = mini::render::CastColumn(game.Map(), cam, col, fb.Width());
+        const float expected = hit.hit ? hit.perp : mini::render::kRayFar;
+        const float actual   = game.ColumnDepth(col);
+
+        const float diff = std::abs(actual - expected);
+        if (!(diff <= 1e-3f)) {   // 写成取反：NaN 也算不匹配（确定）
+            ++mismatched;
+        }
+        if (diff > worstDiff) {
+            worstDiff = diff;
+        }
+    }
+
+    MINI_CHECK_EQ(mismatched, 0);
+    MINI_CHECK(worstDiff <= 1e-3f);
+
+    // 越界契约：**必须是 `kRayFar`，不许是 0**（0 会让第 3 笔的 `perp >= depth` 恒真 ⇒ 精灵全不画）
+    MINI_CHECK_NEAR(game.ColumnDepth(-1), mini::render::kRayFar, 0.0f);
+    MINI_CHECK_NEAR(game.ColumnDepth(fb.Width()), mini::render::kRayFar, 0.0f);
+}
+
+// ============================================================
+// S13 第 3 笔：3D 精灵（看得见 + 遮挡正确）
+//
+// 【为什么这些用例要 `SpawnEnemyAt`】
+//   波次 1 的 3 个敌人在 42 格外：1 格宽的精灵在 3D 里只有 ≈ 80/(2.64×42) = **0.72 列**
+//   ⇒ 取整成 0 列，根本画不出来（`Sprite.h` 约定 5 的注：列数刻意不兜底）。
+//   而且它们**会巡逻**（6 格/秒）⇒ 位置在每帧变化，用例抓不住"同一个敌人"。
+//   ⇒ `SpawnEnemyAt` 把"摆位"这件事变成可控的；摆完**当帧渲染**（不开 OnUpdate）⇒ 位置精确。
+//
+// 【列带为什么是这几个数】
+//   精灵在屏幕上的列号由 `ProjectSprite` 的几何决定（这里按公式手算，不抄实现）：
+//     centerCol ≈ 40 + (横向/垂距) × **60.6**（80 列、fovTan 0.66 ⇒ `cols/(2·fovTan)` = 60.6）
+//     宽度（列） ≈ **80 / (2.64 × 垂距)**（80 列、r = 2）
+//   各用例把这两个量写在自己的注释里，**改了画布尺寸/视野就要一起改**。
+// ============================================================
+
+// ------------------------------------------------------------
+// S1（施工图 §6.2 用例 1）：3D 里**看得见敌人**（"开箱"判据）
+// ------------------------------------------------------------
+MINI_TEST(Game, EnemyVisibleIn3D)
+{
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+
+    game.OnStart();
+    StartPlaying(game, input, fb);
+
+    PressOnce(game, input, fb, Key::V);
+    MINI_CHECK(game.CurrentView() == Game::ViewMode::Mode3D);
+
+    // 正前方 12 格（玩家在出生点 (2.5, 2.5)，敌人 (14.5, 2.5)）：
+    //   垂距 12 ⇒ 宽 ≈ 80/(2.64×12) ≈ **2.5 列**、高 ≈ 1.26 行 ⇒ 一定画得出来。
+    //   中间没有墙（隔墙在 x = 34..36）。
+    game.SpawnEnemyAt(mini::math::Vec2{14.5f, 2.5f});
+
+    fb.Clear();
+    game.OnRender(fb);   // ⚠️ 不推 `OnUpdate`：让敌人**停在刚摆的位置**（否则它开始巡逻）
+
+    MINI_CHECK_EQ(game.EnemyCount(), Game::WaveEnemyCount(1) + 1);
+    MINI_CHECK(CountChar(fb, U'E') > 0);   // ★ S13 的"开箱"成功
+}
+
+// ------------------------------------------------------------
+// S2（用例 2）：**墙挡住敌人** —— 同一个距离，墙前画得出、墙后背挡住
+//
+// 做法：先走到 (25.5, 2.5)（隔墙 `[34,36)×[3,6)` 在西 8.5 格），再摆**两只**
+//       同在 12 格外的敌人：一只在墙前（y = 1.5，射线从墙**北边**擦过），一只在墙后（y = 5.5）。
+//       同距离 ⇒ "墙后没画出来"不可能是"太远/太小"导致的（那正是本条的判据）。
+//
+// 反向验证靶子：
+//   · R1（不写 `m_colDepth`，保持 0）⇒ 精灵**全不画** ⇒ **对照那条红**；
+//   · 深度比较写反（`>=` → `<=`）⇒ 所有精灵都不画 ⇒ 对照那条红。
+//   ⚠️ 单独看"墙后 == 0"是**假绿**（精灵全不画时它也成立）⇒ **必须**有墙前的对照。
+// ------------------------------------------------------------
+MINI_TEST(Game, WallOccludesEnemy)
+{
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+
+    game.OnStart();
+    StartPlaying(game, input, fb);
+
+    constexpr float kDt = 1.0f / 60.0f;
+
+    // 东行 69 帧：2.5 + 69×(1/60)×20 = **25.5**（隔墙在 x = 34 ⇒ 垂距 8.5）
+    input.Press(Key::D);
+    StepFrames(game, input, fb, kDt, 69);
+    input.Release(Key::D);
+    MINI_CHECK(game.Facing() == Facing8::East);
+
+    PressOnce(game, input, fb, Key::V);
+    MINI_CHECK(game.CurrentView() == Game::ViewMode::Mode3D);
+
+    // 两只都在**同一条距离**（垂距 12），只差"中间有没有墙"：
+    //   墙前 (37.5, 1.5)：横向 −1 ⇒ 列带 ≈ 33..35
+    //   墙后 (37.5, 5.5)：横向 +3 ⇒ 列带 ≈ 53..56，且射线在 x=34 处 y≈4.6（落在墙的 3..6 里）
+    game.SpawnEnemyAt(mini::math::Vec2{37.5f, 1.5f});
+    game.SpawnEnemyAt(mini::math::Vec2{37.5f, 5.5f});
+
+    fb.Clear();
+    game.OnRender(fb);
+
+    // ★ 对照：墙前那只**必须**画出来 —— 否则下面的 `== 0` 毫无意义
+    MINI_CHECK(CountCharInCols(fb, U'E', 32, 38) > 0);
+
+    // ★ 墙后那只：投影位置（53..56 列）一个 `E` 都不许有
+    //   ⚠️ 列带离巡逻敌人（总在 40 列附近）足够远，不会被它们污染
+    MINI_CHECK_EQ(CountCharInCols(fb, U'E', 53, 58), 0);
+}
+
+// ------------------------------------------------------------
+// S3（用例 3）：遮挡判定用 **`perp`（垂距）**，不是 `dist`（斜距）★ R2 的靶子
+//
+// 构造（每个数都按几何挑过，容不下"随手改一改"）：
+//   玩家 (21.5, 2.5) 面朝东；敌人在 (29.5, 6.5)，正好贴在**地标楼西面**（x = 30）0.5 格处。
+//   · 垂距 `perp` = 29.5 − 21.5 = **8.0**
+//   · 斜距 `dist` = |(8, 4)| = **8.94**
+//   · 墙在该列的深度 = 8.5（楼西面在 x = 30）
+//   ⇒ **8.0 < 8.5 < 8.94**：正确的 `perp` 判它"露出来"，而用 `dist` 会判它"在墙后"。
+//   ⇒ 这条用例就是那 0.94 格的差别。
+//
+// ⚠️ **为什么不用 x = 34 的隔墙当背面**（第一版就是那么写的，红了）：
+//    想要"贴在 x = 34 西面 0.5 格"，玩家就必须站在南边（y≈8.5）才有足够大的视角；
+//    而**地标楼占着 `x∈[30,37) × y∈[5,9)`** ⇒ 从南往北看，射线**先穿过地标楼**
+//    （在 x = 30, y ≈ 6.25）⇒ 精灵被楼正确地挡住 ⇒ 用例红。
+//    那是**用例的几何错**，不是实现的错。改成用楼西面当背面之后，射线在楼前就打到精灵了。
+//
+// 反向验证：把 `DrawSprites` 的比较换成 `dist` ⇒ 本条红。
+// ------------------------------------------------------------
+MINI_TEST(Game, OcclusionUsesPerpNotSlant)
+{
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+
+    game.OnStart();
+    StartPlaying(game, input, fb);
+
+    constexpr float kDt = 1.0f / 60.0f;
+
+    // 东行 57 帧：2.5 + 57×(1/60)×20 = **21.5**（不再往南走 ⇒ 朝向一直是东，省掉转身）
+    input.Press(Key::D);
+    StepFrames(game, input, fb, kDt, 57);
+    input.Release(Key::D);
+    MINI_CHECK(game.Facing() == Facing8::East);
+
+    PressOnce(game, input, fb, Key::V);
+    MINI_CHECK(game.CurrentView() == Game::ViewMode::Mode3D);
+
+    // 贴楼的侧向精灵：横向 +4、垂距 8 ⇒ centerCol ≈ 40 + (4/8)×60.6 ≈ 70.3，宽 ≈ 3.8 列
+    // ⇒ 列带 ≈ 68..71（判据取宽一点的 65..76，仍离巡逻敌人（40 列附近）很远）
+    game.SpawnEnemyAt(mini::math::Vec2{29.5f, 6.5f});
+
+    fb.Clear();
+    game.OnRender(fb);
+
+    MINI_CHECK(CountCharInCols(fb, U'E', 65, 76) > 0);
 }
 
 // ------------------------------------------------------------
