@@ -1,6 +1,7 @@
 #pragma once
 
 #include "mini/math/Vec2.h"
+#include "mini/render/RayCamera.h"  // RayCamera + kMinPerp（S13 第 1 笔搬来；见 A-2）
 #include "mini/world/Collision.h"   // IsSolidAt —— "什么是墙"的**唯一**判据
 #include "mini/world/TileMap.h"
 
@@ -12,14 +13,14 @@
 // RayCaster.h —— 伪 3D（射线投射）的**纯数学**部分（S12 第 3 笔，分叉 C = 甲）
 //
 // 四样东西，全都**不认识** `FrameBuffer` / HUD / 顶栏 / 终端：
-//   RayCamera      相机 = 位置 + 方向 + 视野（相机平面半长）
+//   RayCamera      相机 = 位置 + 方向 + 视野（相机平面半长）★ 已搬到 `render/RayCamera.h`（S13 A-2）
 //   CastColumn     一条列射线 → 命中信息（斜距 / 垂距 / 命中格 / 命中哪个面）
 //   WallHeightRows 垂距 → 墙在屏幕上占**几行**（纯数学）
 //   ShadeIndex     垂距 → 明暗档位（0 = 最近最亮）
 //
 // 为什么单独拆出来（而不是直接塞进 `game/`）：
-//   · 它只依赖 `math/Vec2.h` + `world/TileMap.h` + `world/Collision.h` ⇒ **可以离线单测**
-//     （`tests/test_raycaster.cpp`，10 条）；
+//   · 它只依赖 `math/Vec2.h` + `render/RayCamera.h` + `world/TileMap.h` + `world/Collision.h`
+//     ⇒ **可以离线单测**（`tests/test_raycaster.cpp`，10 条；S13 起 `RayCamera.h` 被单独搬出）；
 //   · 它是**引擎能力**（将来第二个游戏 / 别的关卡沿用同一套），不是这一个游戏的私货；
 //   · 反过来：`engine/` 绝不 include `game/`（`PLAN` A.3 的单向依赖）。
 //
@@ -35,12 +36,9 @@
 
 namespace mini::render {
 
-// 相机：三个字段就够。`pos` 是**亚格精度**的世界坐标（= 玩家中心的浮点位置）。
-struct RayCamera {
-    mini::math::Vec2 pos{};              // 世界坐标（格，float）
-    mini::math::Vec2 dir{1.0f, 0.0f};    // ⚠️ 单位向量（调用方保证）—— 下面 perp 的推导依赖它
-    float            fovTan = 0.66f;     // 相机平面半长 ⇒ 0.66 约等于 66° FOV
-};
+// ⚠️ `RayCamera` 与 `kMinPerp` **不在这里** —— S13 第 1 笔搬到了 `render/RayCamera.h`
+//    （分叉 A-2：让 `Sprite.h` 只依赖相机、不依赖 `TileMap`/`Collision`）。
+//    本文件仍 include 它 ⇒ `#include <mini/render/RayCaster.h>` 的老调用点一行都不用改。
 
 // 一条列射线的结果。
 //
@@ -55,9 +53,6 @@ struct RayHit {
     bool  sideX = true;    // true = 跨过一条**竖**格线（打到东西向的墙面）
     bool  hit   = false;   // false = 走到步数上限都没撞到（病态输入；调用方按"没墙"处理）
 };
-
-// 贴脸兜底：`perp` 不许是 0（否则墙高算成无穷 ⇒ 行数爆 ⇒ 越界写，坑 5）
-inline constexpr float kMinPerp = 0.01f;
 
 // 内部哨兵值。刻意**不用** `inf`：`inf` 参与减法/乘法会变成 NaN（坑 5）。
 inline constexpr float kRayHuge = 1.0e30f;

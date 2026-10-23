@@ -27,6 +27,8 @@
 #                             所以环形缓冲/平均/峰值全是确定性断言）
 #   test_raycaster.cpp   —— S12 的用例（不需要终端：RayCaster 只碰 TileMap + Vec2 + Collision，
 #                             纯函数；斜距/垂距/命中格/sideX/墙高/明暗档全是确定性断言）
+#   test_sprite.cpp      —— S13 第 1 笔的用例（不需要终端：Sprite.h 只碰 Vec2 + RayCamera，
+#                             连 TileMap/Collision 都不 include ⇒ 投影/裁剪/贴地 8 条全离线）
 # 新加用例文件必须在这里手写进源文件列表（S0 明确禁用 file(GLOB)）。
 # ============================================================
 
@@ -48,6 +50,7 @@ add_executable(mini_tests
     test_logger.cpp
     test_profiler.cpp
     test_raycaster.cpp
+    test_sprite.cpp
 )
 
 target_include_directories(mini_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
