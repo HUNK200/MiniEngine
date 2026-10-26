@@ -416,8 +416,8 @@ private:
     //    迟早各说各话 —— `dist` vs `perp` 的教训（坑 2）。
     struct SpriteItem {   // "要画什么"（还没投影）
         mini::math::Vec2      pos{};
-        float                 z         = 0.0f;   // ★ **脚底**高度（第 4 笔起子弹用它）
-        float                 cellsTall = 1.0f;
+        float                 z         = 0.0f;   // ★ **脚底**高度（0 = 脚踩地面；子弹见 `CollectSprites`）
+        float                 cellsTall = 1.0f;   // 世界尺寸（格）—— 子弹更扁（`kBulletCellsTall/Wide`）
         float                 cellsWide = 1.0f;
         char32_t              glyph     = U'?';
         mini::render::Color   color     = mini::render::Color::Default;

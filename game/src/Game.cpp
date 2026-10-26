@@ -213,6 +213,55 @@ constexpr float kAspectTaste        = 1.0f;   // 纯观感旋钮：>1 墙更高�
 //    改它会同时改"敌人多高"和"敌人多宽"（物理上保持方）。
 constexpr float kWallHeightCells = 2.0f;
 
+// ── S13（第 4 笔，分叉 T2）：**子弹的三个观感量** ────────────────────────────────
+// `kBulletHeight` 的语义 = **中心**离地高度（格），**不是**脚底 ——
+//   `SpritePlace::z` 是**脚底**（分叉 D-2 甲）⇒ 调用处要减半个身高：
+//     `z = kBulletHeight − kBulletCellsTall / 2`（`CollectSprites` 里那一行）
+//   ⚠️ 这里写错（直接把它当 z）⇒ 子弹整体抬高半格 ⇒ 看着像「飘在敌人头顶上方」。
+//
+// **为什么是 0.8**（2026-10-26 人眼反馈后从初始值 1.2 降下来）：
+//   相机眼高 = **1 格**（= 地平线 = 墙带中点，见 `kWallHeightCells` 的推导）；
+//   站立敌人 = 脚 0 + 高 1 格 ⇒ 身子占 `[0, 1]`，**顶边正好是地平线**。
+//   ⇒ 中心 1.2 时子弹占 `[1.075, 1.325]`，**整块在地平线之上** ⇒ 屏幕上「子弹总从敌人头顶飞过」
+//      （本人原话：不管怎么移动，子弹始终比 E 高）。那条**不是**渲染 bug，是 1.2 > 眼高 的必然结果。
+//   ⇒ 0.8 时子弹占 `[0.675, 0.925]` —— **也不行**（本人 2026-10-26 第二次反馈：「子弹从 E 下面走」）：
+//      低于眼高 ⇒ 越靠近镜头，屏幕行越往下掉（垂距 3 格 ≈ 行 14、1.5 格 ≈ 行 15），
+//      而远处敌人只占地平线那一两行 ⇒ 飞行途中看起来从敌人**下方**穿过去。
+//      **这条是透视的必然，不是 bug** —— 任何低于眼高的东西靠近时都会往下掉。
+//   ⇒ **取 1.0 = 眼高**：精灵中心的高度 = 相机高度 ⇒ `row = horizon + (1 − z)×lineH/2` 里
+//      `z == 1` ⇒ **屏幕行恒等于地平线，与距离无关** ⇒ 子弹沿准星直线飞、不会往上飘也不会往下掉；
+//      在敌人所在的距离上，那一行正是站立敌人的**头顶行**（敌人身子从地平线往下铺）。
+//   ⚠️ 再低就会"随距离下沉"，再高就会"从头顶飞过"—— 1.0 是唯一让弹道看起来是**直线**的取值。
+//   ⚠️ 下限：别低于 ~0.2（会贴地、视觉上钻进地板）；`static_assert` 只挡 `z < 0` 这一档。
+// ⚠️ 它和 `kCellHeightPerWidth` / `kAspectTaste` / `kWallHeightCells` 是**同一组观感旋钮**
+//   （`TECH_DEBT` **C43**：这些数没有任何机器断言）——调它只改「子弹看起来多高」，
+//   但**会牵动两条用例的期望行号**（见本段末尾），改之前先看那两条的注释。
+constexpr float kBulletHeight = 1.0f;
+
+// 子弹的世界尺寸（格）。⚠️ **施工图没定这两个数**（T2 只定了高度）⇒ 这里是本笔的取法：
+//   **宽 ≫ 高**（0.8 × 0.25）—— 一颗子弹在屏幕上是一条**横杠拖尾**，不是方块：
+//     · **高 0.25** ⇒ 近距离只占 1~2 行，不会挡住敌人；也保证「至少 1 行」那条兜底
+//       （`Sprite.h` 约定 5）只在远处才生效；
+//     · **宽 0.8** ⇒ 远距离**还占得满 1 列**：`colsWide = 0.8 × lineH`，lineH ≥ 1.25（垂距 ≤ 24）
+//       就看得见。**这是有意的**：方形小精灵在 6 格外就取整成 0 列 ⇒ `S13_CHECKLIST` §8 的
+//       人眼项 5「看到 `*` 飞向对方」根本没法验（子弹只在出膛那 0.13 秒可见）。
+//     ⚠️ 宽度 0.8 还有一个**副作用要认**：近距离（≤ 3 格）时子弹横跨 8 列，
+//       会把**正前方同距离的精灵整块盖住**（`SpritesFreezeWhenPaused` 因此把敌人摆偏 2 格，
+//       见那条用例的注释）。要消掉这个副作用只能把宽调小，但那样远距离就看不见了。
+//     ⚠️ 这不是「物理上方的精灵」（`Sprite.h` 约定 2 的注说的是敌人的 1×1）—— 弹道拖尾本来
+//       就该是扁的；要是觉得难看，改这两个数即可，**别改 `ProjectSprite`**。
+// ⚠️ 它们同时是**两条机器守卫的支点**（改这三个数要重算那两条用例里的算式，它们写的是**期望值**）：
+//   `BulletVisibleIn3D`（垂距 4.5 ⇒ 行 **13**；贴地才是行 16）
+//   `NearSpriteWinsOverFarOne`（垂距 22.5 时子弹坍成 1 格、正好被近敌人在**地平线行**盖住）
+constexpr float kBulletCellsTall = 0.25f;
+constexpr float kBulletCellsWide = 0.8f;
+
+// 脚底必须在地面之上：z < 0 时整个行区间下移 ⇒ 子弹像「钻进地板」（画出来的是下半截）。
+// ⚠️ 写成 static_assert 而不是运行时夹紧：这两个数都是编译期常量，调错了**编译就停**，
+//   比「跑起来才发现子弹埋进地里」省一次构建。
+static_assert(kBulletHeight - kBulletCellsTall * 0.5f > 0.0f,
+              "子弹的脚底会落到地面以下：`kBulletHeight` 是**中心**高度，必须大于半个身高");
+
 // 视口 → 纵横比（S12 第 5 笔）。**唯一**的换算点：别在列循环里就地再算一遍。
 // ⚠️ 调用方已保证 `viewW > 0 && viewH > 0`；下面那句 `denom <= 0` 只是防御 ——
 //    真除出 inf/NaN 会让整屏墙高变成 NaN，那种画面很难反推到"是除零"。
@@ -1346,11 +1395,27 @@ void Game::CollectSprites(std::vector<SpriteItem>& out) const
         item.pos   = entity.transform.pos;
         item.glyph = entity.symbol;
         item.id    = entity.id;
+
         // 颜色与 2D 同一套（红 = 敌人、白 = 子弹）。⚠️ 几何层的底色在 3D 不画（没有"格"）。
-        item.color = IsEnemyId(entity.id) ? mini::render::Color::BrightRed
-                                          : mini::render::Color::BrightWhite;
-        // ⚠️ z / 尺寸的默认值来自 `SpriteItem` 的成员初值（z = 0 = 脚踩地面；1×1 格）。
-        //    第 4 笔再给子弹抬高度（`kBulletHeight`）。
+        // ⚠️ `IsEnemyId` 只扫一次（下面尺寸那一支也要用它）：两处各扫一遍不只是慢，
+        //    更糟的是"同一个判断两个写法" ⇒ 将来加实体类型时必有一处漏改。
+        const bool isEnemy = IsEnemyId(entity.id);
+        item.color = isEnemy ? mini::render::Color::BrightRed
+                             : mini::render::Color::BrightWhite;
+
+        if (!isEnemy) {
+            // ── S13 第 4 笔：子弹 ⇒ **扁的弹道拖尾 + 抬到眼睛高度**（T2 甲 / D-2 甲）──
+            // 尺寸：`kBulletCellsWide`（0.8，远距离还占得满 1 列）× `kBulletCellsTall`（0.25）。
+            // ⚠️ 两者**都必须**写：漏了宽 ⇒ 6 格外取整成 0 列、子弹整颗看不见；
+            //    漏了高 ⇒ 子弹变成一整格高的白块（挡住敌人）。
+            item.cellsTall = kBulletCellsTall;
+            item.cellsWide = kBulletCellsWide;
+            // z 是**脚底**：`kBulletHeight` 给的是**中心** ⇒ 减半个身高。
+            // 不写这一行 = 子弹贴着地面飞（`z = 0`）；写成 `kBulletHeight` 本身 = 整体高半格。
+            item.z = kBulletHeight - kBulletCellsTall * 0.5f;
+        }
+        // 敌人：`z = 0`（脚踩地面）+ 1×1 格 ⇒ 直接用 `SpriteItem` 的成员初值，不写第二遍。
+
         out.push_back(item);
     }
 }

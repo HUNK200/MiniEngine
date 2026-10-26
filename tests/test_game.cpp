@@ -1413,6 +1413,283 @@ MINI_TEST(Game, OcclusionUsesPerpNotSlant)
     MINI_CHECK(CountCharInCols(fb, U'E', 65, 76) > 0);
 }
 
+// ============================================================
+// S13 第 4 笔：子弹的 `z`（脚底语义）+ 四条 3D 判据（另加一条计划外的）
+//
+// 【本笔的 5 条用例各自守什么】
+//   `BulletVisibleIn3D`      —— 子弹在 3D 里画得出来，且**在地平线之上**（`z` 生效）
+//   `NearSpriteWinsOverFarOne` —— 画序（远 → 近）★ R3 的靶子（怎么让它可观测见那条的注释）
+//   `SpritesNeverTouchHudRows` —— 集成冒烟（永远绿，施工图 §7.2 的 R4 已认）
+//   `SpritesFreezeWhenPaused`  —— 暂停时整屏逐格冻住
+//   `SpritesDisappearWhenFacingAway` —— 是**本笔多出来的一条**（施工图没有）：
+//     守 `m_spriteBuf` 每帧清空 + `!box.visible` 那条 `continue`，见那条的注释。
+// ============================================================
+
+// ------------------------------------------------------------
+// S13-4 用例 1：3D 里**看得见子弹**，而且它落在**敌人身上**（`z` 的脚底→中心换算）
+//
+// 期望值怎么来（80×25 ⇒ viewH = 23、aspect = 80/(2×0.66×23×2) ≈ **1.3175**）：
+//   弹速 45 格/秒 ⇒ **0.75 格/帧**；`FireOnce` 那一帧已经积分过 ⇒ 再推 5 帧 = **4.5 格**
+//   该距离：lineH = 23/4.5×1.3175 ≈ **6.73 行** ⇒ rowsPerCell ≈ **3.37**
+//     · 子弹（中心 1.0 = 眼高 ⇒ 脚底 z = 1.0 − 0.125 = **0.875** 格、高 0.25 格）：
+//         底边 ≈ 13.5 + 3.37 − 0.875×3.37 ≈ **13.92**、顶边 ≈ **13.08** ⇒ **行 13**
+//        （横向：宽 0.8 ⇒ 列 37..41，**不参与判据**，只说明它看得见）
+//     · 若 `z` 没写（= 0 ⇒ 贴地）：底边 ≈ 16.87、顶边 ≈ 13.5 ⇒ **行 16**
+//   ⇒ 判据「子弹行 ∈ `[地平线行, 地平线行 + 1]`」：只有 z 真的生效才成立。
+// ⚠️ **2026-10-26 改过判据**：原判据是 `shot.y < 地平线`（子弹在地平线**之上**），
+//    那是 `kBulletHeight = 1.2`（高过眼高）时期的写法；两次人眼反馈（「子弹总比 E 高」
+//    → 试 0.8 → 「又从 E 下面走」）之后**定在 1.0 = 眼高** ⇒ 子弹的屏幕行**恒为地平线**，
+//    原判据（行 < 地平线）**永远不可能成立**。
+//    ⇒ 现在断的是「**不在地面行**（16）」+「不高于地平线」，两句话一起钉住 z。
+// ⚠️ 为什么 1.0 是唯一"看起来直"的取值：中心高度 = 相机高度时，`row = horizon + (1−z)×lineH/2`
+//    与距离无关；低于 1.0 会**随距离下沉**（0.8 时 3 格处已是行 14、1.5 格处行 15）。
+// ⚠️ 地平线由 `kTestHudRow + (kScreenH − kTestHudRow)/2` 算（= 13），**别写字面量**：
+//    它与 `Game.cpp` 的 `horizon = kHudRow + viewH/2` 是同一条口径。
+// ------------------------------------------------------------
+MINI_TEST(Game, BulletVisibleIn3D)
+{
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+
+    game.OnStart();
+    StartPlaying(game, input, fb);
+
+    PressOnce(game, input, fb, Key::V);
+    MINI_CHECK(game.CurrentView() == Game::ViewMode::Mode3D);
+
+    constexpr float kDt = 1.0f / 60.0f;
+    FireOnce(game, input, fb, kDt);          // 出膛那一帧：子弹已在 0.75 格
+    StepFrames(game, input, fb, kDt, 5);     // 再 5 帧 ⇒ 垂距 4.5 格
+
+    fb.Clear();
+    game.OnRender(fb);                       // 不再推帧：让子弹停在这个距离上
+
+    MINI_CHECK_EQ(game.BulletCount(), 1);    // 还在飞（4.5 格内没有墙、也没有敌人）
+    MINI_CHECK(CountChar(fb, U'*') > 0);     // ★ 3D 里看得见子弹
+
+    const Pos shot       = FindChar(fb, U'*');
+    const int horizonRow = kTestHudRow + (kScreenH - kTestHudRow) / 2;   // = 13
+    // ★ z 生效：子弹落在**地平线那一行附近**（= 站立敌人的头顶行），而不是地面行（16）。
+    //   允许 ±1 行取整余量；贴地时是 16 ⇒ 两条都会红。
+    MINI_CHECK(shot.y >= horizonRow);
+    MINI_CHECK(shot.y <= horizonRow + 1);
+}
+
+// ------------------------------------------------------------
+// S13-4 用例 2（施工图 §6.2 用例 5）：**近的盖住远的**（画序 = 远 → 近）★ R3 的靶子
+//
+// ⚠️ **为什么"远"的那只必须是一颗子弹**（施工图没写，是本笔的落地偏差）：
+//    两个敌人 ⇒ 同字形（`E`）+ 同颜色（红），而且近的矩形**完整包含**远的
+//    ⇒ 把画序反过来，屏幕**一个格都不变** ⇒ 用敌人对敌人写出来的只会是**假守卫**。
+//    唯一可观测的配置是「**远子弹**坍成 1 格、正好落在**近敌人**的顶行」：
+//      · 站立敌人的顶边恒在**地平线行**（`row0F = horizon`，与距离无关）；
+//      · 远子弹的高度不足 1 行 ⇒ 被「至少 1 行」兜到 `floor(bottom)` 那一行
+//        （`bottom = horizon + 0.0625×lineH`，`kBulletHeight = 1.0` 时）⇒
+//        只要 lineH < **8.0**（垂距 > **3.8**）它就是地平线行 13；
+//      · 宽度 `0.8×lineH ≥ 1` ⇒ lineH ≥ 1.25 ⇒ 垂距 ≤ **24**。
+//      ⇒ 窗口 = **3.8 ~ 24 格**，本条取 **22.5 格**（`StepFrames(29)` + 出膛那帧 = 30×0.75）。
+//      ⚠️ 2026-10-26 `kBulletHeight` 走了 1.2 → 0.8 → **1.0**（两次人眼反馈）：
+//         窗口从「21.2~24」→「9.8~24」→「**3.8~24**」，22.5 **始终在窗口内**
+//         ⇒ 本条的三个数**一个都没改**（这是唯一一处没被这两次调参牵动的用例）。
+//    此时：远子弹 = 列 39、行 13；近敌人（垂距 3 格）= 列 34..44、行 13..17
+//    ⇒ **子弹那一格被敌人完整覆盖**：画序正确（远 → 近）⇒ `*` 一个不剩；反了 ⇒ `*` 还在。
+//
+// ⚠️ 这个窗口是拿"手算 + 取整"换来的（`TECH_DEBT` **C45**）：改
+//    `kBulletHeight` / `kBulletCellsWide` / `kBulletCellsTall` / 画布尺寸都要重算上面三个数。
+// 反向验证：把 `DrawSprites` 的 `std::sort` 比较改成升序（近 → 远）⇒ 本条红（施工图 §7.2 的 R3）。
+// ------------------------------------------------------------
+MINI_TEST(Game, NearSpriteWinsOverFarOne)
+{
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+
+    game.OnStart();
+    StartPlaying(game, input, fb);
+    PressOnce(game, input, fb, Key::V);
+
+    constexpr float kDt = 1.0f / 60.0f;
+    FireOnce(game, input, fb, kDt);          // 出膛那一帧已经积分过（0.75 格）
+    StepFrames(game, input, fb, kDt, 29);    // 共 30 帧 ⇒ 垂距 **22.5 格**
+
+    // ① 对照：远子弹**先要画得出来** —— 否则下面那条 `== 0` 是空转
+    //    （它同时钉住"宽 0.8 足够在 22.5 格外占满 1 列"）
+    fb.Clear();
+    game.OnRender(fb);
+    MINI_CHECK(CountChar(fb, U'*') > 0);
+
+    // ② 在**子弹后面**摆一只近敌人（垂距 3 格）：它的矩形把远子弹那一格盖住
+    //    ⚠️ 必须先让子弹飞过去再摆：否则下一次 `OnUpdate` 的命中判定会先把它打掉。
+    game.SpawnEnemyAt(mini::math::Vec2{Game::kSpawnX + 3.0f, Game::kSpawnY});
+
+    fb.Clear();
+    game.OnRender(fb);
+
+    MINI_CHECK(CountChar(fb, U'E') > 0);      // 近的那只必须画出来（不然"盖住"无从谈起）
+
+    // ★ 画序正确（远 → 近）⇒ 远子弹被近敌人覆盖 ⇒ 一个 `*` 都不剩
+    MINI_CHECK_EQ(CountChar(fb, U'*'), 0);
+}
+
+// ------------------------------------------------------------
+// S13-4 用例 3：精灵**不糊到 HUD 行上**（施工图 §6.2 用例 6）
+//
+// ⚠️ 这条**只能算集成冒烟**（施工图 §7.2 的 R4 行已认）：HUD 是**后画**的（`DrawHud` 在
+//    `DrawRaycastWorld` 之后），它会把行 1/2 整行铺满 ⇒ 精灵就算真画上去也**看不见**
+//    ⇒ 本用例**永远绿**。真正的守卫是纯函数那条 `Sprite.SpriteStaysInsideViewport`
+//    （裁剪下沉在 `ProjectSprite` 里，R4 甲）。
+// 它剩下的价值只有一条：**"场上确实有精灵，而且它们都在 HUD 下面"** ——
+//    哪天 3D 一个精灵都不画了，前半条（`CountChar > 0`）会红。
+// ------------------------------------------------------------
+MINI_TEST(Game, SpritesNeverTouchHudRows)
+{
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+
+    game.OnStart();
+    StartPlaying(game, input, fb);
+    PressOnce(game, input, fb, Key::V);
+
+    constexpr float kDt = 1.0f / 60.0f;
+    FireOnce(game, input, fb, kDt);          // 先开一枪
+    StepFrames(game, input, fb, kDt, 5);     // 子弹飞到 ≈ 4.5 格
+
+    // ① 对照：**子弹先要看得见**，而且必须在摆贴脸敌人**之前**取。
+    //    ⚠️ 2026-10-26（`kBulletHeight` 1.2 → 0.8）之后子弹与敌人**在同一行带**里，
+    //    而贴脸敌人（垂距 1 格）比 4.5 格处的子弹**更近** ⇒ 它会按画序把 `*` **整块盖住**
+    //    ⇒ 摆完再数 `*` 必然是 0（那不是故障，是遮挡正确）。所以两段分开取。
+    fb.Clear();
+    game.OnRender(fb);
+    MINI_CHECK(CountChar(fb, U'*') > 0);
+
+    // ② 贴脸的敌人（垂距 1 格 ⇒ 投影又高又宽：列 24..54、行 13..24，最容易"糊到 HUD"的那种）。
+    //    ⚠️ **必须摆在子弹后面**（`SpawnEnemyAt` 之后再推帧的话，子弹会先打中它）。
+    game.SpawnEnemyAt(mini::math::Vec2{Game::kSpawnX + 1.0f, Game::kSpawnY});
+
+    fb.Clear();
+    game.OnRender(fb);
+
+    // 前置：精灵真的存在 —— 否则下面那条"没糊上去"是空转
+    MINI_CHECK(CountChar(fb, U'E') > 0);
+
+    int inHud = 0;
+    for (int row = 0; row < kTestFirstWorldRow; ++row) {   // 行 0..2 = 顶栏 + HUD 两行
+        for (int col = 0; col < fb.Width(); ++col) {
+            const char32_t c = fb.At(col, row).ch;
+            if (c == U'E' || c == U'*') {
+                ++inHud;
+            }
+        }
+    }
+    MINI_CHECK_EQ(inHud, 0);
+}
+
+// ------------------------------------------------------------
+// S13-4 用例 4：`ESC` 暂停后**精灵逐格冻住**（施工图 §6.2 用例 7）
+//
+// ⚠️ 判据是"**暂停之后**连续多帧逐格相同"，**不是**"暂停前后逐格相同" ——
+//    后者**必红**：`ESC` 会让屏幕叠一条 `PAUSED` 横幅（施工图 §6.2 第 7 行的注）。
+// 这里推 **60 帧**（1 秒）而不是 2 帧：敌人 6 格/秒、子弹 45 格/秒，
+//    1 秒足够让"没冻住"跑出肉眼可见的位移 ⇒ 红了就是真的没冻住。
+// ⚠️ 比的是**整屏每一格**（字形 + 前景色 + 背景色）：只比 `E` 的位置会漏掉
+//    "HUD 的 `sumdt` 还在涨"（时钟没冻）这类半冻状态。
+// ------------------------------------------------------------
+MINI_TEST(Game, SpritesFreezeWhenPaused)
+{
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+
+    game.OnStart();
+    StartPlaying(game, input, fb);
+    PressOnce(game, input, fb, Key::V);
+
+    // 场上要有"会动的东西"才谈得上冻住：一只 8 格外的敌人 + 一颗在飞的子弹。
+    // ⚠️ 敌人**必须偏离子弹走廊 2 格**（`kSpawnY + 2`）：`kBulletHeight` 降到 0.8 之后，
+    //    子弹与敌人在同一行带里（行 13），而 3 格处的子弹横跨 8 列、比 8 格处的敌人（≈4 列）宽
+    //    ⇒ 正前方的话，近处那颗子弹会把敌人**整块盖住**，前置断言 `E > 0` 会红（不是暂停坏了）。
+    game.SpawnEnemyAt(mini::math::Vec2{Game::kSpawnX + 8.0f, Game::kSpawnY + 2.0f});
+
+    constexpr float kDt = 1.0f / 60.0f;
+    FireOnce(game, input, fb, kDt);
+    StepFrames(game, input, fb, kDt, 3);     // 子弹 ≈ 3 格
+
+    MINI_CHECK(CountChar(fb, U'E') > 0);
+    MINI_CHECK(CountChar(fb, U'*') > 0);
+
+    PressOnce(game, input, fb, Key::Escape);   // 暂停（此后 `fb` 里就是暂停画面）
+    MINI_CHECK(game.State() == GameState::Paused);
+
+    const FrameBuffer snapshot = fb;            // 拷整屏（含颜色）
+    StepFrames(game, input, fb, kDt, 60);       // 暂停里推 1 秒
+
+    int diff = 0;
+    for (int row = 0; row < fb.Height(); ++row) {
+        for (int col = 0; col < fb.Width(); ++col) {
+            const mini::render::Cell a = snapshot.At(col, row);
+            const mini::render::Cell b = fb.At(col, row);
+            if (a.ch != b.ch || a.fg != b.fg || a.bg != b.bg) {
+                ++diff;
+            }
+        }
+    }
+    MINI_CHECK_EQ(diff, 0);
+}
+
+// ------------------------------------------------------------
+// S13-4 用例 5（**计划外**，施工图没有这一条）：
+//   **背对 ⇒ 精灵消失；转回来 ⇒ 又出现**
+//
+// 它守的是 `DrawSprites` 里两条"看起来对、其实容易错"的接线：
+//   ① `m_spriteBuf.clear()`（复用缓冲）：漏了 ⇒ 上一帧的精灵**赖在画面上**
+//      （玩家转身走了，E 还停在原地）= 幽灵；
+//   ② `if (!box.visible) continue`（相机背后的判定）：漏了 ⇒ `perp < 0` 的精灵
+//      被当成"极近" ⇒ 行数爆表、糊满整屏。
+// 判据用**出现 → 消失 → 再出现**三段，而不是只断"消失"：
+//   只断消失的话，"3D 一个精灵都不画"也会绿 —— 那正是 `WallOccludesEnemy` 踩过的坑
+//   （所以那条必须配一个"墙前必须画出来"的对照）。
+//
+// 转身：`Z` = 绕圈 +1（东 → 东北 → 北 → 西北 → 西）⇒ **4 次**到 `West`；
+//       `C` = −1 ⇒ 4 次转回 `East`。每次 `PressOnce` 推 2 帧，敌人顺带追 ≈0.2 格
+//       （8 格 → ≈6.4 格）⇒ 转回来仍然在视野里。
+// ------------------------------------------------------------
+MINI_TEST(Game, SpritesDisappearWhenFacingAway)
+{
+    FakeInput   input;
+    Game        game;
+    FrameBuffer fb(kScreenW, kScreenH);
+
+    game.OnStart();
+    StartPlaying(game, input, fb);
+    PressOnce(game, input, fb, Key::V);
+
+    game.SpawnEnemyAt(mini::math::Vec2{Game::kSpawnX + 8.0f, Game::kSpawnY});   // 正东 8 格
+
+    fb.Clear();
+    game.OnRender(fb);
+    MINI_CHECK(CountChar(fb, U'E') > 0);      // ① 面朝东：看得见
+
+    for (int i = 0; i < 4; ++i) {
+        PressOnce(game, input, fb, Key::Z);
+    }
+    MINI_CHECK(game.Facing() == Facing8::West);
+
+    fb.Clear();
+    game.OnRender(fb);
+    MINI_CHECK_EQ(CountChar(fb, U'E'), 0);    // ② 背对：一个都不许留（缓冲必须每帧清）
+
+    for (int i = 0; i < 4; ++i) {
+        PressOnce(game, input, fb, Key::C);
+    }
+    MINI_CHECK(game.Facing() == Facing8::East);
+
+    fb.Clear();
+    game.OnRender(fb);
+    MINI_CHECK(CountChar(fb, U'E') > 0);      // ③ 转回来：又出现
+}
+
 // ------------------------------------------------------------
 // M1. 2026-10-16（临时需求 · 档 1）：**地图不许再"空旷"** —— 视口内每一行都要看得到墙
 //
