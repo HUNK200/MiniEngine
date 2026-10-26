@@ -104,7 +104,7 @@ HUD 两行（**58 / 64 列**）：`pos / tile / sumdt / v` + `hp / ammo / kills 
 
 - `engine/` —— 引擎：终端 IO（Windows 控制台 + ANSI）、帧缓冲与**行差分**渲染、时间与限帧、数学（`Vec2`/`AABB`/`Ray`）、世界与碰撞、相机、敌人 AI 状态机、**射线投射与精灵投影**（`RayCaster.h` / `RayCamera.h` / `Sprite.h`，都是纯函数）。**不认识任何游戏概念**。
 - `game/` —— 一个具体的游戏：地图、波次、弹药、HUD、状态机接线、**3D 精灵的收集/排序/遮挡**。**只 include 引擎的公共头**。
-- `tests/` —— 自研的 MiniTest 框架 + **259 条用例**（25 个 suite）。
+- `tests/` —— 自研的 MiniTest 框架 + **259 条用例**（**26 个 suite**）。
 - `tools/` —— 开发侧脚本：**打包 demo**（`pack_demo.ps1`：构建 → `dumpbin` 零依赖自检 → zip）+ 打进包里的启动器与玩家卡。**不进 CMake、不参与构建**。
 - `doc/` —— 施工图与台账：前置事实、坑表、逐条落地偏差、反向验证记录、技术债。**判断过程都在这里**。
 
