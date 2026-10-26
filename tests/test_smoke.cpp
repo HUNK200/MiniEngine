@@ -31,10 +31,13 @@ MINI_TEST(Core, VersionIsReported)
     //    ✅ **2026-10-22 第三次 bump**（`0.4.0-dev` → `0.5.0-dev`，依据 v0.5「像 3D」达成：
     //    S12 的 `RayCaster` + 3D 接线 + 地板/天花板行线；242 用例 · 反向验证 7 场）——
     //    四处一起改，**另加 `Version.h` 那句举例注释**（那处没有机器守卫）。
+    //    ✅ **2026-10-26 第四次 bump**（`0.5.0-dev` → `0.6.0-dev`，依据 S13 收口：
+    //    精灵 + z-buffer，3D 里看得见 `E`/`*` 且遮挡正确；259 用例 · 反向验证 5 场 · 人眼通过）——
+    //    四处一起改，**另加 `Version.h` 那句举例注释**（那处没有机器守卫）。
     // ⚠️ 这里的逗号在 `strcmp(...)` 的括号内，`MINI_CHECK` 是变参宏，不会被拆成两个参数。
-    MINI_CHECK(std::strcmp(mini::core::VersionString(), "0.5.0-dev") == 0);
+    MINI_CHECK(std::strcmp(mini::core::VersionString(), "0.6.0-dev") == 0);
     MINI_CHECK_EQ(mini::core::VersionMajor(), 0);
-    MINI_CHECK_EQ(mini::core::VersionMinor(), 5);
+    MINI_CHECK_EQ(mini::core::VersionMinor(), 6);
 }
 
 // 画布尺寸的接受条件（TECH_DEBT C7 收窄：这段逻辑以前埋在 Application.cpp 的匿名
